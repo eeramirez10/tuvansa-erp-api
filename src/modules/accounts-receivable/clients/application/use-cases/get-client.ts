@@ -5,8 +5,8 @@ import { toClientResponse, type ClientResponse } from '../dtos/client-response.j
 export class GetClient {
   constructor(private readonly clientsRepository: ClientsRepository) {}
 
-  async execute(clientCode: string): Promise<ClientResponse> {
-    const client = await this.clientsRepository.findByCode(clientCode);
+  async execute(clientId: number): Promise<ClientResponse> {
+    const client = await this.clientsRepository.findById(clientId);
 
     if (!client) {
       throw new NotFoundError('Cliente');

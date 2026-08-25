@@ -1,0 +1,123 @@
+@baseUrl = http://localhost:3000
+@apiPrefix = /api
+@clientId = 15331
+
+### Obtener todos los clientes
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients?page=1&pageSize=25
+Accept: application/json
+
+### Buscar clientes por texto
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients?q=cliente&page=1&pageSize=25
+Accept: application/json
+
+### Obtener cliente por identificador
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}
+Accept: application/json
+
+### Obtener saldo del cliente
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/balance?page=1&pageSize=25
+Accept: application/json
+
+### Obtener documentos vencidos del saldo
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/balance?dueStatus=overdue&page=1&pageSize=25
+Accept: application/json
+
+### Buscar un documento en el saldo
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/balance?q=FE0064618&page=1&pageSize=25
+Accept: application/json
+
+### Obtener movimientos del cliente
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/movements?page=1&pageSize=25
+Accept: application/json
+
+### Obtener movimientos del cliente por periodo
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/movements?dateFrom=2026-01-01&dateTo=2026-12-31&page=1&pageSize=25
+Accept: application/json
+
+### Facturas
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/invoices?page=1&pageSize=25
+Accept: application/json
+
+### Pedidos - relacion
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/orders?page=1&pageSize=25
+Accept: application/json
+
+### Productos pedidos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/products/ordered?page=1&pageSize=25
+Accept: application/json
+
+### Productos cotizados
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/products/quoted?page=1&pageSize=25
+Accept: application/json
+
+### Productos vendidos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/products/sold?page=1&pageSize=25
+Accept: application/json
+
+### Productos vendidos - desglose
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/products/sold-detail?page=1&pageSize=25
+Accept: application/json
+
+### Ventas anuales
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/sales/annual?page=1&pageSize=25
+Accept: application/json
+
+### Ventas anuales - resumen
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/sales/annual-summary?page=1&pageSize=25
+Accept: application/json
+
+### Ventas por sucursal
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/sales/by-branch?page=1&pageSize=25
+Accept: application/json
+
+### Ventas EDI
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/sales/edi?page=1&pageSize=25
+Accept: application/json
+
+### WIP (consulta confirmada en CT WIP)
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/work-in-progress?page=1&pageSize=25
+Accept: application/json
+
+### CT Productos pedidos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/ct/products/ordered?page=1&pageSize=25
+Accept: application/json
+
+### CT Productos vendidos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/ct/products/sold?page=1&pageSize=25
+Accept: application/json
+
+### CT WIP
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/ct/work-in-progress?page=1&pageSize=25
+Accept: application/json
+
+### Accion - Clasificar
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/classifications
+Accept: application/json
+
+### Accion - Enviar a
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/destinations
+Accept: application/json
+
+### Accion - Estado de bloqueo
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/block-status
+Accept: application/json
+
+### Accion - Descuentos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/discounts?page=1&pageSize=25
+Accept: application/json
+
+### Accion - Eventos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/events?page=1&pageSize=25
+Accept: application/json
+
+### Accion - Sucursales
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/branches?page=1&pageSize=25
+Accept: application/json
+
+### Accion - Foto
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/photo
+Accept: application/json
+
+### Accion - Contactos
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/contacts?page=1&pageSize=25
+Accept: application/json

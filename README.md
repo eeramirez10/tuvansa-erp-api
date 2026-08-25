@@ -35,8 +35,36 @@ npm run build
 ```text
 GET /health
 GET /api/accounts-receivable/clients
-GET /api/accounts-receivable/clients/:clientCode
+GET /api/accounts-receivable/clients/:clientId
+GET /api/accounts-receivable/clients/:clientId/balance
+GET /api/accounts-receivable/clients/:clientId/movements
+GET /api/accounts-receivable/clients/:clientId/invoices
+GET /api/accounts-receivable/clients/:clientId/orders
+GET /api/accounts-receivable/clients/:clientId/products/ordered
+GET /api/accounts-receivable/clients/:clientId/products/quoted
+GET /api/accounts-receivable/clients/:clientId/products/sold
+GET /api/accounts-receivable/clients/:clientId/products/sold-detail
+GET /api/accounts-receivable/clients/:clientId/sales/annual
+GET /api/accounts-receivable/clients/:clientId/sales/annual-summary
+GET /api/accounts-receivable/clients/:clientId/sales/by-branch
+GET /api/accounts-receivable/clients/:clientId/sales/edi
+GET /api/accounts-receivable/clients/:clientId/work-in-progress
+GET /api/accounts-receivable/clients/:clientId/ct/products/ordered
+GET /api/accounts-receivable/clients/:clientId/ct/products/sold
+GET /api/accounts-receivable/clients/:clientId/ct/work-in-progress
+GET /api/accounts-receivable/clients/:clientId/actions/classifications
+GET /api/accounts-receivable/clients/:clientId/actions/destinations
+GET /api/accounts-receivable/clients/:clientId/actions/block-status
+GET /api/accounts-receivable/clients/:clientId/actions/discounts
+GET /api/accounts-receivable/clients/:clientId/actions/events
+GET /api/accounts-receivable/clients/:clientId/actions/branches
+GET /api/accounts-receivable/clients/:clientId/actions/photo
+GET /api/accounts-receivable/clients/:clientId/actions/contacts
 ```
 
-Los endpoints de clientes quedan preparados, pero el repositorio de Proscai no
-se conectara hasta documentar la pantalla y confirmar el origen de los datos.
+Los endpoints de clientes consultan en modo de solo lectura el origen legado.
+
+## Solicitudes HTTP
+
+La carpeta `http/` contiene solicitudes ejecutables para validar manualmente
+los endpoints. Cada modulo tendra su propio archivo `.http`.

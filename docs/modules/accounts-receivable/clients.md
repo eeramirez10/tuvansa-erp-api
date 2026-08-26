@@ -1,7 +1,7 @@
 # Catalogo de clientes
 
-Alcance inicial: reproducir exclusivamente la pantalla principal del Catalogo
-de clientes mediante endpoints GET sobre la base MySQL heredada.
+Alcance inicial: reproducir la pantalla principal del Catalogo de clientes
+sobre la base MySQL heredada, incluida su barra de navegacion y mantenimiento.
 
 ## Origen
 
@@ -29,7 +29,12 @@ de clientes mediante endpoints GET sobre la base MySQL heredada.
 
 ```text
 GET /api/accounts-receivable/clients
+POST /api/accounts-receivable/clients
 GET /api/accounts-receivable/clients/:clientId
+PATCH /api/accounts-receivable/clients/:clientId
+DELETE /api/accounts-receivable/clients/:clientId
+GET /api/accounts-receivable/clients/:clientId/previous
+GET /api/accounts-receivable/clients/:clientId/next
 GET /api/accounts-receivable/clients/:clientId/balance
 GET /api/accounts-receivable/clients/:clientId/movements
 GET /api/accounts-receivable/clients/:clientId/invoices
@@ -62,6 +67,22 @@ Parametros del listado:
 - `q`: busqueda por codigo, nombre o RFC.
 - `page`: pagina; por defecto `1`.
 - `pageSize`: registros por pagina; maximo `100`.
+
+### Barra principal
+
+- La esfera/lupa usa el listado con `q`; busca por codigo, razon social o RFC.
+- Las flechas usan `previous` y `next`. En el primero o ultimo registro la
+  respuesta es `{ "data": null }`.
+- El alta requiere `code` y `name`. Acepta opcionalmente los grupos `address`,
+  `contact`, `fiscal` y `terms`; si no se envia cuenta contable usa `1105001`,
+  igual que la captura de OMNIS.
+- El cambio usa `PATCH` y solo actualiza los campos presentes en el cuerpo.
+- La baja responde `204` al eliminar. Responde `409 CLIENT_IN_USE` si encuentra
+  relaciones en `fdoc`, `fax`, `faxinv`, `fpenc`, `fplin`, `fvanu2` o `fcenso`.
+- Alta y cambio validan codigo duplicado y existencia de la cuenta en `fbenc`.
+
+Los ejemplos completos de cuerpos JSON y el ciclo temporal de prueba estan en
+`http/accounts-receivable/clients.http`.
 
 El detalle agrupa la respuesta en `address`, `contact`, `fiscal`, `indicators`,
 `terms` y `totals`, evitando filtrar nombres de columnas heredados fuera de
@@ -158,6 +179,12 @@ La captura literal completa por boton y accion esta documentada en
 `legacy-mysql-capture.md`; el archivo crudo permanece local dentro de
 `captures/` porque puede contener datos de prueba.
 
+La navegacion y las escrituras de la barra principal (anterior, buscar,
+siguiente, alta, baja y cambio) estan documentadas por separado en
+`client-toolbar-sql.md`. El ciclo de alta, cambio y baja se verifico con un
+cliente temporal eliminado al terminar la captura y esta implementado en la
+API.
+
 ### Correspondencia entre vistas, botones y endpoints
 
 La vista base es **Cuentas por cobrar > Catalogo de clientes** (`ECLI#1`). El
@@ -168,6 +195,12 @@ actualizarse cada vez que se agregue un endpoint del modulo.
 | --- | --- | --- | --- | --- |
 | Catalogo de clientes | Lista principal | `/api/accounts-receivable/clients` | `OPEN_ACCOUNTS_RECEIVABLE` | `fcli` |
 | Catalogo de clientes | Ficha del cliente | `/api/accounts-receivable/clients/:clientId` | `OPEN_ACCOUNTS_RECEIVABLE` | `fcli` |
+| Barra principal | Flecha izquierda - Anterior | `GET /api/accounts-receivable/clients/:clientId/previous` | `TOOLBAR_PREVIOUS_CLIENT` | `fcli` |
+| Barra principal | Esfera/lupa - Buscar | `GET /api/accounts-receivable/clients?q=...` | `TOOLBAR_SEARCH_CLIENT_000001` | `fcli` |
+| Barra principal | Flecha derecha - Siguiente | `GET /api/accounts-receivable/clients/:clientId/next` | `TOOLBAR_NEXT_CLIENT` | `fcli` |
+| Barra principal | Papel - Alta | `POST /api/accounts-receivable/clients` | `TOOLBAR_NEW_CLIENT_INSERT_ZZT826` | `fcli`, `fbenc` |
+| Barra principal | Papel con marca - Baja | `DELETE /api/accounts-receivable/clients/:clientId` | `TOOLBAR_DELETE_CLIENT_CONFIRM_ZZT826` | `fcli` y tablas relacionadas |
+| Barra principal | Papel con lapiz - Cambio | `PATCH /api/accounts-receivable/clients/:clientId` | `TOOLBAR_EDIT_CLIENT_UPDATE_ZZT826` | `fcli`, `fbenc` |
 | Consultas | Saldo | `/api/accounts-receivable/clients/:clientId/balance` | `CLIENT_000001_SALDO` | `fdoc`, `fcli` |
 | Consultas | Movimientos | `/api/accounts-receivable/clients/:clientId/movements` | `CLIENT_000001_MOVIMIENTOS` | `fax`, `fdoc`, `fcli` |
 | Consultas | Facturas | `/api/accounts-receivable/clients/:clientId/invoices` | `CLIENT_000001_FACTURAS` | `fdoc`, `fcli` |
@@ -222,6 +255,15 @@ todavia un endpoint de escritura.
 
 Los endpoints Descuentos, Eventos, Sucursales y Contactos aceptan `page` y
 `pageSize`. Contactos excluye deliberadamente `CONTPASSWORD` de la respuesta.
+
+## Arquitectura de acceso a datos
+
+Los contratos de acceso a datos estan en `domain/datasources` y los contratos
+consumidos por los casos de uso en `domain/repositories`. Las consultas MySQL
+estan solamente en `infrastructure/datasources`; cada clase de
+`infrastructure/repositories` se limita a delegar en su datasource. Asi se puede
+agregar posteriormente una implementacion PostgreSQL sin modificar aplicacion
+ni presentacion.
 
 ## Pendiente
 

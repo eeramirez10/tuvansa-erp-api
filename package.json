@@ -19,6 +19,7 @@
     "api:check:client-movements": "tsx scripts/check-client-movements-api.ts",
     "api:check:client-consultations": "tsx scripts/check-client-consultations-api.ts",
     "api:check:client-actions": "tsx scripts/check-client-actions-api.ts",
+    "api:check:client-toolbar": "tsx scripts/check-client-toolbar-api.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

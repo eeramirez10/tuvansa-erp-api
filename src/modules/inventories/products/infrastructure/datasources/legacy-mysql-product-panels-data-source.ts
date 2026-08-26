@@ -241,31 +241,36 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'customer-sales': {
     section: 'queries', button: 'Ventas por cliente',
-    sql: `SELECT AISEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
-      AICANTF AS quantity, AIPRECIO AS price FROM faxinv
+    sql: `SELECT MIN(AISEQ) AS id, CLICOD AS customerCode, CLINOM AS customerName,
+      SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
       LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
       LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE faxinv.ISEQ = ? AND fcli.CLISEQ <> 0 AND DEST=0 AND DMULTICIA=1
       AND AIMES=1 AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
-      ORDER BY AISEQ`, parameterMode: 'id',
+      GROUP BY fcli.CLISEQ, CLICOD, CLINOM ORDER BY CLICOD`, parameterMode: 'id',
   },
   'customer-sales-star': {
-    section: 'queries', button: 'Ventas por cliente *', source: 'product-cache',
-    sql: `SELECT IVTA AS salesLastSixMonths, ISTKACT AS stock,
-      IASIGNADO AS assigned, ICONFIRMADO AS confirmed
-      FROM finv WHERE ISEQ = ?`, parameterMode: 'id',
+    section: 'queries', button: 'Ventas por cliente *',
+    sql: `SELECT MIN(AISEQ) AS id, CLICOD AS customerCode, CLINOM AS customerName,
+      SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
+      LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
+      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
+      WHERE faxinv.ISEQ = ? AND fcli.CLISEQ <> 0 AND DEST=0 AND DMULTICIA=1
+      AND AIMES=1 AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
+      GROUP BY fcli.CLISEQ, CLICOD, CLINOM ORDER BY CLICOD`, parameterMode: 'id',
   },
   'customer-sales-ct': {
     section: 'queries', button: 'Ventas por cliente CT',
-    sql: `SELECT AISEQ AS id, ICOD AS productCode, IDESCR AS productDescription,
-      CLICOD AS customerCode, CLINOM AS customerName,
-      AICANTF AS quantity, AIPRECIO AS price FROM faxinv
+    sql: `SELECT MIN(AISEQ) AS id, ICOD AS productCode,
+      IDESCR AS productDescription, SUM(AICANTF) AS quantity,
+      SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
       LEFT JOIN finv ON faxinv.ISEQ=finv.ISEQ
       LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
       LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE ICOD >= ? AND ICOD <= CONCAT(?, 'z') AND fcli.CLISEQ <> 0
       AND DEST=0 AND DMULTICIA=1 AND AIMES=1 AND DOTROSTXT<>'POS'
-      AND DCONTROLPOS=0 ORDER BY ICOD, AISEQ`, parameterMode: 'code-range',
+      AND DCONTROLPOS=0 GROUP BY finv.ISEQ, ICOD, IDESCR ORDER BY ICOD`,
+    parameterMode: 'code-range',
   },
   'customer-sales-detail': {
     section: 'queries', button: 'Ventas desglosadas',
@@ -281,27 +286,58 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'sales-by-branch': {
     section: 'queries', button: 'Ventas por sucursal',
-    sql: `SELECT AISEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
-      AICANTF AS quantity, AIPRECIO AS price, AISUCURSAL AS branch
+    sql: `SELECT MIN(AISEQ) AS id, AISUCURSAL AS branch,
+      CLICOD AS customerCode, CLINOM AS customerName,
+      SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount
       FROM faxinv LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
       LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE faxinv.ISEQ=? AND fcli.CLISEQ<>0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 ORDER BY AISEQ`, parameterMode: 'id',
+      AND AIMES=1 GROUP BY AISUCURSAL, fcli.CLISEQ, CLICOD, CLINOM
+      ORDER BY AISUCURSAL, CLICOD`, parameterMode: 'id',
   },
   'annual-sales': {
     section: 'queries', button: 'Ventas anuales',
-    sql: `SELECT AISEQ AS id, DFECHA AS date, CLICOD AS customerCode,
-      AICANTF AS quantity FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
+    sql: `SELECT MIN(AISEQ) AS id, CLICOD AS customerCode,
+      CLINOM AS customerName, YEAR(DFECHA) AS year,
+      SUM(IF(MONTH(DFECHA)=1,AICANTF,0)) AS january,
+      SUM(IF(MONTH(DFECHA)=2,AICANTF,0)) AS february,
+      SUM(IF(MONTH(DFECHA)=3,AICANTF,0)) AS march,
+      SUM(IF(MONTH(DFECHA)=4,AICANTF,0)) AS april,
+      SUM(IF(MONTH(DFECHA)=5,AICANTF,0)) AS may,
+      SUM(IF(MONTH(DFECHA)=6,AICANTF,0)) AS june,
+      SUM(IF(MONTH(DFECHA)=7,AICANTF,0)) AS july,
+      SUM(IF(MONTH(DFECHA)=8,AICANTF,0)) AS august,
+      SUM(IF(MONTH(DFECHA)=9,AICANTF,0)) AS september,
+      SUM(IF(MONTH(DFECHA)=10,AICANTF,0)) AS october,
+      SUM(IF(MONTH(DFECHA)=11,AICANTF,0)) AS november,
+      SUM(IF(MONTH(DFECHA)=12,AICANTF,0)) AS december,
+      SUM(AICANTF) AS total FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
       WHERE faxinv.ISEQ=? AND DESFACT=1 AND AIMES=1 AND DEST=0
-      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0 ORDER BY AISEQ`, parameterMode: 'id',
+      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
+      GROUP BY fcli.CLISEQ, CLICOD, CLINOM, YEAR(DFECHA)
+      ORDER BY CLICOD, year`, parameterMode: 'id',
   },
   'annual-sales-summary': {
     section: 'queries', button: 'Ventas anuales resumen',
-    sql: `SELECT AISEQ AS id, DFECHA AS date, AICANTF AS quantity
+    sql: `SELECT MIN(AISEQ) AS id, YEAR(DFECHA) AS year,
+      SUM(IF(MONTH(DFECHA)=1,AICANTF,0)) AS january,
+      SUM(IF(MONTH(DFECHA)=2,AICANTF,0)) AS february,
+      SUM(IF(MONTH(DFECHA)=3,AICANTF,0)) AS march,
+      SUM(IF(MONTH(DFECHA)=4,AICANTF,0)) AS april,
+      SUM(IF(MONTH(DFECHA)=5,AICANTF,0)) AS may,
+      SUM(IF(MONTH(DFECHA)=6,AICANTF,0)) AS june,
+      SUM(IF(MONTH(DFECHA)=7,AICANTF,0)) AS july,
+      SUM(IF(MONTH(DFECHA)=8,AICANTF,0)) AS august,
+      SUM(IF(MONTH(DFECHA)=9,AICANTF,0)) AS september,
+      SUM(IF(MONTH(DFECHA)=10,AICANTF,0)) AS october,
+      SUM(IF(MONTH(DFECHA)=11,AICANTF,0)) AS november,
+      SUM(IF(MONTH(DFECHA)=12,AICANTF,0)) AS december,
+      SUM(AICANTF) AS total
       FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE faxinv.ISEQ=? AND DESFACT=1 AND AIMES=1 AND DEST=0
-      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0 ORDER BY AISEQ`, parameterMode: 'id',
+      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
+      GROUP BY YEAR(DFECHA) ORDER BY year`, parameterMode: 'id',
   },
   'supplier-orders': {
     section: 'queries', button: 'Ordenado a proveedor',
@@ -310,7 +346,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       PEDESDE AS orderedAt, PEFECHA AS date, PEDATE2 AS secondDate,
       PLFACTOR AS factor, PLUNIDAD AS unit, PENUMELLOS AS externalNumber,
       PLASIGNADO AS assigned, PEALMACEN AS warehouse, PESPEDIDO AS orderType,
-      PLPRECI AS price, PLSUC AS branch FROM fplin
+      PLPRECI AS price, PLSUC AS branch, PEOBS AS observations FROM fplin
       LEFT JOIN fprv ON fplin.PRVSEQ=fprv.PRVSEQ
       LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
       WHERE fplin.ISEQ=? AND fprv.PRVSEQ<>0 AND PESPEDIDO IN (2,3)
@@ -341,12 +377,14 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'supplier-purchases': {
     section: 'queries', button: 'Compras por proveedor',
-    sql: `SELECT AISEQ AS id, PRVCOD AS supplierCode, PRVNOM AS supplierName,
-      AICANTF AS quantity, AIPRECIO AS price FROM faxinv
+    sql: `SELECT MIN(AISEQ) AS id, PRVCOD AS supplierCode,
+      PRVNOM AS supplierName, SUM(AICANTF) AS quantity,
+      SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
       LEFT JOIN fprv ON faxinv.PRVSEQ=fprv.PRVSEQ
       LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE faxinv.ISEQ=? AND fprv.PRVSEQ<>0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 AND DESFACT=2 ORDER BY AISEQ`, parameterMode: 'id',
+      AND AIMES=1 AND DESFACT=2
+      GROUP BY fprv.PRVSEQ, PRVCOD, PRVNOM ORDER BY PRVCOD`, parameterMode: 'id',
   },
   'supplier-purchases-dt': {
     section: 'queries', button: 'Compras por proveedor DT',
@@ -363,7 +401,8 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     section: 'queries', button: 'Compras desglosadas',
     sql: `SELECT AISEQ AS id, PRVCOD AS supplierCode, PRVNOM AS supplierName,
       AICANTF AS quantity, AIPRECIO AS price, DNUM AS document, DFECHA AS date,
-      AIPZAS AS pieces, DTIPOCINI AS documentType FROM faxinv
+      AIPZAS AS pieces, DMONEDA AS currency, DTIPOCINI AS documentType,
+      (AICANTF * AIPRECIO) AS amount FROM faxinv
       LEFT JOIN fprv ON faxinv.PRVSEQ=fprv.PRVSEQ
       LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE faxinv.ISEQ=? AND fprv.PRVSEQ<>0 AND DEST=0 AND DMULTICIA=1
@@ -371,18 +410,46 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'annual-purchases': {
     section: 'queries', button: 'Compras anuales',
-    sql: `SELECT AISEQ AS id, DFECHA AS date, PRVCOD AS supplierCode,
-      AICANTF AS quantity FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
+    sql: `SELECT MIN(AISEQ) AS id, PRVCOD AS supplierCode,
+      PRVNOM AS supplierName, YEAR(DFECHA) AS year,
+      SUM(IF(MONTH(DFECHA)=1,AICANTF,0)) AS january,
+      SUM(IF(MONTH(DFECHA)=2,AICANTF,0)) AS february,
+      SUM(IF(MONTH(DFECHA)=3,AICANTF,0)) AS march,
+      SUM(IF(MONTH(DFECHA)=4,AICANTF,0)) AS april,
+      SUM(IF(MONTH(DFECHA)=5,AICANTF,0)) AS may,
+      SUM(IF(MONTH(DFECHA)=6,AICANTF,0)) AS june,
+      SUM(IF(MONTH(DFECHA)=7,AICANTF,0)) AS july,
+      SUM(IF(MONTH(DFECHA)=8,AICANTF,0)) AS august,
+      SUM(IF(MONTH(DFECHA)=9,AICANTF,0)) AS september,
+      SUM(IF(MONTH(DFECHA)=10,AICANTF,0)) AS october,
+      SUM(IF(MONTH(DFECHA)=11,AICANTF,0)) AS november,
+      SUM(IF(MONTH(DFECHA)=12,AICANTF,0)) AS december,
+      SUM(AICANTF) AS total FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       LEFT JOIN fprv ON faxinv.PRVSEQ=fprv.PRVSEQ
       WHERE faxinv.ISEQ=? AND DESFACT=2 AND AIMES=1 AND DEST=0
-      ORDER BY AISEQ`, parameterMode: 'id',
+      GROUP BY fprv.PRVSEQ, PRVCOD, PRVNOM, YEAR(DFECHA)
+      ORDER BY PRVCOD, year`, parameterMode: 'id',
   },
   'annual-purchases-summary': {
     section: 'queries', button: 'Compras anuales resumen',
-    sql: `SELECT AISEQ AS id, DFECHA AS date, AICANTF AS quantity
+    sql: `SELECT MIN(AISEQ) AS id, YEAR(DFECHA) AS year,
+      SUM(IF(MONTH(DFECHA)=1,AICANTF,0)) AS january,
+      SUM(IF(MONTH(DFECHA)=2,AICANTF,0)) AS february,
+      SUM(IF(MONTH(DFECHA)=3,AICANTF,0)) AS march,
+      SUM(IF(MONTH(DFECHA)=4,AICANTF,0)) AS april,
+      SUM(IF(MONTH(DFECHA)=5,AICANTF,0)) AS may,
+      SUM(IF(MONTH(DFECHA)=6,AICANTF,0)) AS june,
+      SUM(IF(MONTH(DFECHA)=7,AICANTF,0)) AS july,
+      SUM(IF(MONTH(DFECHA)=8,AICANTF,0)) AS august,
+      SUM(IF(MONTH(DFECHA)=9,AICANTF,0)) AS september,
+      SUM(IF(MONTH(DFECHA)=10,AICANTF,0)) AS october,
+      SUM(IF(MONTH(DFECHA)=11,AICANTF,0)) AS november,
+      SUM(IF(MONTH(DFECHA)=12,AICANTF,0)) AS december,
+      SUM(AICANTF) AS total
       FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
       WHERE faxinv.ISEQ=? AND DESFACT=2 AND AIMES=1 AND DEST=0
-      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0 ORDER BY AISEQ`, parameterMode: 'id',
+      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
+      GROUP BY YEAR(DFECHA) ORDER BY year`, parameterMode: 'id',
   },
   pieces: unavailable(
     'queries', 'Piezas', 'Esta version de OMNIS no contiene el modulo de PIEZAS',
@@ -399,8 +466,9 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   'work-in-progress': {
     section: 'queries', button: 'W.I.P.',
     sql: `SELECT TKTSEQ AS id, TKTNUMOP AS productionOrder,
-      TKTART AS componentCode, TKTCANT AS requested, TKTSURT AS fulfilled,
-      TKTMIN AS remaining, TKTINICIO AS startedAt, TKTMAQUINA AS machine,
+      TKTART AS operation, TKTCANT AS requested, TKTSURT AS fulfilled,
+      (TKTCANT - TKTSURT) AS remaining, TKTMIN AS time,
+      TKTINICIO AS startedAt, TKTMAQUINA AS machine,
       TKTORDEN AS sortOrder FROM ftikets WHERE TKTPROD=? ORDER BY TKTSEQ`,
     parameterMode: 'code',
   },
@@ -408,7 +476,9 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     section: 'queries', button: 'W.I.P. CT',
     sql: `SELECT TKTSEQ AS id, TKTPROD AS productCode,
       TKTNUMOP AS productionOrder, TKTART AS componentCode,
-      TKTCANT AS requested, TKTSURT AS fulfilled, TKTMAQUINA AS machine,
+      TKTCANT AS requested, TKTSURT AS fulfilled,
+      (TKTCANT - TKTSURT) AS remaining, TKTMIN AS time,
+      TKTMAQUINA AS machine,
       TKTDATEEND AS endsAt, TKTINICIO AS startedAt, TKTDATE AS date,
       TKTPAR0 AS parameter0, TKTPAR1 AS parameter1 FROM ftikets
       WHERE TKTPROD>=? AND TKTPROD<=CONCAT(?, 'z') ORDER BY TKTPROD,TKTSEQ`,
@@ -432,10 +502,21 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       AND DPAR9 IN ('9NVO','9HAB') AND AICANTF>AICANT AND AICANTF>0
       ORDER BY AISEQ`, parameterMode: 'id',
   },
-  documents: unavailable(
-    'queries', 'Documentos',
-    'La ventana reutilizo el ultimo documento y no emitio una consulta filtrada por producto',
-  ),
+  documents: {
+    section: 'queries', button: 'Documentos',
+    sql: `SELECT AISEQ AS id, DNUM AS document, DREFER AS reference,
+      CLICOD AS customerCode, CLINOM AS customerName, DFECHA AS date,
+      ICOD AS productCode, IDESCR AS productDescription,
+      IF(AICANTF > 0, AICANTF, 0) AS incoming,
+      IF(AICANTF < 0, ABS(AICANTF), 0) AS outgoing,
+      AIUNIDAD AS unit, AICOSTO AS cost, AIPZAS AS pieces,
+      AIALMACEN AS warehouse, DTIPOC2 AS documentType
+      FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
+      LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
+      LEFT JOIN finv ON faxinv.ISEQ=finv.ISEQ
+      WHERE faxinv.ISEQ=? AND AIMES=1 AND DEST=0 AND DMULTICIA=1
+      ORDER BY DFECHA DESC, AISEQ DESC`, parameterMode: 'id',
+  },
 };
 
 const parametersFor = (

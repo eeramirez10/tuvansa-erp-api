@@ -73,3 +73,20 @@ podrá reemplazar ambos adaptadores sin cambiar aplicación ni presentación.
 
 La captura literal de la barra está en `product-toolbar-sql.md` y los requests
 manuales están en `http/inventories/products.http`.
+
+## Consultas reproducidas en frontend
+
+Los 27 controles de **Consultas** están documentados por texto visible y
+endpoint en `product-buttons.md`. Para los modales agregados, MySQL devuelve la
+misma unidad visual que OMNIS: cliente, sucursal, proveedor o año/mes, según el
+botón. Esto evita calcular totales sobre una página incompleta de movimientos.
+
+El endpoint `GET /api/inventories/products/:productId/queries/documents` filtra
+`faxinv` por `ISEQ` y une `fdoc`, `fcli` y `finv` para llenar la ventana
+**Consulta de movimientos de inventario**. El endpoint de **Piezas** conserva
+`available: false` y el mensaje literal del ERP; **Piezas surtidas** sí consulta
+`fcajas`.
+
+Las consultas aceptan `pageSize` hasta 500. El producto de verificación manual
+es `01300958` (`ISEQ=13288`) porque contiene movimiento suficiente para validar
+tablas, desplazamiento y totales con la base actual de desarrollo.

@@ -24,7 +24,7 @@ const searchQuerySchema = z.object({
 
 const panelQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  pageSize: z.coerce.number().int().positive().max(100).default(25),
+  pageSize: z.coerce.number().int().positive().max(500).default(100),
 });
 
 const blockStatusBodySchema = z.object({ blocked: z.boolean() }).strict();

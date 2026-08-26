@@ -1,6 +1,7 @@
 @baseUrl = http://localhost:3000
 @apiPrefix = /api
-@productId = 47087
+@productId = 13288
+@panelPageSize = 500
 @temporaryProductCode = QAPI826
 
 ### Catalogo - todos los productos
@@ -8,7 +9,7 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products?page=1&pageSize=25
 Accept: application/json
 
 ### Barra - buscar por codigo o descripcion
-GET {{baseUrl}}{{apiPrefix}}/inventories/products?q=004212899&page=1&pageSize=25
+GET {{baseUrl}}{{apiPrefix}}/inventories/products?q=01300958&page=1&pageSize=25
 Accept: application/json
 
 ### Catalogo - ficha del producto
@@ -148,82 +149,82 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-produc
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/inventory-layers
 
 ### Consultas - Auxiliar
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Pedidos por cliente
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Pedidos por cliente asterisco
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/star
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/star?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Pedidos por cliente CT
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/ct
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/ct?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Cotizaciones por cliente
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-quotes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-quotes?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas por cliente
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas por cliente asterisco
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/star
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/star?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas por cliente CT
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/ct
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/ct?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas desglosadas
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/detail
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/detail?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas por sucursal
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/by-branch
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/by-branch?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas anuales
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/annual
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/annual?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ventas anuales resumen
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/annual-summary
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/annual-summary?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ordenado a proveedor
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Ordenado a proveedor CT
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders/ct
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders/ct?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Cotizado a proveedores
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-quotes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-quotes?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Compras por proveedor
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Compras por proveedor DT
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases/dt
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases/dt?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Compras desglosadas
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases/detail
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases/detail?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Compras anuales
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/purchases/annual
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/purchases/annual?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Compras anuales resumen
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/purchases/annual-summary
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/purchases/annual-summary?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Piezas
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pieces
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pieces?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Piezas surtidas
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pieces/fulfilled
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pieces/fulfilled?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - WIP
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/work-in-progress
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/work-in-progress?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - WIP CT
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/work-in-progress/ct
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/work-in-progress/ct?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - EDI
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/edi
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/edi?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Habilitaciones pendientes
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pending-enablements
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pending-enablements?page=1&pageSize={{panelPageSize}}
 
 ### Consultas - Documentos
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/documents
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/documents?page=1&pageSize={{panelPageSize}}

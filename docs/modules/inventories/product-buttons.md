@@ -69,6 +69,15 @@ origen, registros y paginacion.
 
 ## Evidencia y adaptacion
 
+### Ventana Auxiliar
+
+La ventana visible se valido de nuevo en OMNIS con el producto `010193`. El
+endpoint conserva el orden cronologico de `faxinv` y expone los campos que la
+tabla presenta como `Fecha`, `Doc.`, `T.M.`, `Costo`, `Entradas`, `Salidas`,
+`Stock`, `Alm`, `Lote`, `Usr` y `Reval`. `AIUSEQ` se publica como `userId` y
+`faxinv.LOSEQ` como `lotId`; entradas, salidas y stock acumulado se derivan de
+`AICANT` en la presentacion.
+
 La captura literal completa esta en `product-buttons-capture.md` y el archivo
 crudo local en `captures/inventory-pt-buttons-2026-08-26.log`. La API conserva
 los `JOIN` y filtros funcionales observados, usa parametros enlazados, agrega

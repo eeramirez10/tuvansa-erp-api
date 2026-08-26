@@ -189,8 +189,9 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     section: 'queries', button: 'Auxiliar',
     sql: `SELECT AISEQ AS id, DFECHA AS date, DNUM AS document,
       AICANT AS quantity, AICOSTO AS cost, AITIPMV AS movementType,
-      AIALMACEN AS warehouse, DRUTA AS route, AIUSEQ AS unitId,
-      AIREVAL AS revaluation, LOPEDIM AS customsEntry, DREFER AS reference,
+      AIALMACEN AS warehouse, faxinv.LOSEQ AS lotId, DRUTA AS route,
+      AIUSEQ AS userId, AIREVAL AS revaluation,
+      LOPEDIM AS customsEntry, DREFER AS reference,
       AIPZAS AS pieces, AISKU AS sku, AICANTF AS finalQuantity,
       DREFERELLOS AS ellosReference, AIPRECIO AS price
       FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ

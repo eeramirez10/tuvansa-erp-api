@@ -50,7 +50,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     parameterMode: 'id',
   },
   'color-size-registration': unavailable(
-    'actions', 'Alta CT', 'Esta version de OMNIS no contiene el modulo COLOR Y TALLA',
+    'actions', 'Alta CT', 'Esta versión no contiene el módulo de COLOR Y TALLA',
   ),
   'block-status': {
     section: 'actions', button: 'Bloquear', source: 'product-cache',

@@ -35,6 +35,24 @@ origen, registros y paginacion.
 | Lotes | `/:productId/purchases-production/lots` | `flotes.ISEQ` |
 | UEPS / PEPS | `/:productId/purchases-production/inventory-layers` | `flotes.ISEQ` |
 
+### Presentación de las ventanas de Acciones
+
+| Botón | Ventana OMNIS reproducida |
+| --- | --- |
+| Almacenes | Tabla horizontal por almacén, fila TOTAL, scroll XY y controles de localización/mínimos |
+| Alta CT | Aviso literal del módulo Color y Talla no incluido |
+| Bloquear | Confirmación No/Yes y cambio real de `finv.IBAJA` mediante PATCH |
+| Clasificar | Selector doble de familias con bloque SELECCIONADOS |
+| Descr. ext. | Cuatro bloques de descripción y botón Cambiar |
+| % Descuentos clis/prv | Filtros superiores, tabla de descuentos y scroll XY |
+| Otros | Formulario vertical por secciones de empaque, opciones, precios, importación y producción |
+| Especificaciones | Lista vertical de descripciones y botón Cambiar |
+| Foto | Visor con modos Normal, Boceto, Boceto 2, Color y Completo |
+| Inv. CT | Matriz por almacén y selector visual de Stock/Pedido/Disponible/etc. |
+| Precios | Costo y listas 1..13 con moneda y plan POS |
+| SKUs | Tabla L/SKU y botones Cancelar/Aceptar |
+| Prepacks | Matriz horizontal, código del producto y botones OK/Cancelar/Reparte |
+
 ## Consultas
 
 | Boton OMNIS | Endpoint GET | Origen confirmado |

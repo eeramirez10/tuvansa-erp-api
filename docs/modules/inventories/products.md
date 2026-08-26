@@ -90,3 +90,23 @@ El endpoint `GET /api/inventories/products/:productId/queries/documents` filtra
 Las consultas aceptan `pageSize` hasta 500. El producto de verificación manual
 es `01300958` (`ISEQ=13288`) porque contiene movimiento suficiente para validar
 tablas, desplazamiento y totales con la base actual de desarrollo.
+
+## Acciones reproducidas en frontend
+
+Los 14 controles de **Acciones** conservan el nombre visible de OMNIS y su
+correspondencia de endpoint está en `product-buttons.md`. La presentación usa
+ventanas específicas para Almacenes, Clasificar, Descripción extendida,
+descuentos, Otros, Especificaciones, Foto, inventario CT, Precios, SKUs y
+Prepacks; no se muestra la respuesta JSON genérica.
+
+**Alta CT** conserva el aviso de que la versión no incluye Color y Talla y
+**Foto** conserva el visor aunque OMNIS no haya emitido SQL para la imagen. El
+botón **Bloquear** consulta el estado mediante GET y confirma el cambio mediante
+`PATCH /api/inventories/products/:productId/actions/block-status` con
+`{ "blocked": boolean }`. Los demás botones internos de estas ventanas quedan
+visuales hasta capturar sus operaciones en una etapa posterior.
+
+La conexión MySQL configurada durante esta validación permite lectura pero
+rechaza `UPDATE finv`; por ello el contrato PATCH queda preparado y conectado,
+pero sólo podrá completar el cambio cuando la API use credenciales de escritura
+o el futuro repositorio PostgreSQL. La prueba fallida no alteró el producto.

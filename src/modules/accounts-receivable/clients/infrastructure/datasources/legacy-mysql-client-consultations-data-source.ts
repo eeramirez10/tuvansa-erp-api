@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import type { ClientConsultationsDataSource } from '../../domain/datasources/client-consultations-data-source.js';
 import type {
   ClientAnnualSale,
   ClientAnnualSalesSummaryItem,
@@ -19,7 +20,6 @@ import type {
 import type {
   ClientConsultationCriteria,
   ClientConsultationResult,
-  ClientConsultationsRepository,
 } from '../../domain/repositories/client-consultations-repository.js';
 
 interface ClientRow extends RowDataPacket, ClientConsultationIdentity {}
@@ -34,7 +34,7 @@ interface InvoiceRow extends Omit<ClientInvoice, 'affectsAccountsReceivable'> {
   affectsAccountsReceivable: number;
 }
 
-export class LegacyMysqlClientConsultationsRepository implements ClientConsultationsRepository {
+export class LegacyMysqlClientConsultationsDataSource implements ClientConsultationsDataSource {
   private async findClient(clientId: number): Promise<ClientConsultationIdentity | null> {
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(`
       SELECT

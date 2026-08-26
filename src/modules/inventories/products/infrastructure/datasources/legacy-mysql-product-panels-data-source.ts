@@ -148,26 +148,87 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   alternates: {
     section: 'purchases-production', button: 'Alternos',
     sql: `SELECT ALTSEQ AS id, ALTPROD AS productCode, ALTART AS alternateCode,
-      ALTVTA AS salePrice, ALTIGUALES AS equivalent, ALTPORCENT AS percentage
-      FROM falternos WHERE ALTPROD = ? ORDER BY ALTSEQ`, parameterMode: 'code',
+      alternate.IDESCR AS alternateDescription, alternate.ISTKACT AS stock,
+      alternate.ILISTA1 AS price1, ALTVTA AS salePrice,
+      ALTIGUALES AS equivalent, ALTPORCENT AS percentage,
+      ALTTIPO AS alternateType, ALTVALOR AS alternateValue, ALTGEN AS generation
+      FROM falternos
+      LEFT JOIN finv AS alternate ON alternate.ICOD = falternos.ALTART
+      WHERE ALTPROD = ? ORDER BY ALTSEQ`, parameterMode: 'code',
   },
   components: {
     section: 'purchases-production', button: 'Componentes',
     sql: `SELECT ENSEQ AS id, EPRO AS productCode, EART AS componentCode,
-      ECANT AS quantity, EORDEN AS sortOrder, EHERENCIA AS inheritance,
+      component.IDESCR AS componentDescription, component.ISTKACT AS stock,
+      component.ILISTA1 AS price1, component.ILISTA4 AS cost,
+      (ECANT * component.ILISTA4) AS amount, ECANT AS quantity,
+      EORDEN AS sortOrder, EHERENCIA AS inheritance,
       EHERENCIA2 AS inheritance2, EUSO AS usageValue, EFACTOR AS factor,
-      EUNIDAD AS unit FROM fens WHERE EPRO = ? ORDER BY ENSEQ`, parameterMode: 'code',
+      EUNIDAD AS unit FROM fens
+      LEFT JOIN finv AS component ON component.ICOD = fens.EART
+      WHERE EPRO = ? ORDER BY ENSEQ`, parameterMode: 'code',
   },
   'quality-specifications': {
     section: 'purchases-production', button: 'Especific. Cal',
-    sql: `SELECT PRSEQ AS id, PRUPRV AS testCode FROM fpruebas
-      WHERE ISEQ = ? ORDER BY PRSEQ`, parameterMode: 'id',
+    sql: `SELECT CONCAT(PRSEQ, '-', slots.n) AS id, PRSEQ AS specificationId,
+      slots.n AS testNumber, PRUPRV AS providerCode, PRUKEY AS specificationKey,
+      CASE slots.n
+        WHEN 1 THEN PRNOMBRE1 WHEN 2 THEN PRNOMBRE2 WHEN 3 THEN PRNOMBRE3
+        WHEN 4 THEN PRNOMBRE4 WHEN 5 THEN PRNOMBRE5 WHEN 6 THEN PRNOMBRE6
+        WHEN 7 THEN PRNOMBRE7 WHEN 8 THEN PRNOMBRE8 WHEN 9 THEN PRNOMBRE9
+        WHEN 10 THEN PRNOMBRE10 WHEN 11 THEN PRNOMBRE11 WHEN 12 THEN PRNOMBRE12
+        WHEN 13 THEN PRNOMBRE13 WHEN 14 THEN PRNOMBRE14 ELSE PRNOMBRE15 END AS testName,
+      CASE slots.n
+        WHEN 1 THEN PRMIN1 WHEN 2 THEN PRMIN2 WHEN 3 THEN PRMIN3
+        WHEN 4 THEN PRMIN4 WHEN 5 THEN PRMIN5 WHEN 6 THEN PRMIN6
+        WHEN 7 THEN PRMIN7 WHEN 8 THEN PRMIN8 WHEN 9 THEN PRMIN9
+        WHEN 10 THEN PRMIN10 WHEN 11 THEN PRMIN11 WHEN 12 THEN PRMIN12
+        WHEN 13 THEN PRMIN13 WHEN 14 THEN PRMIN14 ELSE PRMIN15 END AS minimum,
+      CASE slots.n
+        WHEN 1 THEN PRMAX1 WHEN 2 THEN PRMAX2 WHEN 3 THEN PRMAX3
+        WHEN 4 THEN PRMAX4 WHEN 5 THEN PRMAX5 WHEN 6 THEN PRMAX6
+        WHEN 7 THEN PRMAX7 WHEN 8 THEN PRMAX8 WHEN 9 THEN PRMAX9
+        WHEN 10 THEN PRMAX10 WHEN 11 THEN PRMAX11 WHEN 12 THEN PRMAX12
+        WHEN 13 THEN PRMAX13 WHEN 14 THEN PRMAX14 ELSE PRMAX15 END AS maximum,
+      CASE slots.n
+        WHEN 1 THEN PRUM1 WHEN 2 THEN PRUM2 WHEN 3 THEN PRUM3
+        WHEN 4 THEN PRUM4 WHEN 5 THEN PRUM5 WHEN 6 THEN PRUM6
+        WHEN 7 THEN PRUM7 WHEN 8 THEN PRUM8 WHEN 9 THEN PRUM9
+        WHEN 10 THEN PRUM10 WHEN 11 THEN PRUM11 WHEN 12 THEN PRUM12
+        WHEN 13 THEN PRUM13 WHEN 14 THEN PRUM14 ELSE PRUM15 END AS unit,
+      CASE slots.n
+        WHEN 1 THEN PROBS1 WHEN 2 THEN PROBS2 WHEN 3 THEN PROBS3
+        WHEN 4 THEN PROBS4 WHEN 5 THEN PROBS5 WHEN 6 THEN PROBS6
+        WHEN 7 THEN PROBS7 WHEN 8 THEN PROBS8 WHEN 9 THEN PROBS9
+        WHEN 10 THEN PROBS10 WHEN 11 THEN PROBS11 WHEN 12 THEN PROBS12
+        WHEN 13 THEN PROBS13 WHEN 14 THEN PROBS14 ELSE PROBS15 END AS observations,
+      CASE slots.n
+        WHEN 1 THEN PRMETODO1 WHEN 2 THEN PRMETODO2 WHEN 3 THEN PRMETODO3
+        WHEN 4 THEN PRMETODO4 WHEN 5 THEN PRMETODO5 WHEN 6 THEN PRMETODO6
+        WHEN 7 THEN PRMETODO7 WHEN 8 THEN PRMETODO8 WHEN 9 THEN PRMETODO9
+        WHEN 10 THEN PRMETODO10 WHEN 11 THEN PRMETODO11 WHEN 12 THEN PRMETODO12
+        WHEN 13 THEN PRMETODO13 WHEN 14 THEN PRMETODO14 ELSE PRMETODO15 END AS method,
+      CASE slots.n
+        WHEN 1 THEN PRPRIORIDAD1 WHEN 2 THEN PRPRIORIDAD2 WHEN 3 THEN PRPRIORIDAD3
+        WHEN 4 THEN PRPRIORIDAD4 WHEN 5 THEN PRPRIORIDAD5 WHEN 6 THEN PRPRIORIDAD6
+        WHEN 7 THEN PRPRIORIDAD7 WHEN 8 THEN PRPRIORIDAD8 WHEN 9 THEN PRPRIORIDAD9
+        WHEN 10 THEN PRPRIORIDAD10 WHEN 11 THEN PRPRIORIDAD11 WHEN 12 THEN PRPRIORIDAD12
+        WHEN 13 THEN PRPRIORIDAD13 WHEN 14 THEN PRPRIORIDAD14 ELSE PRPRIORIDAD15 END AS priority
+      FROM fpruebas
+      CROSS JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3
+        UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+        UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+        UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+        UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15) AS slots
+      WHERE ISEQ = ? ORDER BY PRSEQ, slots.n`, parameterMode: 'id',
   },
   implosion: {
     section: 'purchases-production', button: 'Implosion',
     sql: `SELECT ENSEQ AS id, EPRO AS parentProductCode, EART AS componentCode,
-      ECANT AS quantity, EORDEN AS sortOrder, EFACTOR AS factor, EUNIDAD AS unit
-      FROM fens WHERE EART = ? ORDER BY ENSEQ`, parameterMode: 'code',
+      parent.IDESCR AS parentDescription, ECANT AS quantity,
+      EORDEN AS sortOrder, EFACTOR AS costPercentage, EUNIDAD AS unit
+      FROM fens LEFT JOIN finv AS parent ON parent.ICOD = fens.EPRO
+      WHERE EART = ? ORDER BY ENSEQ`, parameterMode: 'code',
   },
   lots: {
     section: 'purchases-production', button: 'Lotes',
@@ -182,7 +243,8 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     sql: `SELECT LOSEQ AS id, LOCANTINI AS initialQuantity, LOCANT AS quantity,
       LOCOSTO AS cost, LOCOSTOADV AS adValoremCost, LOFECHA AS date,
       LODOC AS document, LOLOTE AS lot, LOCADUCIDAD AS expiresAt,
-      LOALM AS warehouse, LOPRV AS supplier, LOTIPOC2 AS layerType
+      LOALM AS warehouse, LOPRV AS supplier, LOTIPOC2 AS layerType,
+      LOKEY AS layerKey
       FROM flotes WHERE ISEQ = ? ORDER BY LOSEQ`, parameterMode: 'id',
   },
   ledger: {

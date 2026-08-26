@@ -110,3 +110,22 @@ La conexión MySQL configurada durante esta validación permite lectura pero
 rechaza `UPDATE finv`; por ello el contrato PATCH queda preparado y conectado,
 pero sólo podrá completar el cambio cuando la API use credenciales de escritura
 o el futuro repositorio PostgreSQL. La prueba fallida no alteró el producto.
+
+## Compras/Prod reproducido en frontend
+
+Los seis botones de **Compras/Prod** ya usan ventanas específicas en lugar de
+la tabla JSON genérica. `Alternos` une `falternos` con la ficha del artículo
+alterno; `Componentes` e `Implosión` unen `fens` con `finv` para exponer la
+descripción y costos visibles; `Lotes` y `UEPS/PEPS` conservan las columnas de
+`flotes` observadas en OMNIS.
+
+`Especific. Cal` requiere una adaptación especial: `fpruebas` guarda hasta 15
+pruebas en columnas numeradas de una misma fila. El datasource las convierte en
+15 registros API con `testName`, `minimum`, `maximum`, `unit`, `observations`,
+`method` y `priority`, sin trasladar esa estructura legacy al frontend.
+
+El modal **Auxiliar de lotes** consume su endpoint de lotes para el panel
+izquierdo y reutiliza `queries/ledger` para las entradas y salidas del panel
+derecho. Los botones internos permanecen visuales hasta capturar los flujos de
+escritura. Se validaron datos con `ISEQ=60066` (componentes), `ISEQ=824`
+(implosión), `ISEQ=17453` (lotes/capas) y `ISEQ=13288` (calidad).

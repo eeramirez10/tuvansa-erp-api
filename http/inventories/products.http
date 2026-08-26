@@ -131,22 +131,22 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/skus
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/prepacks
 
 ### Compras/Prod - Alternos
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/alternates
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/alternates?page=1&pageSize=500
 
 ### Compras/Prod - Componentes
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/components
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/components?page=1&pageSize=500
 
 ### Compras/Prod - Especificaciones de calidad
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/quality-specifications
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/quality-specifications?page=1&pageSize=500
 
 ### Compras/Prod - Implosion
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/implosion
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/implosion?page=1&pageSize=500
 
 ### Compras/Prod - Lotes
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/lots
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/lots?page=1&pageSize=500
 
 ### Compras/Prod - UEPS/PEPS
-GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/inventory-layers
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/inventory-layers?page=1&pageSize=500
 
 ### Consultas - Auxiliar
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger?page=1&pageSize={{panelPageSize}}

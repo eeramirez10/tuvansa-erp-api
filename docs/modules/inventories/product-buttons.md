@@ -53,6 +53,17 @@ origen, registros y paginacion.
 | SKUs | Tabla L/SKU y botones Cancelar/Aceptar |
 | Prepacks | Matriz horizontal, código del producto y botones OK/Cancelar/Reparte |
 
+### Presentación de las ventanas de Compras/Prod
+
+| Botón | Ventana OMNIS reproducida |
+| --- | --- |
+| Alternos | Cabecera del producto, tabla Código/Descripción/Stock/Precio 1 y navegación inferior |
+| Componentes | Cabecera con lote y unidad, filtros, tabla XY de componentes, totales y comandos inferiores |
+| Especific. Cal | Selector lateral y matriz de 15 pruebas con mínimo, máximo, unidad y observaciones |
+| Implosión | Cabecera del componente, productos padre, cantidad, porcentaje de costo y navegación |
+| Lotes | Dos paneles: lotes disponibles y movimientos de entradas/salidas, con totales separados |
+| UEPS / PEPS | Capas de inventario con cantidad inicial, costo, advalorem, documento, lote, caducidad y llave |
+
 ## Consultas
 
 | Boton OMNIS | Endpoint GET | Origen confirmado |

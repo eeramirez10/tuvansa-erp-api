@@ -268,7 +268,8 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
   async search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
     const searchCondition = criteria.query === undefined
       ? ''
-      : ' AND (ICOD LIKE ? OR IDESCR LIKE ? OR IEAN LIKE ? OR IUPC LIKE ?)';
+      : ` AND (UPPER(ICOD) LIKE UPPER(?) OR UPPER(IDESCR) LIKE UPPER(?)
+        OR UPPER(IEAN) LIKE UPPER(?) OR UPPER(IUPC) LIKE UPPER(?))`;
     const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}`;
     const parameters = criteria.query === undefined
       ? []

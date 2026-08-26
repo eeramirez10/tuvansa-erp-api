@@ -28,6 +28,8 @@ DELETE /api/inventories/products/:productId
 
 El listado acepta `q`, `status`, `page` y `pageSize`. `q` busca por código,
 descripción, EAN o UPC; `status` acepta `active`, `inactive` y `all`.
+La comparación de `q` no distingue mayúsculas/minúsculas, incluso cuando la
+colación de la base legacy sí lo hace.
 
 ## Mapeo de la ficha
 

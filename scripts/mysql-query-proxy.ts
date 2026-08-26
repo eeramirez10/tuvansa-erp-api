@@ -21,6 +21,7 @@ const proxy = net.createServer((client) => {
   const connectionId = nextConnectionId++;
   const target = net.createConnection({ host: targetHost, port: targetPort });
   let clientBuffer = Buffer.alloc(0);
+  let targetBuffer = Buffer.alloc(0);
 
   console.log(`CONNECTED ${connectionId}`);
   record({ type: 'connection', connectionId });
@@ -57,6 +58,23 @@ const proxy = net.createServer((client) => {
 
   target.on('drain', () => client.resume());
   target.on('data', (chunk) => {
+    targetBuffer = Buffer.concat([targetBuffer, chunk]);
+    while (targetBuffer.length >= 4) {
+      const payloadLength = targetBuffer.readUIntLE(0, 3);
+      const packetLength = payloadLength + 4;
+      if (targetBuffer.length < packetLength) break;
+
+      const payload = targetBuffer.subarray(4, packetLength);
+      targetBuffer = targetBuffer.subarray(packetLength);
+      if (payload[0] === 0xff && payload.length >= 3) {
+        const code = payload.readUInt16LE(1);
+        const messageStart = payload[3] === 0x23 ? 9 : 3;
+        const message = payload.subarray(messageStart).toString('latin1');
+        console.error(`MYSQL_ERROR ${connectionId} ${code} ${message}`);
+        record({ type: 'mysql-error', connectionId, code, message });
+      }
+    }
+
     if (!client.write(chunk)) {
       target.pause();
     }

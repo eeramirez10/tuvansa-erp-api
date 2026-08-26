@@ -26,12 +26,12 @@ datasources y repositories PostgreSQL sin cambiar presentacion ni aplicacion.
 ## Comandos
 
 ```bash
-npm install
-npm run dev
-npm run typecheck
-npm run lint
-npm test
-npm run build
+pnpm install
+pnpm dev
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
 ```
 
 ## Endpoints iniciales

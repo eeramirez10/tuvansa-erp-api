@@ -1,0 +1,229 @@
+@baseUrl = http://localhost:3000
+@apiPrefix = /api
+@productId = 47087
+@temporaryProductCode = QAPI826
+
+### Catalogo - todos los productos
+GET {{baseUrl}}{{apiPrefix}}/inventories/products?page=1&pageSize=25
+Accept: application/json
+
+### Barra - buscar por codigo o descripcion
+GET {{baseUrl}}{{apiPrefix}}/inventories/products?q=004212899&page=1&pageSize=25
+Accept: application/json
+
+### Catalogo - ficha del producto
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}
+Accept: application/json
+
+### Barra - producto anterior
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/previous
+Accept: application/json
+
+### Barra - producto siguiente
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/next
+Accept: application/json
+
+### Barra - alta temporal (ejecutar antes de cambio y baja)
+# @name createTemporaryProduct
+POST {{baseUrl}}{{apiPrefix}}/inventories/products
+Content-Type: application/json
+Accept: application/json
+
+{
+  "code": "{{temporaryProductCode}}",
+  "description": "Producto temporal desde API",
+  "classification": {
+    "type": "rawMaterial",
+    "unitId": 1,
+    "familyCode": ""
+  },
+  "prices": {
+    "sale": [
+      { "amount": 0, "currencyId": 1 },
+      { "amount": 0, "currencyId": 0 },
+      { "amount": 0, "currencyId": 0 }
+    ]
+  },
+  "warehouse": {
+    "minimum": 0,
+    "maximum": 0,
+    "location": "",
+    "ean": "",
+    "upc": "",
+    "accounts": {
+      "primary": "",
+      "secondary": "",
+      "costOfSales": ""
+    }
+  }
+}
+
+### Barra - cambio al producto temporal
+PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{createTemporaryProduct.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "description": "Producto temporal editado desde API"
+}
+
+### Barra - baja del producto temporal
+DELETE {{baseUrl}}{{apiPrefix}}/inventories/products/{{createTemporaryProduct.response.body.$.data.id}}
+Accept: application/json
+
+### Acciones - Almacenes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/warehouses?page=1&pageSize=25
+
+### Acciones - Alta CT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/color-size-registration
+
+### Acciones - Bloquear (estado)
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/block-status
+
+### Acciones - Bloquear producto
+PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/block-status
+Content-Type: application/json
+
+{
+  "blocked": true
+}
+
+### Acciones - Desbloquear producto
+PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/block-status
+Content-Type: application/json
+
+{
+  "blocked": false
+}
+
+### Acciones - Clasificar
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/classifications
+
+### Acciones - Descripcion extendida
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/extended-description
+
+### Acciones - Descuentos clientes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/discounts/customers
+
+### Acciones - Descuentos proveedores
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/discounts/suppliers
+
+### Acciones - Otros
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/other-data
+
+### Acciones - Especificaciones
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/specifications
+
+### Acciones - Foto
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/photo
+
+### Acciones - Inventario CT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/ct-inventory
+
+### Acciones - Precios
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/prices
+
+### Acciones - SKUs
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/skus
+
+### Acciones - Prepacks
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/prepacks
+
+### Compras/Prod - Alternos
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/alternates
+
+### Compras/Prod - Componentes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/components
+
+### Compras/Prod - Especificaciones de calidad
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/quality-specifications
+
+### Compras/Prod - Implosion
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/implosion
+
+### Compras/Prod - Lotes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/lots
+
+### Compras/Prod - UEPS/PEPS
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-production/inventory-layers
+
+### Consultas - Auxiliar
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger
+
+### Consultas - Pedidos por cliente
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders
+
+### Consultas - Pedidos por cliente asterisco
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/star
+
+### Consultas - Pedidos por cliente CT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/ct
+
+### Consultas - Cotizaciones por cliente
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-quotes
+
+### Consultas - Ventas por cliente
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales
+
+### Consultas - Ventas por cliente asterisco
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/star
+
+### Consultas - Ventas por cliente CT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/ct
+
+### Consultas - Ventas desglosadas
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/detail
+
+### Consultas - Ventas por sucursal
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/by-branch
+
+### Consultas - Ventas anuales
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/annual
+
+### Consultas - Ventas anuales resumen
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/annual-summary
+
+### Consultas - Ordenado a proveedor
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders
+
+### Consultas - Ordenado a proveedor CT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders/ct
+
+### Consultas - Cotizado a proveedores
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-quotes
+
+### Consultas - Compras por proveedor
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases
+
+### Consultas - Compras por proveedor DT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases/dt
+
+### Consultas - Compras desglosadas
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-purchases/detail
+
+### Consultas - Compras anuales
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/purchases/annual
+
+### Consultas - Compras anuales resumen
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/purchases/annual-summary
+
+### Consultas - Piezas
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pieces
+
+### Consultas - Piezas surtidas
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pieces/fulfilled
+
+### Consultas - WIP
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/work-in-progress
+
+### Consultas - WIP CT
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/work-in-progress/ct
+
+### Consultas - EDI
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/edi
+
+### Consultas - Habilitaciones pendientes
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/pending-enablements
+
+### Consultas - Documentos
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/documents

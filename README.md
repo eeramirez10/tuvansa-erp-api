@@ -2,22 +2,26 @@
 
 Backend Express + TypeScript para migrar progresivamente el ERP Proscai.
 
-La primera etapa expone exclusivamente consultas de lectura sobre el origen
-legado. Las escrituras se habilitaran despues de crear la nueva base de datos y
-migrar la informacion.
+La primera etapa consulta el origen legado y reproduce, modulo por modulo, las
+operaciones confirmadas mediante captura de OMNIS. Las credenciales configuradas
+determinan si los endpoints de escritura pueden ejecutarse contra la base de
+pruebas. Al crear la nueva base de datos, los adaptadores se reemplazaran sin
+cambiar los casos de uso ni el contrato HTTP.
 
 ## Arquitectura
 
 Cada modulo se divide en:
 
-- `domain`: entidades y contratos sin dependencias externas.
+- `domain`: entidades y contratos de repositorios y fuentes de datos, sin
+  dependencias externas.
 - `application`: casos de uso y DTOs.
 - `infrastructure`: acceso al origen Proscai e implementaciones tecnicas.
 - `presentation`: controladores, validacion y rutas HTTP.
 
-Las dependencias apuntan hacia el dominio. La implementacion del repositorio
-legado puede reemplazarse en el futuro por la nueva base de datos sin cambiar el
-contrato HTTP ni los casos de uso.
+Las dependencias apuntan hacia el dominio. El SQL vive exclusivamente en los
+`infrastructure/datasources`; los repositorios de infraestructura solamente
+delegan al datasource correspondiente. Esto permite incorporar posteriormente
+datasources y repositories PostgreSQL sin cambiar presentacion ni aplicacion.
 
 ## Comandos
 
@@ -60,9 +64,17 @@ GET /api/accounts-receivable/clients/:clientId/actions/events
 GET /api/accounts-receivable/clients/:clientId/actions/branches
 GET /api/accounts-receivable/clients/:clientId/actions/photo
 GET /api/accounts-receivable/clients/:clientId/actions/contacts
+GET /api/inventories/products
+POST /api/inventories/products
+GET /api/inventories/products/:productId
+GET /api/inventories/products/:productId/previous
+GET /api/inventories/products/:productId/next
+PATCH /api/inventories/products/:productId
+DELETE /api/inventories/products/:productId
 ```
 
-Los endpoints de clientes consultan en modo de solo lectura el origen legado.
+La documentacion detallada de cada pantalla indica cuales endpoints son de
+lectura y cuales reproducen los botones de escritura capturados en OMNIS.
 
 ## Solicitudes HTTP
 

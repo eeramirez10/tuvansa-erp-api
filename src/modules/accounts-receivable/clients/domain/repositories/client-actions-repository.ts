@@ -16,6 +16,11 @@ export interface ClientActionCriteria {
   offset: number;
 }
 
+export interface ClientClassificationCriteria {
+  clientId: number;
+  position: number;
+}
+
 export interface ClientActionResult<T extends object> {
   client: ClientActionIdentity;
   payload: T;
@@ -23,9 +28,10 @@ export interface ClientActionResult<T extends object> {
 }
 
 export interface ClientActionsRepository {
-  findClassifications(clientId: number): Promise<ClientActionResult<{
+  findClassifications(criteria: ClientClassificationCriteria): Promise<ClientActionResult<{
     classifications: ClientClassificationValue[];
-    availableAgentOptions: ClientClassificationOption[];
+    selectedPosition: number;
+    options: ClientClassificationOption[];
   }> | null>;
   findDestinations(clientId: number): Promise<ClientActionResult<{
     destinations: UnresolvedClientAction;

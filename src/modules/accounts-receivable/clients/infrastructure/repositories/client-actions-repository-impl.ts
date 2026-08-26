@@ -4,8 +4,8 @@ import type { ClientActionsRepository } from '../../domain/repositories/client-a
 export class ClientActionsRepositoryImpl implements ClientActionsRepository {
   constructor(private readonly dataSource: ClientActionsDataSource) {}
 
-  findClassifications: ClientActionsRepository['findClassifications'] = (clientId) =>
-    this.dataSource.findClassifications(clientId);
+  findClassifications: ClientActionsRepository['findClassifications'] = (criteria) =>
+    this.dataSource.findClassifications(criteria);
   findDestinations: ClientActionsRepository['findDestinations'] = (clientId) =>
     this.dataSource.findDestinations(clientId);
   findBlockStatus: ClientActionsRepository['findBlockStatus'] = (clientId) =>

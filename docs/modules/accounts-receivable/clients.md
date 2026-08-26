@@ -51,7 +51,7 @@ GET /api/accounts-receivable/clients/:clientId/work-in-progress
 GET /api/accounts-receivable/clients/:clientId/ct/products/ordered
 GET /api/accounts-receivable/clients/:clientId/ct/products/sold
 GET /api/accounts-receivable/clients/:clientId/ct/work-in-progress
-GET /api/accounts-receivable/clients/:clientId/actions/classifications
+GET /api/accounts-receivable/clients/:clientId/actions/classifications?position=1
 GET /api/accounts-receivable/clients/:clientId/actions/destinations
 GET /api/accounts-receivable/clients/:clientId/actions/block-status
 GET /api/accounts-receivable/clients/:clientId/actions/discounts
@@ -217,7 +217,7 @@ actualizarse cada vez que se agregue un endpoint del modulo.
 | Consultas CT | Productos pedidos | `/api/accounts-receivable/clients/:clientId/ct/products/ordered` | `CLIENT_000001_CT_PRODUCTOS_PEDIDOS` | `fplin`, `fpenc`, `finv` |
 | Consultas CT | Productos vendidos | `/api/accounts-receivable/clients/:clientId/ct/products/sold` | `CLIENT_000001_CT_PRODUCTOS_VENDIDOS` | `faxinv`, `fdoc`, `finv` |
 | Consultas CT | WIP | `/api/accounts-receivable/clients/:clientId/ct/work-in-progress` | `CLIENT_000001_CT_WIP` | `ftikets` |
-| Acciones | Clasificar | `/api/accounts-receivable/clients/:clientId/actions/classifications` | `CLIENT_000001_ACTION_CLASIFICAR_RETRY` | `fcli`, `fag` |
+| Acciones | Clasificar | `/api/accounts-receivable/clients/:clientId/actions/classifications?position=1..9` | `CLIENT_000001_ACTION_CLASIFICAR_RETRY` y recaptura `client-classifications-sql.md` | `fcli`, `fag` |
 | Acciones | Enviar a | `/api/accounts-receivable/clients/:clientId/actions/destinations` | `CLIENT_000001_ACTION_ENVIAR_A` | Sin origen funcional capturado |
 | Acciones | Bloquear | `/api/accounts-receivable/clients/:clientId/actions/block-status` | `CLIENT_000001_ACTION_BLOQUEAR_OPEN`, `CLIENT_000001_ACTION_BLOQUEAR_CONFIRM` | `fcli`, `feventos` |
 | Acciones | Descuentos | `/api/accounts-receivable/clients/:clientId/actions/discounts` | `CLIENT_000001_ACTION_DESCUENTOS` | `fdesctos` |
@@ -241,8 +241,10 @@ el codigo del cliente. No se inventaron filtros adicionales.
 ### Acciones en modo lectura
 
 Clasificar devuelve los nueve valores `CLIPAR` con los nombres configurados en
-OMNIS. La captura solamente solicito las opciones disponibles de Agente
-(`fag.AGT = '1'`); no se agregaron opciones inferidas para las otras categorias.
+OMNIS. `position` acepta valores de 1 a 9 y carga las opciones de la familia
+seleccionada con el filtro real `fag.AGT = position` y `AGTIPO IN (0, 1)`.
+La captura de cambio entre las nueve familias esta documentada en
+`client-classifications-sql.md`.
 
 Enviar a y Foto devuelven `available: false` y la razon. En ambos casos OMNIS
 solo consulto configuracion de ventana y no se encontro un origen funcional en

@@ -5,6 +5,9 @@ export const createClientsRouter = (controller: ClientsController): Router => {
   const router = Router();
 
   router.get('/', controller.search);
+  router.post('/', controller.create);
+  router.get('/:clientId/previous', controller.getPrevious);
+  router.get('/:clientId/next', controller.getNext);
   router.get('/:clientId/balance', controller.getBalance);
   router.get('/:clientId/movements', controller.getMovements);
   router.get('/:clientId/invoices', controller.getInvoices);
@@ -30,6 +33,8 @@ export const createClientsRouter = (controller: ClientsController): Router => {
   router.get('/:clientId/actions/photo', controller.getPhoto);
   router.get('/:clientId/actions/contacts', controller.getContacts);
   router.get('/:clientId', controller.getById);
+  router.patch('/:clientId', controller.update);
+  router.delete('/:clientId', controller.delete);
 
   return router;
 };

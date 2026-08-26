@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import type { ClientActionsDataSource } from '../../domain/datasources/client-actions-data-source.js';
 import type {
   ClientActionIdentity,
   ClientBlockStatus,
@@ -12,7 +13,6 @@ import type {
 import type {
   ClientActionCriteria,
   ClientActionResult,
-  ClientActionsRepository,
 } from '../../domain/repositories/client-actions-repository.js';
 
 interface ClientActionRow extends RowDataPacket, ClientActionIdentity {
@@ -96,7 +96,7 @@ const toIdentity = (row: ClientActionRow): ClientActionIdentity => ({
   currentBalance: row.currentBalance,
 });
 
-export class LegacyMysqlClientActionsRepository implements ClientActionsRepository {
+export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSource {
   private async findClient(clientId: number): Promise<ClientActionRow | null> {
     const [rows] = await legacyMysqlPool.execute<ClientActionRow[]>(`
       SELECT

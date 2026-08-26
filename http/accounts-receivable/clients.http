@@ -1,6 +1,7 @@
 @baseUrl = http://localhost:3000
 @apiPrefix = /api
 @clientId = 15331
+@temporaryClientCode = QA826
 
 ### Obtener todos los clientes
 GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients?page=1&pageSize=25
@@ -12,6 +13,54 @@ Accept: application/json
 
 ### Obtener cliente por identificador
 GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}
+Accept: application/json
+
+### Barra - cliente anterior
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/previous
+Accept: application/json
+
+### Barra - cliente siguiente
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/next
+Accept: application/json
+
+### Barra - alta de cliente temporal (ejecutar antes de cambio y baja)
+# @name createTemporaryClient
+POST {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients
+Content-Type: application/json
+Accept: application/json
+
+{
+  "code": "{{temporaryClientCode}}",
+  "name": "Cliente temporal desde API",
+  "address": {
+    "street": "Calle de prueba",
+    "city": "Mexico"
+  },
+  "contact": {
+    "email": "pruebas@tuvansa.com.mx"
+  },
+  "fiscal": {
+    "accountingAccount": "1105001"
+  },
+  "terms": {
+    "priceList": 1,
+    "discounts": [0, 0, 0],
+    "paymentTermDays": 0,
+    "creditLimit": 0
+  }
+}
+
+### Barra - cambio al cliente temporal creado arriba
+PATCH {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{createTemporaryClient.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "name": "Cliente temporal editado desde API"
+}
+
+### Barra - baja del cliente temporal creado arriba
+DELETE {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{createTemporaryClient.response.body.$.data.id}}
 Accept: application/json
 
 ### Obtener saldo del cliente

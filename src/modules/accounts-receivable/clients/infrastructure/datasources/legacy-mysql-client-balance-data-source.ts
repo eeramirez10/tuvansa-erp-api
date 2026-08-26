@@ -1,8 +1,8 @@
 import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import type { ClientBalanceDataSource } from '../../domain/datasources/client-balance-data-source.js';
 import { ClientBalanceDocument } from '../../domain/entities/client-balance-document.js';
 import type {
-  ClientBalanceRepository,
   ClientBalanceResult,
   ClientBalanceSearchCriteria,
 } from '../../domain/repositories/client-balance-repository.js';
@@ -85,7 +85,7 @@ const toBalanceDocument = (row: BalanceDocumentRow): ClientBalanceDocument =>
   isCanceled: row.canceled === 1,
 });
 
-export class LegacyMysqlClientBalanceRepository implements ClientBalanceRepository {
+export class LegacyMysqlClientBalanceDataSource implements ClientBalanceDataSource {
   async searchByClient(
     criteria: ClientBalanceSearchCriteria,
   ): Promise<ClientBalanceResult | null> {

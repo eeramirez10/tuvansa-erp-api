@@ -1,11 +1,11 @@
 import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import type { ClientMovementsDataSource } from '../../domain/datasources/client-movements-data-source.js';
 import {
   ClientMovement,
   type ClientMovementDocument,
 } from '../../domain/entities/client-movement.js';
 import type {
-  ClientMovementsRepository,
   ClientMovementsResult,
   ClientMovementSearchCriteria,
 } from '../../domain/repositories/client-movements-repository.js';
@@ -85,7 +85,7 @@ const toMovement = (row: MovementRow): ClientMovement =>
     document: toDocument(row),
   });
 
-export class LegacyMysqlClientMovementsRepository implements ClientMovementsRepository {
+export class LegacyMysqlClientMovementsDataSource implements ClientMovementsDataSource {
   async searchByClient(
     criteria: ClientMovementSearchCriteria,
   ): Promise<ClientMovementsResult | null> {

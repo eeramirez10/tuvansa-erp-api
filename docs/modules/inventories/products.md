@@ -28,6 +28,8 @@ DELETE /api/inventories/products/:productId
 
 El listado acepta `q`, `status`, `page` y `pageSize`. `q` busca por código,
 descripción, EAN o UPC; `status` acepta `active`, `inactive` y `all`.
+La comparación de `q` no distingue mayúsculas/minúsculas, incluso cuando la
+colación de la base legacy sí lo hace.
 
 ## Mapeo de la ficha
 
@@ -73,3 +75,59 @@ podrá reemplazar ambos adaptadores sin cambiar aplicación ni presentación.
 
 La captura literal de la barra está en `product-toolbar-sql.md` y los requests
 manuales están en `http/inventories/products.http`.
+
+## Consultas reproducidas en frontend
+
+Los 27 controles de **Consultas** están documentados por texto visible y
+endpoint en `product-buttons.md`. Para los modales agregados, MySQL devuelve la
+misma unidad visual que OMNIS: cliente, sucursal, proveedor o año/mes, según el
+botón. Esto evita calcular totales sobre una página incompleta de movimientos.
+
+El endpoint `GET /api/inventories/products/:productId/queries/documents` filtra
+`faxinv` por `ISEQ` y une `fdoc`, `fcli` y `finv` para llenar la ventana
+**Consulta de movimientos de inventario**. El endpoint de **Piezas** conserva
+`available: false` y el mensaje literal del ERP; **Piezas surtidas** sí consulta
+`fcajas`.
+
+Las consultas aceptan `pageSize` hasta 500. El producto de verificación manual
+es `01300958` (`ISEQ=13288`) porque contiene movimiento suficiente para validar
+tablas, desplazamiento y totales con la base actual de desarrollo.
+
+## Acciones reproducidas en frontend
+
+Los 14 controles de **Acciones** conservan el nombre visible de OMNIS y su
+correspondencia de endpoint está en `product-buttons.md`. La presentación usa
+ventanas específicas para Almacenes, Clasificar, Descripción extendida,
+descuentos, Otros, Especificaciones, Foto, inventario CT, Precios, SKUs y
+Prepacks; no se muestra la respuesta JSON genérica.
+
+**Alta CT** conserva el aviso de que la versión no incluye Color y Talla y
+**Foto** conserva el visor aunque OMNIS no haya emitido SQL para la imagen. El
+botón **Bloquear** consulta el estado mediante GET y confirma el cambio mediante
+`PATCH /api/inventories/products/:productId/actions/block-status` con
+`{ "blocked": boolean }`. Los demás botones internos de estas ventanas quedan
+visuales hasta capturar sus operaciones en una etapa posterior.
+
+La conexión MySQL configurada durante esta validación permite lectura pero
+rechaza `UPDATE finv`; por ello el contrato PATCH queda preparado y conectado,
+pero sólo podrá completar el cambio cuando la API use credenciales de escritura
+o el futuro repositorio PostgreSQL. La prueba fallida no alteró el producto.
+
+## Compras/Prod reproducido en frontend
+
+Los seis botones de **Compras/Prod** ya usan ventanas específicas en lugar de
+la tabla JSON genérica. `Alternos` une `falternos` con la ficha del artículo
+alterno; `Componentes` e `Implosión` unen `fens` con `finv` para exponer la
+descripción y costos visibles; `Lotes` y `UEPS/PEPS` conservan las columnas de
+`flotes` observadas en OMNIS.
+
+`Especific. Cal` requiere una adaptación especial: `fpruebas` guarda hasta 15
+pruebas en columnas numeradas de una misma fila. El datasource las convierte en
+15 registros API con `testName`, `minimum`, `maximum`, `unit`, `observations`,
+`method` y `priority`, sin trasladar esa estructura legacy al frontend.
+
+El modal **Auxiliar de lotes** consume su endpoint de lotes para el panel
+izquierdo y reutiliza `queries/ledger` para las entradas y salidas del panel
+derecho. Los botones internos permanecen visuales hasta capturar los flujos de
+escritura. Se validaron datos con `ISEQ=60066` (componentes), `ISEQ=824`
+(implosión), `ISEQ=17453` (lotes/capas) y `ISEQ=13288` (calidad).

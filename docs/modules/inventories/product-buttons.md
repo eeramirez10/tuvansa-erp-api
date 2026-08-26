@@ -35,6 +35,35 @@ origen, registros y paginacion.
 | Lotes | `/:productId/purchases-production/lots` | `flotes.ISEQ` |
 | UEPS / PEPS | `/:productId/purchases-production/inventory-layers` | `flotes.ISEQ` |
 
+### Presentación de las ventanas de Acciones
+
+| Botón | Ventana OMNIS reproducida |
+| --- | --- |
+| Almacenes | Tabla horizontal por almacén, fila TOTAL, scroll XY y controles de localización/mínimos |
+| Alta CT | Aviso literal del módulo Color y Talla no incluido |
+| Bloquear | Confirmación No/Yes y cambio real de `finv.IBAJA` mediante PATCH |
+| Clasificar | Selector doble de familias con bloque SELECCIONADOS |
+| Descr. ext. | Cuatro bloques de descripción y botón Cambiar |
+| % Descuentos clis/prv | Filtros superiores, tabla de descuentos y scroll XY |
+| Otros | Formulario vertical por secciones de empaque, opciones, precios, importación y producción |
+| Especificaciones | Lista vertical de descripciones y botón Cambiar |
+| Foto | Visor con modos Normal, Boceto, Boceto 2, Color y Completo |
+| Inv. CT | Matriz por almacén y selector visual de Stock/Pedido/Disponible/etc. |
+| Precios | Costo y listas 1..13 con moneda y plan POS |
+| SKUs | Tabla L/SKU y botones Cancelar/Aceptar |
+| Prepacks | Matriz horizontal, código del producto y botones OK/Cancelar/Reparte |
+
+### Presentación de las ventanas de Compras/Prod
+
+| Botón | Ventana OMNIS reproducida |
+| --- | --- |
+| Alternos | Cabecera del producto, tabla Código/Descripción/Stock/Precio 1 y navegación inferior |
+| Componentes | Cabecera con lote y unidad, filtros, tabla XY de componentes, totales y comandos inferiores |
+| Especific. Cal | Selector lateral y matriz de 15 pruebas con mínimo, máximo, unidad y observaciones |
+| Implosión | Cabecera del componente, productos padre, cantidad, porcentaje de costo y navegación |
+| Lotes | Dos paneles: lotes disponibles y movimientos de entradas/salidas, con totales separados |
+| UEPS / PEPS | Capas de inventario con cantidad inicial, costo, advalorem, documento, lote, caducidad y llave |
+
 ## Consultas
 
 | Boton OMNIS | Endpoint GET | Origen confirmado |
@@ -68,6 +97,15 @@ origen, registros y paginacion.
 | Documentos | `/:productId/queries/documents` | No disponible: reutilizo el ultimo documento sin filtro de producto |
 
 ## Evidencia y adaptacion
+
+### Ventana Auxiliar
+
+La ventana visible se valido de nuevo en OMNIS con el producto `010193`. El
+endpoint conserva el orden cronologico de `faxinv` y expone los campos que la
+tabla presenta como `Fecha`, `Doc.`, `T.M.`, `Costo`, `Entradas`, `Salidas`,
+`Stock`, `Alm`, `Lote`, `Usr` y `Reval`. `AIUSEQ` se publica como `userId` y
+`faxinv.LOSEQ` como `lotId`; entradas, salidas y stock acumulado se derivan de
+`AICANT` en la presentacion.
 
 La captura literal completa esta en `product-buttons-capture.md` y el archivo
 crudo local en `captures/inventory-pt-buttons-2026-08-26.log`. La API conserva

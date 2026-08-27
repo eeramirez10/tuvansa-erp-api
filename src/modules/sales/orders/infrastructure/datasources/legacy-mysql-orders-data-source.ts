@@ -185,8 +185,22 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
       conditions.push('(UPPER(PENUM) LIKE UPPER(?) OR UPPER(PENUMELLOS) LIKE UPPER(?) OR UPPER(CLICOD) LIKE UPPER(?) OR UPPER(CLINOM) LIKE UPPER(?))');
       parameters.push(...Array(4).fill(`%${criteria.query}%`));
     }
-    if (criteria.status !== undefined) { conditions.push('PESTATUS = ?'); parameters.push(criteria.status); }
-    if (criteria.customerCode !== undefined) { conditions.push('CLICOD = ?'); parameters.push(criteria.customerCode); }
+    if (criteria.orderNumber !== undefined) { conditions.push('PENUM LIKE ?'); parameters.push(`${criteria.orderNumber}%`); }
+    if (criteria.customerOrderNumber !== undefined) { conditions.push('PENUMELLOS LIKE ?'); parameters.push(`${criteria.customerOrderNumber}%`); }
+    if (criteria.status !== undefined) { conditions.push('PESTATUS LIKE ?'); parameters.push(`${criteria.status}%`); }
+    if (criteria.customerCode !== undefined) { conditions.push('CLICOD LIKE ?'); parameters.push(`${criteria.customerCode}%`); }
+    if (criteria.orderedAt !== undefined) { conditions.push('PEFECHA = ?'); parameters.push(criteria.orderedAt); }
+    if (criteria.dueAt !== undefined) { conditions.push('PEVENCE = ?'); parameters.push(criteria.dueAt); }
+    if (criteria.agent !== undefined) { conditions.push('PEPAR1 LIKE ?'); parameters.push(`${criteria.agent}%`); }
+    if (criteria.branch !== undefined) { conditions.push('PESUCURSAL = ?'); parameters.push(criteria.branch); }
+    if (criteria.warehouse !== undefined) { conditions.push('PEALMACEN LIKE ?'); parameters.push(`${criteria.warehouse}%`); }
+    if (criteria.authorization !== undefined) {
+      if (/^O\.?K\.?$/i.test(criteria.authorization)) conditions.push('PEUSRAUT > 0');
+      else { conditions.push('CAST(PEUSRAUT AS CHAR) LIKE ?'); parameters.push(`${criteria.authorization}%`); }
+    }
+    if (criteria.minimumFulfillmentPercentage !== undefined) {
+      conditions.push('PEPORCMINSUR = ?'); parameters.push(criteria.minimumFulfillmentPercentage);
+    }
     if (criteria.from !== undefined) { conditions.push('PEFECHA >= ?'); parameters.push(criteria.from); }
     if (criteria.to !== undefined) { conditions.push('PEFECHA <= ?'); parameters.push(criteria.to); }
     const where = conditions.join(' AND ');
@@ -195,7 +209,7 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
        FROM FPENC
        LEFT JOIN FCLI ON FPENC.CLISEQ = FCLI.CLISEQ
        WHERE ${where}
-       ORDER BY PENUM DESC, FPENC.PESEQ DESC
+       ORDER BY PENUM, FPENC.PESEQ
        LIMIT ? OFFSET ?`,
       [...parameters, criteria.limit, criteria.offset],
     );

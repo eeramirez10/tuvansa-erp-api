@@ -4,6 +4,12 @@
 ### Buscar el pedido de captura
 GET {{baseUrl}}/sales/orders?q=P010773&page=1&pageSize=25
 
+### Buscador visual: todos los criterios son opcionales y combinables
+GET {{baseUrl}}/sales/orders?orderNumber=P010773&customerOrderNumber=9063&customerCode=000033&orderedAt=2021-05-05&dueAt=2021-05-05&status=SURT&branch=0&warehouse=01&minimumFulfillmentPercentage=0&page=1&pageSize=100
+
+### Botón Pedidos O.K.
+GET {{baseUrl}}/sales/orders?authorization=O.K.&page=1&pageSize=100
+
 ### Cargar pantalla Pedidos
 GET {{baseUrl}}/sales/orders/{{orderId}}
 

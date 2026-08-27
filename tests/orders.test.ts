@@ -3,6 +3,7 @@ import { CreateOrder } from '../src/modules/sales/orders/application/use-cases/c
 import { DeleteOrder } from '../src/modules/sales/orders/application/use-cases/delete-order.js';
 import { GetOrderPanel } from '../src/modules/sales/orders/application/use-cases/get-order-panel.js';
 import { NavigateOrder } from '../src/modules/sales/orders/application/use-cases/navigate-order.js';
+import { SearchOrders } from '../src/modules/sales/orders/application/use-cases/search-orders.js';
 import { Order } from '../src/modules/sales/orders/domain/entities/order.js';
 import type { OrderPanelsRepository } from '../src/modules/sales/orders/domain/repositories/order-panels-repository.js';
 import type { OrdersRepository } from '../src/modules/sales/orders/domain/repositories/orders-repository.js';
@@ -44,6 +45,20 @@ describe('Ventas - Pedidos', () => {
   it('impide borrar un pedido facturado o surtido', async () => {
     await expect(new DeleteOrder(repository({ delete: async () => ({ status: 'in-use', relation: 'fdoc' }) })).execute(72391))
       .rejects.toMatchObject({ code: 'ORDER_IN_USE', statusCode: 409 });
+  });
+  it('conserva los filtros de la ventana Búsqueda y calcula la paginación', async () => {
+    let received: Parameters<OrdersRepository['search']>[0] | undefined;
+    const useCase = new SearchOrders(repository({
+      search: async (criteria) => { received = criteria; return { items: [order], total: 201 }; },
+    }));
+    const response = await useCase.execute({
+      orderNumber: 'P010773', customerOrderNumber: '9063', customerCode: '000033',
+      orderedAt: '2021-05-05', dueAt: '2021-05-05', agent: '010', status: 'SURT',
+      branch: 0, warehouse: '01', authorization: 'O.K.',
+      minimumFulfillmentPercentage: 0, page: 2, pageSize: 100,
+    });
+    expect(received).toMatchObject({ orderNumber: 'P010773', offset: 100, limit: 100 });
+    expect(response.pagination).toEqual({ page: 2, pageSize: 100, total: 201, pages: 3 });
   });
   it('mantiene el nombre visual Auxiliar aunque la función consulte facturas', async () => {
     const panels: OrderPanelsRepository = { getPanel: async () => ({ order: { id: 72391, number: 'P010773' }, key: 'invoices', section: 'actions', button: 'Auxiliar', available: true, source: 'mysql', items: [{ documentNumber: 'FE0050992', date: '2021-05-06' }] }) };

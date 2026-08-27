@@ -4,8 +4,17 @@ export type OrderNavigationDirection = 'previous' | 'next';
 
 export interface OrderSearchCriteria {
   query?: string;
+  orderNumber?: string;
+  customerOrderNumber?: string;
   status?: string;
   customerCode?: string;
+  orderedAt?: string;
+  dueAt?: string;
+  agent?: string;
+  branch?: number;
+  warehouse?: string;
+  authorization?: string;
+  minimumFulfillmentPercentage?: number;
   from?: string;
   to?: string;
   offset: number;

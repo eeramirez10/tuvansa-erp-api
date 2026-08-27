@@ -1,0 +1,85 @@
+@baseUrl = http://localhost:3000/api
+@orderId = 72391
+
+### Buscar el pedido de captura
+GET {{baseUrl}}/sales/orders?q=P010773&page=1&pageSize=25
+
+### Cargar pantalla Pedidos
+GET {{baseUrl}}/sales/orders/{{orderId}}
+
+### Navegación inferior
+GET {{baseUrl}}/sales/orders/{{orderId}}/previous
+
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/next
+
+### Acciones
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/assign-all
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/authorize
+### Auxiliar
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/auxiliar
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/boxes
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/classifications
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/comments
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/quote-conversion
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/duplicate
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/labels
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/print
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/monarch
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/pieces
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/transfer
+
+### Acciones secundarias
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/assign-ct
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/consolidate
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/ct
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/split-ct
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/export
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/purchase-order
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/split
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/branch
+###
+GET {{baseUrl}}/sales/orders/{{orderId}}/secondary-actions/wip
+
+### Crear pedido desechable (cambie número, cliente y producto antes de ejecutar)
+POST {{baseUrl}}/sales/orders
+Content-Type: application/json
+
+{
+  "number": "PAPI0001",
+  "customerId": 15363,
+  "customerOrderNumber": "PRUEBA API",
+  "orderedAt": "2026-08-26",
+  "from": "2026-08-26",
+  "dueAt": "2026-08-26",
+  "warehouse": "01",
+  "currencyId": 1,
+  "lines": [{ "productId": 10590, "quantity": 1, "price": 1, "discount": 0 }]
+}
+
+### Editar
+PATCH {{baseUrl}}/sales/orders/{{orderId}}
+Content-Type: application/json
+
+{ "observations": "PRUEBA CONTROLADA" }
+
+### Eliminar (solo pedido desechable no surtido y sin factura)
+DELETE {{baseUrl}}/sales/orders/{{orderId}}

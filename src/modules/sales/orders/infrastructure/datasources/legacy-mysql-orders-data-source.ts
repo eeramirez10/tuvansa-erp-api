@@ -55,7 +55,7 @@ const selectHeader = `
   PEINICIAL AS initial,
   PEALMACEN AS warehouse,
   PEMONEDA AS currencyId,
-  PEFACTOR AS exchangeRate,
+  PETIPOC AS exchangeRate,
   PEPORCMINSUR AS minimumFulfillmentPercentage,
   PEOBS AS observations,
   PEPAR1 AS classification0,

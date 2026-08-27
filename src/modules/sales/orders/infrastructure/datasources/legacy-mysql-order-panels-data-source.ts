@@ -43,11 +43,6 @@ const queries: Partial<Record<OrderPanelKey, string>> = {
   classifications: `SELECT PEPAR1 AS agent, PEPAR2 AS sector, PEPAR3 AS branchOffice,
     PEPAR4 AS statusClassifier, PEPAR5 AS driver, PEPAR6 AS reason, PEPAR7 AS freight
     FROM FPENC WHERE PESEQ = ?`,
-  comments: `SELECT FCOMENT.COMSEQ AS id, COML1 AS comment1, COML2 AS comment2,
-    COML3 AS comment3, COML4 AS comment4, COML5 AS comment5, COMLETRA AS amountInWords,
-    COMCAJA AS boxes, COMDNUM AS documentNumber, COMDES AS description,
-    COMCAJA2 AS box2, COMCAJA3 AS box3, COMCAJA4 AS box4, COMCAMBIOS AS changes
-    FROM FCOMENT WHERE COMSEQFACT = 10000000 + ? ORDER BY FCOMENT.COMSEQ LIMIT 1`,
   labels: `SELECT FPLIN.PLSEQ AS lineId, ICOD AS productCode, IDESCR AS description,
     PLCANT AS ordered, PLSURT AS fulfilled, PLETIQ AS label, PLTIQX1 AS labelX1,
     PLTIQX2 AS labelX2, PLCOLOR AS color, PLTALLA AS size
@@ -120,6 +115,61 @@ export class LegacyMysqlOrderPanelsDataSource implements OrderPanelsDataSource {
       );
       items = rowsToItems(rows);
       summary = { total: rows.reduce((total, row) => total + Number(row.CAJPZAS ?? row.pieces ?? 0), 0) };
+    } else if (key === 'comments') {
+      const [commentRows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+        `SELECT FCOMENT.COMSEQ AS id, COMSEQFACT AS sequenceReference,
+          COML1 AS comments, COML2 AS deliveryAddress1,
+          COML3 AS deliveryAddress2, COML4 AS deliveryAddress3,
+          COML5 AS deliveryContact, COMLETRA AS amountInWords,
+          COMCAJA AS boxes, COMDNUM AS customerDocumentNumber,
+          COMDES AS deliveryOption, COMCAJA2 AS createdBy,
+          COMCAJA3 AS authorizedBy, COMCAJA4 AS changesCount,
+          COMCAMBIOS AS auditTrail
+         FROM FCOMENT
+         WHERE COMSEQFACT = 10000000 + ?
+         ORDER BY FCOMENT.COMSEQ LIMIT 1`,
+        [orderId],
+      );
+      const [headerRows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+        `SELECT PENUMELLOS AS customerOrderNumber, PEFECHA AS orderedAt,
+          PEDESDE AS fromDate, PEVENCE AS dueAt, PEINICIAL AS initial,
+          COALESCE((SELECT SUM(PLASIGNADO * PLPRECI)
+                    FROM FPLIN WHERE PESEQ = FPENC.PESEQ), 0) AS assignedAmount,
+          PDESC1 AS discount1, PDESC2 AS discount2, PDESC3 AS discount3,
+          PEDEPTO AS department, PETIPOC AS exchangeRate,
+          COALESCE((SELECT SUM(FPLIN.PLCANT * FINV.IVOLUMEN)
+                    FROM FPLIN LEFT JOIN FINV ON FPLIN.ISEQ = FINV.ISEQ
+                    WHERE FPLIN.PESEQ = FPENC.PESEQ), 0) AS volume,
+          COALESCE((SELECT SUM(FPLIN.PLCANT * FINV.IPESO)
+                    FROM FPLIN LEFT JOIN FINV ON FPLIN.ISEQ = FINV.ISEQ
+                    WHERE FPLIN.PESEQ = FPENC.PESEQ), 0) AS weight,
+          PESUCURSAL AS branch, PEPLAZO AS termsDays, PECOMI AS commission,
+          PENOPARC AS noPartialDeliveries, PEMONEDA AS collectionCurrencyId,
+          PEALMACEN AS warehouse, FCLI.CLICONT AS contact,
+          FCLI.CLISACT AS customerBalance, PEPAR8 AS transportationCode,
+          COALESCE((SELECT AGDESCR FROM FAG
+                    WHERE AGTNUM >= PEPAR8 ORDER BY AGTNUM LIMIT 1), '') AS transportation,
+          PEUSRALTA AS createdBy, PEUSRAUT AS authorizedBy,
+          PEDATE2 AS capturedAt, PEPORCMINSUR AS minimumFulfillmentPercentage,
+          PEFLETE AS freight, PESEGURO AS insurance, PEOTRO AS other,
+          PEOTROTXT AS otherText, PEDATE3 AS assignedAt,
+          PECAMBIOS AS changesCount, PEFECHAEMPAQUE AS packedAt
+         FROM FPENC LEFT JOIN FCLI ON FPENC.CLISEQ = FCLI.CLISEQ
+         WHERE FPENC.PESEQ = ? LIMIT 1`,
+        [orderId],
+      );
+      const [deliveryRows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+        `SELECT SUCCOD AS code, SUCNOM AS name, SUCDIR1 AS address1,
+          SUCDIR2 AS address2, SUCEDO AS state, SUCCD AS city,
+          SUCPAR6 AS classifier, SUCCONTACTO AS contact
+         FROM FSUCURSALES WHERE CLISEQ = ? ORDER BY SUCSEQ`,
+        [identity.customerId],
+      );
+      items = rowsToItems(commentRows);
+      summary = {
+        ...(headerRows[0] === undefined ? {} : { ...headerRows[0] }),
+        deliveryBranches: rowsToItems(deliveryRows),
+      };
     } else if (key === 'classifications') {
       const [current] = await legacyMysqlPool.execute<RowDataPacket[]>(queries[key]!, [orderId]);
       const [options] = await legacyMysqlPool.execute<RowDataPacket[]>(

@@ -4,6 +4,10 @@
 @panelPageSize = 500
 @temporaryProductCode = QAPI826
 
+### Entrada inicial de Inventarios PT (primer producto activo, sin COUNT)
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/first
+Accept: application/json
+
 ### Catalogo - todos los productos
 GET {{baseUrl}}{{apiPrefix}}/inventories/products?page=1&pageSize=25
 Accept: application/json

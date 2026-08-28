@@ -265,6 +265,18 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
     return rows[0] === undefined ? null : toProduct(rows[0]);
   }
 
+  async findFirstActive(): Promise<Product | null> {
+    const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
+      `SELECT ${selectProductFields}
+       FROM finv
+       LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
+       WHERE IBAJA = '1900-12-31'
+       ORDER BY ICOD, FINV.ISEQ
+       LIMIT 1`,
+    );
+    return rows[0] === undefined ? null : toProduct(rows[0]);
+  }
+
   async search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
     const searchCondition = criteria.query === undefined
       ? ''

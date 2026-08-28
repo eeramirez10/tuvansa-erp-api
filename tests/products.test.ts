@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CreateProduct } from '../src/modules/inventories/products/application/use-cases/create-product.js';
 import { DeleteProduct } from '../src/modules/inventories/products/application/use-cases/delete-product.js';
+import { GetFirstActiveProduct } from '../src/modules/inventories/products/application/use-cases/get-first-active-product.js';
 import { NavigateProduct } from '../src/modules/inventories/products/application/use-cases/navigate-product.js';
 import { Product } from '../src/modules/inventories/products/domain/entities/product.js';
 import type { ProductsRepository } from '../src/modules/inventories/products/domain/repositories/products-repository.js';
@@ -57,6 +58,7 @@ const product = Product.create({
 
 const repository = (overrides: Partial<ProductsRepository> = {}): ProductsRepository => ({
   findById: async () => product,
+  findFirstActive: async () => product,
   search: async () => ({ items: [product], total: 1 }),
   findAdjacent: async () => product,
   codeExists: async () => false,
@@ -69,6 +71,14 @@ const repository = (overrides: Partial<ProductsRepository> = {}): ProductsReposi
 });
 
 describe('Inventarios PT - Catalogo de productos', () => {
+  it('carga el primer producto activo sin ejecutar la búsqueda paginada', async () => {
+    const useCase = new GetFirstActiveProduct(repository({
+      search: async () => { throw new Error('No debe ejecutar search'); },
+    }));
+
+    await expect(useCase.execute()).resolves.toMatchObject({ id: 47087, code: '004212899' });
+  });
+
   it('conserva el mapeo de tipo y acumulados visibles', () => {
     const response = product.toPrimitives();
     expect(response.classification.type).toBe('set');

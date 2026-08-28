@@ -17,6 +17,10 @@ export class ProductsRepositoryImpl implements ProductsRepository {
     return this.dataSource.findById(productId);
   }
 
+  findFirstActive(): Promise<Product | null> {
+    return this.dataSource.findFirstActive();
+  }
+
   search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
     return this.dataSource.search(criteria);
   }

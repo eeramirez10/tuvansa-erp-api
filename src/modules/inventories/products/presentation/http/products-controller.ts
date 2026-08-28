@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { CreateProduct } from '../../application/use-cases/create-product.js';
 import type { DeleteProduct } from '../../application/use-cases/delete-product.js';
 import type { GetProduct } from '../../application/use-cases/get-product.js';
+import type { GetFirstActiveProduct } from '../../application/use-cases/get-first-active-product.js';
 import type { GetProductPanel } from '../../application/use-cases/get-product-panel.js';
 import type { NavigateProduct } from '../../application/use-cases/navigate-product.js';
 import type { SearchProducts } from '../../application/use-cases/search-products.js';
@@ -81,6 +82,7 @@ const updateProductBodySchema = z.object(mutationFields).strict().refine(
 export class ProductsController {
   constructor(
     private readonly getProduct: GetProduct,
+    private readonly getFirstActiveProduct: GetFirstActiveProduct,
     private readonly searchProducts: SearchProducts,
     private readonly navigateProduct: NavigateProduct,
     private readonly createProduct: CreateProduct,
@@ -108,6 +110,14 @@ export class ProductsController {
     try {
       const { productId } = productParamsSchema.parse(request.params);
       response.json({ data: await this.getProduct.execute(productId) });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getFirstActive: RequestHandler = async (_request, response, next) => {
+    try {
+      response.json({ data: await this.getFirstActiveProduct.execute() });
     } catch (error) {
       next(error);
     }

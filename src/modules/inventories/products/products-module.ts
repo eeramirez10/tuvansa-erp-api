@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { CreateProduct } from './application/use-cases/create-product.js';
 import { DeleteProduct } from './application/use-cases/delete-product.js';
 import { GetProduct } from './application/use-cases/get-product.js';
+import { GetFirstActiveProduct } from './application/use-cases/get-first-active-product.js';
 import { GetProductPanel } from './application/use-cases/get-product-panel.js';
 import { NavigateProduct } from './application/use-cases/navigate-product.js';
 import { SearchProducts } from './application/use-cases/search-products.js';
@@ -22,6 +23,7 @@ export const createProductsModule = (): Router => {
   );
   const controller = new ProductsController(
     new GetProduct(repository),
+    new GetFirstActiveProduct(repository),
     new SearchProducts(repository),
     new NavigateProduct(repository),
     new CreateProduct(repository),

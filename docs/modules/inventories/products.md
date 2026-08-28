@@ -19,12 +19,16 @@ La correspondencia completa esta en `product-buttons.md`.
 ```text
 GET    /api/inventories/products
 POST   /api/inventories/products
+GET    /api/inventories/products/first
 GET    /api/inventories/products/:productId
 GET    /api/inventories/products/:productId/previous
 GET    /api/inventories/products/:productId/next
 PATCH  /api/inventories/products/:productId
 DELETE /api/inventories/products/:productId
 ```
+
+La entrada inicial de la vista usa `/first` para obtener directamente el primer
+producto activo, sin ejecutar la búsqueda paginada ni su `COUNT(*)`.
 
 El listado acepta `q`, `status`, `page` y `pageSize`. `q` busca por código,
 descripción, EAN o UPC; `status` acepta `active`, `inactive` y `all`.

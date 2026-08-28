@@ -6,6 +6,7 @@ export const createProductsRouter = (controller: ProductsController): Router => 
 
   router.get('/', controller.search);
   router.post('/', controller.create);
+  router.get('/first', controller.getFirstActive);
   router.get('/:productId/previous', controller.getPrevious);
   router.get('/:productId/next', controller.getNext);
   router.get('/:productId/actions/warehouses', controller.panel('warehouses'));

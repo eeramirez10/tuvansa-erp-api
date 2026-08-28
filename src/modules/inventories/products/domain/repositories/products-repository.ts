@@ -54,6 +54,7 @@ export type DeleteProductResult =
 
 export interface ProductsRepository {
   findById(productId: number): Promise<Product | null>;
+  findFirstActive(): Promise<Product | null>;
   search(criteria: ProductSearchCriteria): Promise<ProductSearchResult>;
   findAdjacent(
     productId: number,

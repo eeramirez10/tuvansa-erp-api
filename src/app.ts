@@ -1,5 +1,6 @@
 import cors from 'cors';
 import express from 'express';
+import type { Express } from 'express';
 import helmet from 'helmet';
 import { env } from './config/env.js';
 import { createClientsModule } from './modules/accounts-receivable/clients/clients-module.js';
@@ -8,7 +9,7 @@ import { createOrdersModule } from './modules/sales/orders/orders-module.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
 
-export const createApp = () => {
+export const createApp = (): Express => {
   const app = express();
 
   app.disable('x-powered-by');

@@ -291,30 +291,33 @@ export class ClientsController {
     }
   };
 
-  getInvoices = this.consultation((input) => this.getClientConsultations.invoices(input));
-  getOrders = this.consultation((input) => this.getClientConsultations.orders(input));
-  getOrderedProducts = this.consultation((input) =>
+  getInvoices: RequestHandler = this.consultation((input) =>
+    this.getClientConsultations.invoices(input));
+  getOrders: RequestHandler = this.consultation((input) =>
+    this.getClientConsultations.orders(input));
+  getOrderedProducts: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.orderedProducts(input));
-  getQuotedProducts = this.consultation((input) =>
+  getQuotedProducts: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.quotedProducts(input));
-  getSoldProducts = this.consultation((input) =>
+  getSoldProducts: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.soldProducts(input));
-  getSoldProductDetails = this.consultation((input) =>
+  getSoldProductDetails: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.soldProductDetails(input));
-  getAnnualSales = this.consultation((input) =>
+  getAnnualSales: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.annualSales(input));
-  getAnnualSalesSummary = this.consultation((input) =>
+  getAnnualSalesSummary: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.annualSalesSummary(input));
-  getSalesByBranch = this.consultation((input) =>
+  getSalesByBranch: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.salesByBranch(input));
-  getEdiSales = this.consultation((input) => this.getClientConsultations.ediSales(input));
-  getWorkInProgress = this.consultation((input) =>
+  getEdiSales: RequestHandler = this.consultation((input) =>
+    this.getClientConsultations.ediSales(input));
+  getWorkInProgress: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.workInProgress(input));
-  getCtOrderedProducts = this.consultation((input) =>
+  getCtOrderedProducts: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.ctOrderedProducts(input));
-  getCtSoldProducts = this.consultation((input) =>
+  getCtSoldProducts: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.ctSoldProducts(input));
-  getCtWorkInProgress = this.consultation((input) =>
+  getCtWorkInProgress: RequestHandler = this.consultation((input) =>
     this.getClientConsultations.workInProgress(input));
   getClassifications: RequestHandler = async (request, response, next) => {
     try {
@@ -325,11 +328,18 @@ export class ClientsController {
       next(error);
     }
   };
-  getDestinations = this.action((clientId) => this.getClientActions.destinations(clientId));
-  getBlockStatus = this.action((clientId) => this.getClientActions.blockStatus(clientId));
-  getPhoto = this.action((clientId) => this.getClientActions.photo(clientId));
-  getDiscounts = this.paginatedAction((input) => this.getClientActions.discounts(input));
-  getEvents = this.paginatedAction((input) => this.getClientActions.events(input));
-  getBranches = this.paginatedAction((input) => this.getClientActions.branches(input));
-  getContacts = this.paginatedAction((input) => this.getClientActions.contacts(input));
+  getDestinations: RequestHandler = this.action((clientId) =>
+    this.getClientActions.destinations(clientId));
+  getBlockStatus: RequestHandler = this.action((clientId) =>
+    this.getClientActions.blockStatus(clientId));
+  getPhoto: RequestHandler = this.action((clientId) =>
+    this.getClientActions.photo(clientId));
+  getDiscounts: RequestHandler = this.paginatedAction((input) =>
+    this.getClientActions.discounts(input));
+  getEvents: RequestHandler = this.paginatedAction((input) =>
+    this.getClientActions.events(input));
+  getBranches: RequestHandler = this.paginatedAction((input) =>
+    this.getClientActions.branches(input));
+  getContacts: RequestHandler = this.paginatedAction((input) =>
+    this.getClientActions.contacts(input));
 }

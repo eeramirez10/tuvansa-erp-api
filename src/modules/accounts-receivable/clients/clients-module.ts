@@ -1,3 +1,4 @@
+import type { Router } from 'express';
 import { GetClientBalance } from './application/use-cases/get-client-balance.js';
 import { GetClientActions } from './application/use-cases/get-client-actions.js';
 import { GetClientMovements } from './application/use-cases/get-client-movements.js';
@@ -21,7 +22,7 @@ import { ClientsRepositoryImpl } from './infrastructure/repositories/clients-rep
 import { ClientsController } from './presentation/http/clients-controller.js';
 import { createClientsRouter } from './presentation/http/clients-routes.js';
 
-export const createClientsModule = () => {
+export const createClientsModule = (): Router => {
   const clientsDataSource = new LegacyMysqlClientsDataSource();
   const repository = new ClientsRepositoryImpl(clientsDataSource);
   const balanceRepository = new ClientBalanceRepositoryImpl(

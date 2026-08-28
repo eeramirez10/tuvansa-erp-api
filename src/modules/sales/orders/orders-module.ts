@@ -1,3 +1,4 @@
+import type { Router } from 'express';
 import { CreateOrder } from './application/use-cases/create-order.js';
 import { DeleteOrder } from './application/use-cases/delete-order.js';
 import { GetOrder } from './application/use-cases/get-order.js';
@@ -12,7 +13,7 @@ import { OrdersRepositoryImpl } from './infrastructure/repositories/orders-repos
 import { OrdersController } from './presentation/http/orders-controller.js';
 import { createOrdersRouter } from './presentation/http/orders-routes.js';
 
-export const createOrdersModule = () => {
+export const createOrdersModule = (): Router => {
   const repository = new OrdersRepositoryImpl(new LegacyMysqlOrdersDataSource());
   const panelsRepository = new OrderPanelsRepositoryImpl(new LegacyMysqlOrderPanelsDataSource());
   const controller = new OrdersController(

@@ -1,3 +1,4 @@
+import type { Router } from 'express';
 import { CreateProduct } from './application/use-cases/create-product.js';
 import { DeleteProduct } from './application/use-cases/delete-product.js';
 import { GetProduct } from './application/use-cases/get-product.js';
@@ -13,7 +14,7 @@ import { ProductsRepositoryImpl } from './infrastructure/repositories/products-r
 import { ProductsController } from './presentation/http/products-controller.js';
 import { createProductsRouter } from './presentation/http/products-routes.js';
 
-export const createProductsModule = () => {
+export const createProductsModule = (): Router => {
   const dataSource = new LegacyMysqlProductsDataSource();
   const repository = new ProductsRepositoryImpl(dataSource);
   const panelsRepository = new ProductPanelsRepositoryImpl(

@@ -14,6 +14,7 @@
     "db:inspect:client-movements": "tsx scripts/inspect-client-movements.ts",
     "db:inspect:client-actions": "tsx scripts/inspect-client-actions.ts",
     "db:inspect:products": "tsx scripts/inspect-product-schema.ts",
+    "db:inspect:invoicing": "tsx scripts/inspect-invoicing-record.ts",
     "db:capture:summarize": "tsx scripts/summarize-omnis-capture.ts",
     "api:check:clients": "tsx scripts/check-clients-api.ts",
     "api:check:client-balance": "tsx scripts/check-client-balance-api.ts",

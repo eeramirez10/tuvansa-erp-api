@@ -1,0 +1,63 @@
+@baseUrl = http://localhost:3000/api
+@invoiceId = 244045
+@invoiceNumber = 0007069
+
+### Entrada inicial: primer documento elegible de Facturación
+GET {{baseUrl}}/sales/invoices/first
+
+### Cargar una factura directamente por número
+GET {{baseUrl}}/sales/invoices/by-number/{{invoiceNumber}}
+
+### Buscador general
+GET {{baseUrl}}/sales/invoices?q={{invoiceNumber}}&page=1&pageSize=25
+
+### Buscador OMNIS: los criterios son opcionales y combinables
+GET {{baseUrl}}/sales/invoices?invoiceNumber={{invoiceNumber}}&orderNumber=P015471&customerOrderNumber=TELEFONICO&customerCode=007569&issuedAt=2023-03-21&page=1&pageSize=100
+
+### Cargar encabezado, partidas y totales
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}
+
+### Barra compartida: anterior
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/previous
+
+### Barra compartida: siguiente
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/next
+
+### Acciones: Auxiliar
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/auxiliary
+
+### Acciones: Cajas / Empaque
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/boxes
+
+### Acciones: Clasifica
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/classifications
+
+### Acciones: Comentarios
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/comments
+
+### Acciones: CT
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/ct
+
+### Acciones: Imprimir (opciones, no imprime)
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/print
+
+### Acciones: Lotes
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/lots
+
+### Acciones: Piezas
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/pieces
+
+### Acciones: Sellar (estado, no sella)
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/seal
+
+### Sumarios: Tiket > Factura (solo contexto de lectura)
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/ticket-to-invoice
+
+### Sumarios: Traspaso (solo partidas; no modifica inventario)
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/transfer
+
+### Sumarios: Edita pzas (solo lectura)
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/edit-pieces
+
+### Sumarios: Liquidación camión (solo lectura)
+GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/truck-settlement

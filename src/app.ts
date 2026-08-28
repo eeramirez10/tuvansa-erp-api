@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { env } from './config/env.js';
 import { createClientsModule } from './modules/accounts-receivable/clients/clients-module.js';
 import { createProductsModule } from './modules/inventories/products/products-module.js';
+import { createInvoicingModule } from './modules/sales/invoicing/invoicing-module.js';
 import { createOrdersModule } from './modules/sales/orders/orders-module.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
@@ -25,6 +26,7 @@ export const createApp = (): Express => {
   app.use(`${env.API_PREFIX}/accounts-receivable/clients`, createClientsModule());
   app.use(`${env.API_PREFIX}/inventories/products`, createProductsModule());
   app.use(`${env.API_PREFIX}/sales/orders`, createOrdersModule());
+  app.use(`${env.API_PREFIX}/sales/invoices`, createInvoicingModule());
 
   app.use(notFoundHandler);
   app.use(errorHandler);

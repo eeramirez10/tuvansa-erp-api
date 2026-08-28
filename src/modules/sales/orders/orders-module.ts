@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { CreateOrder } from './application/use-cases/create-order.js';
 import { DeleteOrder } from './application/use-cases/delete-order.js';
 import { GetOrder } from './application/use-cases/get-order.js';
+import { GetOrderByNumber } from './application/use-cases/get-order-by-number.js';
 import { GetOrderPanel } from './application/use-cases/get-order-panel.js';
 import { NavigateOrder } from './application/use-cases/navigate-order.js';
 import { SearchOrders } from './application/use-cases/search-orders.js';
@@ -17,7 +18,8 @@ export const createOrdersModule = (): Router => {
   const repository = new OrdersRepositoryImpl(new LegacyMysqlOrdersDataSource());
   const panelsRepository = new OrderPanelsRepositoryImpl(new LegacyMysqlOrderPanelsDataSource());
   const controller = new OrdersController(
-    new GetOrder(repository), new SearchOrders(repository), new NavigateOrder(repository),
+    new GetOrder(repository), new GetOrderByNumber(repository),
+    new SearchOrders(repository), new NavigateOrder(repository),
     new CreateOrder(repository), new UpdateOrder(repository), new DeleteOrder(repository),
     new GetOrderPanel(panelsRepository),
   );

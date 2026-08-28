@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { CreateOrder } from '../../application/use-cases/create-order.js';
 import type { DeleteOrder } from '../../application/use-cases/delete-order.js';
 import type { GetOrder } from '../../application/use-cases/get-order.js';
+import type { GetOrderByNumber } from '../../application/use-cases/get-order-by-number.js';
 import type { GetOrderPanel } from '../../application/use-cases/get-order-panel.js';
 import type { NavigateOrder } from '../../application/use-cases/navigate-order.js';
 import type { SearchOrders } from '../../application/use-cases/search-orders.js';
@@ -11,6 +12,7 @@ import type { OrderPanelKey } from '../../domain/repositories/order-panels-repos
 import type { OrderCreateValues, OrderUpdateValues } from '../../domain/repositories/orders-repository.js';
 
 const orderParamsSchema = z.object({ orderId: z.coerce.number().int().positive() });
+const orderNumberParamsSchema = z.object({ orderNumber: z.string().trim().min(1).max(15) });
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
@@ -54,6 +56,7 @@ const updateSchema = z.object(editableFields).strict().refine((value) => Object.
 export class OrdersController {
   constructor(
     private readonly getOrder: GetOrder,
+    private readonly getOrderByNumber: GetOrderByNumber,
     private readonly searchOrders: SearchOrders,
     private readonly navigateOrder: NavigateOrder,
     private readonly createOrder: CreateOrder,
@@ -89,6 +92,13 @@ export class OrdersController {
     try {
       const { orderId } = orderParamsSchema.parse(request.params);
       response.json({ data: await this.getOrder.execute(orderId) });
+    } catch (error) { next(error); }
+  };
+
+  getByNumber: RequestHandler = async (request, response, next) => {
+    try {
+      const { orderNumber } = orderNumberParamsSchema.parse(request.params);
+      response.json({ data: await this.getOrderByNumber.execute(orderNumber) });
     } catch (error) { next(error); }
   };
 

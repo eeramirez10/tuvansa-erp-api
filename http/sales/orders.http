@@ -1,5 +1,9 @@
 @baseUrl = http://localhost:3000/api
 @orderId = 72391
+@orderNumber = P010773
+
+### Entrada inicial de la vista Pedidos (detalle directo, sin búsqueda ni COUNT)
+GET {{baseUrl}}/sales/orders/by-number/{{orderNumber}}
 
 ### Buscar el pedido de captura
 GET {{baseUrl}}/sales/orders?q=P010773&page=1&pageSize=25

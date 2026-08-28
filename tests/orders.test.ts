@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CreateOrder } from '../src/modules/sales/orders/application/use-cases/create-order.js';
 import { DeleteOrder } from '../src/modules/sales/orders/application/use-cases/delete-order.js';
 import { GetOrderPanel } from '../src/modules/sales/orders/application/use-cases/get-order-panel.js';
+import { GetOrderByNumber } from '../src/modules/sales/orders/application/use-cases/get-order-by-number.js';
 import { NavigateOrder } from '../src/modules/sales/orders/application/use-cases/navigate-order.js';
 import { SearchOrders } from '../src/modules/sales/orders/application/use-cases/search-orders.js';
 import { Order } from '../src/modules/sales/orders/domain/entities/order.js';
@@ -21,7 +22,8 @@ const order = Order.create({
 });
 
 const repository = (overrides: Partial<OrdersRepository> = {}): OrdersRepository => ({
-  findById: async () => order, search: async () => ({ items: [order], total: 1 }),
+  findById: async () => order, findByNumber: async () => order,
+  search: async () => ({ items: [order], total: 1 }),
   findAdjacent: async () => order, numberExists: async () => false,
   customerExists: async () => true, create: async () => order, update: async () => order,
   delete: async () => ({ status: 'deleted' }), ...overrides,
@@ -33,6 +35,19 @@ describe('Ventas - Pedidos', () => {
     expect(response.number).toBe('P010773');
     expect(response.lines[0]?.productCode).toBe('01209642');
     expect(response.totals.total).toBe(423.46);
+  });
+  it('obtiene directamente el detalle por número sin ejecutar una búsqueda paginada', async () => {
+    let receivedNumber = '';
+    const useCase = new GetOrderByNumber(repository({
+      findByNumber: async (orderNumber) => { receivedNumber = orderNumber; return order; },
+      search: async () => { throw new Error('No debe ejecutar search'); },
+    }));
+
+    const response = await useCase.execute('P010773');
+
+    expect(receivedNumber).toBe('P010773');
+    expect(response.number).toBe('P010773');
+    expect(response.lines).toHaveLength(1);
   });
   it('rechaza números duplicados al crear', async () => {
     const useCase = new CreateOrder(repository({ numberExists: async () => true }));

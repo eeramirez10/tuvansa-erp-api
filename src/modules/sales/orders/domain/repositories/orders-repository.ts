@@ -62,6 +62,7 @@ export type DeleteOrderResult =
 
 export interface OrdersRepository {
   findById(orderId: number): Promise<Order | null>;
+  findByNumber(orderNumber: string): Promise<Order | null>;
   search(criteria: OrderSearchCriteria): Promise<OrderSearchResult>;
   findAdjacent(orderId: number, direction: OrderNavigationDirection): Promise<Order | null>;
   numberExists(number: string): Promise<boolean>;

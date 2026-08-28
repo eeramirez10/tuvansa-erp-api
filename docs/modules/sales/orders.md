@@ -19,7 +19,7 @@ uso ni la presentación HTTP.
 
 | Control OMNIS / vista | Endpoint | Uso en frontend |
 | --- | --- | --- |
-| Abrir Pedidos vacío | `GET /api/sales/orders?q=P010773` | Localiza el pedido inicial o presenta la ficha vacía |
+| Abrir Pedidos | `GET /api/sales/orders/by-number/P010773` | Carga directamente el detalle inicial sin búsqueda paginada ni `COUNT(*)` |
 | Ficha de pedido | `GET /api/sales/orders/:orderId` | Encabezado, cliente, partidas, Totales e Importes |
 | Flecha izquierda | `GET /api/sales/orders/:orderId/previous` | Pedido anterior |
 | Buscar | `GET /api/sales/orders?q=...` | Ventana Búsqueda por pedido, pedido cliente, cliente o nombre |

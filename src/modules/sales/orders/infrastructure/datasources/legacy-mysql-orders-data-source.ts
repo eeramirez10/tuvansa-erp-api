@@ -178,6 +178,20 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
     return row === undefined ? null : toOrder(row, await this.lines(orderId));
   }
 
+  async findByNumber(orderNumber: string): Promise<Order | null> {
+    const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
+      `SELECT ${selectHeader}
+       FROM FPENC
+       LEFT JOIN FCLI ON FPENC.CLISEQ = FCLI.CLISEQ
+       WHERE FPENC.PENUM = ? AND PESPEDIDO IN (1, 4)
+       ORDER BY FPENC.PESEQ DESC
+       LIMIT 1`,
+      [orderNumber],
+    );
+    const row = rows[0];
+    return row === undefined ? null : toOrder(row, await this.lines(row.id));
+  }
+
   async search(criteria: OrderSearchCriteria): Promise<OrderSearchResult> {
     const conditions = ['PESPEDIDO IN (1, 4)'];
     const parameters: Array<string | number> = [];

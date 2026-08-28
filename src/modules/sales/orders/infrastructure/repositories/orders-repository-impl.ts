@@ -8,6 +8,9 @@ import type {
 export class OrdersRepositoryImpl implements OrdersRepository {
   constructor(private readonly dataSource: OrdersDataSource) {}
   findById(orderId: number): Promise<Order | null> { return this.dataSource.findById(orderId); }
+  findByNumber(orderNumber: string): Promise<Order | null> {
+    return this.dataSource.findByNumber(orderNumber);
+  }
   search(criteria: OrderSearchCriteria): Promise<OrderSearchResult> { return this.dataSource.search(criteria); }
   findAdjacent(orderId: number, direction: OrderNavigationDirection): Promise<Order | null> {
     return this.dataSource.findAdjacent(orderId, direction);

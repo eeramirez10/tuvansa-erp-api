@@ -35,15 +35,17 @@ describe('GetClientActions', () => {
             type: '1',
             categoryType: 0,
           }],
-          availableAgentOptions: [],
+          selectedPosition: 2,
+          options: [],
         },
       }),
     }));
 
-    const response = await useCase.classifications(1);
+    const response = await useCase.classifications({ clientId: 1, position: 2 });
 
     expect(response.data.client.code).toBe('000001');
     expect(response.data.classifications[0]).toMatchObject({ label: 'AGENTE', code: '1202' });
+    expect(response.data.selectedPosition).toBe(2);
   });
 
   it('devuelve paginacion para contactos', async () => {

@@ -13,6 +13,7 @@ import type {
 import type {
   ClientActionCriteria,
   ClientActionResult,
+  ClientClassificationCriteria,
 } from '../../domain/repositories/client-actions-repository.js';
 
 interface ClientActionRow extends RowDataPacket, ClientActionIdentity {
@@ -123,11 +124,12 @@ export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSour
     return rows[0] ?? null;
   }
 
-  async findClassifications(clientId: number): Promise<ClientActionResult<{
+  async findClassifications(criteria: ClientClassificationCriteria): Promise<ClientActionResult<{
     classifications: ClientClassificationValue[];
-    availableAgentOptions: ClientClassificationOption[];
+    selectedPosition: number;
+    options: ClientClassificationOption[];
   }> | null> {
-    const client = await this.findClient(clientId);
+    const client = await this.findClient(criteria.clientId);
     if (client === null) return null;
 
     const codes = classificationFields.map((_, index) =>
@@ -153,10 +155,10 @@ export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSour
         AGT AS type,
         AGTIPO AS categoryType
       FROM fag
-      WHERE AGT = '1'
+      WHERE AGT = ?
         AND AGTIPO IN (0, 1)
       ORDER BY AGT, AGSEQ
-    `);
+    `, [String(criteria.position)]);
     const currentByCode = new Map(currentRows.map((row) => [row.code, row]));
 
     return {
@@ -178,7 +180,8 @@ export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSour
             categoryType: current?.categoryType ?? null,
           };
         }),
-        availableAgentOptions: optionRows.map((row) => ({
+        selectedPosition: criteria.position,
+        options: optionRows.map((row) => ({
           id: row.id,
           code: row.code,
           description: row.description,

@@ -10,6 +10,11 @@ export interface GetClientActionInput {
   pageSize: number;
 }
 
+export interface GetClientClassificationsInput {
+  clientId: number;
+  position: number;
+}
+
 type ActionOutput<T extends object> = {
   data: ClientActionResult<T>['payload'] & {
     client: ClientActionResult<T>['client'];
@@ -42,8 +47,8 @@ export class GetClientActions {
     };
   }
 
-  classifications = async (clientId: number) =>
-    this.output(await this.repository.findClassifications(clientId));
+  classifications = async (input: GetClientClassificationsInput) =>
+    this.output(await this.repository.findClassifications(input));
 
   destinations = async (clientId: number) =>
     this.output(await this.repository.findDestinations(clientId));

@@ -119,6 +119,10 @@ const consultationQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).default(25),
 });
 
+const classificationsQuerySchema = z.object({
+  position: z.coerce.number().int().min(1).max(9).default(1),
+});
+
 type ConsultationExecutor = (input: GetClientConsultationInput) => Promise<unknown>;
 type ClientActionExecutor = (clientId: number) => Promise<unknown>;
 type PaginatedClientActionExecutor = (input: GetClientActionInput) => Promise<unknown>;
@@ -312,8 +316,15 @@ export class ClientsController {
     this.getClientConsultations.ctSoldProducts(input));
   getCtWorkInProgress = this.consultation((input) =>
     this.getClientConsultations.workInProgress(input));
-  getClassifications = this.action((clientId) =>
-    this.getClientActions.classifications(clientId));
+  getClassifications: RequestHandler = async (request, response, next) => {
+    try {
+      const { clientId } = clientParamsSchema.parse(request.params);
+      const { position } = classificationsQuerySchema.parse(request.query);
+      response.json(await this.getClientActions.classifications({ clientId, position }));
+    } catch (error) {
+      next(error);
+    }
+  };
   getDestinations = this.action((clientId) => this.getClientActions.destinations(clientId));
   getBlockStatus = this.action((clientId) => this.getClientActions.blockStatus(clientId));
   getPhoto = this.action((clientId) => this.getClientActions.photo(clientId));

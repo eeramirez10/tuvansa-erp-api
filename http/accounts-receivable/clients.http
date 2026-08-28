@@ -140,7 +140,11 @@ GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/ct/work-in
 Accept: application/json
 
 ### Accion - Clasificar
-GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/classifications
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/classifications?position=1
+Accept: application/json
+
+### Accion - Clasificar / Giro o sector
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/classifications?position=2
 Accept: application/json
 
 ### Accion - Enviar a

@@ -80,3 +80,18 @@ lectura y cuales reproducen los botones de escritura capturados en OMNIS.
 
 La carpeta `http/` contiene solicitudes ejecutables para validar manualmente
 los endpoints. Cada modulo tendra su propio archivo `.http`.
+
+## Producción con Docker
+
+El repositorio incluye una imagen multi-stage y una definición de Compose para
+Linux. Las credenciales se proporcionan en el servidor mediante
+`.env.production` y nunca se incorporan a la imagen.
+
+```bash
+cp .env.production.example .env.production
+docker compose --env-file .env.production -f compose.production.yml up -d --build
+curl --fail http://127.0.0.1:3000/health
+```
+
+La guía completa de preparación, actualización, logs y rollback está en
+[`docs/deployment/docker-production.md`](docs/deployment/docker-production.md).

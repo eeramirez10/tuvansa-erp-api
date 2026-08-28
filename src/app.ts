@@ -12,8 +12,9 @@ export const createApp = () => {
   const app = express();
 
   app.disable('x-powered-by');
+  if (env.TRUST_PROXY) app.set('trust proxy', 1);
   app.use(helmet());
-  app.use(cors());
+  app.use(cors({ origin: env.CORS_ORIGINS }));
   app.use(express.json());
 
   app.get('/health', (_request, response) => {

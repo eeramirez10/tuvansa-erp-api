@@ -3,6 +3,9 @@ dist/
 coverage/
 captures/
 .env
+.env.*
+!.env.example
+!.env.production.example
 .http-client.private.env.json
 *.log
 .DS_Store

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GetClient } from '../src/modules/accounts-receivable/clients/application/use-cases/get-client.js';
 import { Client } from '../src/modules/accounts-receivable/clients/domain/entities/client.js';
 import type { ClientsRepository } from '../src/modules/accounts-receivable/clients/domain/repositories/clients-repository.js';
+import { GetFirstActiveClient } from '../src/modules/accounts-receivable/clients/application/use-cases/get-first-active-client.js';
 
 const client = Client.create({
   id: 1,
@@ -62,10 +63,17 @@ const client = Client.create({
 
 const repository: ClientsRepository = {
   findById: async () => client,
+  findFirstActive: async () => client,
   search: async () => ({ items: [], total: 0 }),
 };
 
 describe('GetClient', () => {
+  it('carga el primer cliente activo sin ejecutar la búsqueda paginada', async () => {
+    const response = await new GetFirstActiveClient(repository).execute();
+
+    expect(response.id).toBe(1);
+  });
+
   it('conserva los indicadores y condiciones visibles de OMNIS', async () => {
     const response = await new GetClient(repository).execute(1);
 

@@ -269,6 +269,18 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
     return row === undefined ? null : toClient(row);
   }
 
+  async findFirstActive(): Promise<Client | null> {
+    const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
+      `SELECT ${selectClientFields}
+       FROM fcli
+       WHERE CLIBAJA = '1900-12-31'
+       ORDER BY CLICOD, CLISEQ
+       LIMIT 1`,
+    );
+    const row = rows[0];
+    return row === undefined ? null : toClient(row);
+  }
+
   async search(criteria: ClientSearchCriteria): Promise<ClientSearchResult> {
     const searchCondition = criteria.query === undefined
       ? ''

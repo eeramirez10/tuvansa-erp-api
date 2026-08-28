@@ -11,6 +11,7 @@ import type {
 } from '../../application/use-cases/get-client-consultations.js';
 import type { GetClientMovements } from '../../application/use-cases/get-client-movements.js';
 import type { GetClient } from '../../application/use-cases/get-client.js';
+import type { GetFirstActiveClient } from '../../application/use-cases/get-first-active-client.js';
 import type { SearchClients } from '../../application/use-cases/search-clients.js';
 import type { CreateClient } from '../../application/use-cases/create-client.js';
 import type { DeleteClient } from '../../application/use-cases/delete-client.js';
@@ -130,6 +131,7 @@ type PaginatedClientActionExecutor = (input: GetClientActionInput) => Promise<un
 export class ClientsController {
   constructor(
     private readonly getClient: GetClient,
+    private readonly getFirstActiveClient: GetFirstActiveClient,
     private readonly searchClients: SearchClients,
     private readonly getClientMovements: GetClientMovements,
     private readonly getClientBalance: GetClientBalance,
@@ -205,6 +207,14 @@ export class ClientsController {
       const { clientId } = clientParamsSchema.parse(request.params);
       const result = await this.getClient.execute(clientId);
       response.json({ data: result });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getFirstActive: RequestHandler = async (_request, response, next) => {
+    try {
+      response.json({ data: await this.getFirstActiveClient.execute() });
     } catch (error) {
       next(error);
     }

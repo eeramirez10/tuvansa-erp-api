@@ -4,6 +4,7 @@ import { GetClientActions } from './application/use-cases/get-client-actions.js'
 import { GetClientMovements } from './application/use-cases/get-client-movements.js';
 import { GetClientConsultations } from './application/use-cases/get-client-consultations.js';
 import { GetClient } from './application/use-cases/get-client.js';
+import { GetFirstActiveClient } from './application/use-cases/get-first-active-client.js';
 import { SearchClients } from './application/use-cases/search-clients.js';
 import { CreateClient } from './application/use-cases/create-client.js';
 import { DeleteClient } from './application/use-cases/delete-client.js';
@@ -38,6 +39,7 @@ export const createClientsModule = (): Router => {
     new LegacyMysqlClientActionsDataSource(),
   );
   const getClient = new GetClient(repository);
+  const getFirstActiveClient = new GetFirstActiveClient(repository);
   const searchClients = new SearchClients(repository);
   const getClientBalance = new GetClientBalance(balanceRepository);
   const getClientMovements = new GetClientMovements(movementsRepository);
@@ -49,6 +51,7 @@ export const createClientsModule = (): Router => {
   const deleteClient = new DeleteClient(repository);
   const controller = new ClientsController(
     getClient,
+    getFirstActiveClient,
     searchClients,
     getClientMovements,
     getClientBalance,

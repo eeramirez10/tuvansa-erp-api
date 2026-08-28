@@ -20,6 +20,10 @@ export class ClientsRepositoryImpl implements ClientsRepository, ClientToolbarRe
     return this.dataSource.findById(clientId);
   }
 
+  findFirstActive(): Promise<Client | null> {
+    return this.dataSource.findFirstActive();
+  }
+
   search(criteria: ClientSearchCriteria): Promise<ClientSearchResult> {
     return this.dataSource.search(criteria);
   }

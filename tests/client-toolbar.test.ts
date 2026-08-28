@@ -60,6 +60,7 @@ const toolbarRepository = (
 
 const clientsRepository: ClientsRepository = {
   findById: async () => client,
+  findFirstActive: async () => client,
   search: async () => ({ items: [], total: 0 }),
 };
 

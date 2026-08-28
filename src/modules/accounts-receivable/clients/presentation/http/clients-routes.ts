@@ -6,6 +6,7 @@ export const createClientsRouter = (controller: ClientsController): Router => {
 
   router.get('/', controller.search);
   router.post('/', controller.create);
+  router.get('/first', controller.getFirstActive);
   router.get('/:clientId/previous', controller.getPrevious);
   router.get('/:clientId/next', controller.getNext);
   router.get('/:clientId/balance', controller.getBalance);

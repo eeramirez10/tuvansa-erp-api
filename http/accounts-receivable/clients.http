@@ -3,6 +3,10 @@
 @clientId = 15331
 @temporaryClientCode = QA826
 
+### Entrada inicial de Cuentas por Cobrar (primer cliente activo, sin COUNT)
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/first
+Accept: application/json
+
 ### Obtener todos los clientes
 GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients?page=1&pageSize=25
 Accept: application/json

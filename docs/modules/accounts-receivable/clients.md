@@ -30,6 +30,7 @@ sobre la base MySQL heredada, incluida su barra de navegacion y mantenimiento.
 ```text
 GET /api/accounts-receivable/clients
 POST /api/accounts-receivable/clients
+GET /api/accounts-receivable/clients/first
 GET /api/accounts-receivable/clients/:clientId
 PATCH /api/accounts-receivable/clients/:clientId
 DELETE /api/accounts-receivable/clients/:clientId
@@ -60,6 +61,9 @@ GET /api/accounts-receivable/clients/:clientId/actions/branches
 GET /api/accounts-receivable/clients/:clientId/actions/photo
 GET /api/accounts-receivable/clients/:clientId/actions/contacts
 ```
+
+La entrada inicial de la vista usa `/first` para obtener directamente el primer
+cliente activo, sin ejecutar la búsqueda paginada ni su `COUNT(*)`.
 
 Parametros del listado:
 

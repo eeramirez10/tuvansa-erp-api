@@ -14,5 +14,6 @@ export interface ClientSearchResult {
 
 export interface ClientsRepository {
   findById(clientId: number): Promise<Client | null>;
+  findFirstActive(): Promise<Client | null>;
   search(criteria: ClientSearchCriteria): Promise<ClientSearchResult>;
 }

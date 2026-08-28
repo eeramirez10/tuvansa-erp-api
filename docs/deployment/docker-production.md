@@ -67,6 +67,10 @@ El servicio usa `restart: unless-stopped`, healthcheck, un filesystem de solo
 lectura, usuario sin privilegios y límites configurables de CPU, memoria y
 procesos.
 
+El healthcheck se ejecuta dentro del contenedor contra
+`http://127.0.0.1:3000/health`. `API_PORT` solamente cambia el puerto publicado
+en el servidor; no cambia el puerto interno del contenedor.
+
 ## Operación
 
 Consultar estado y logs:

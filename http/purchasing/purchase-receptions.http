@@ -1,0 +1,33 @@
+@baseUrl = http://localhost:3000/api
+@purchaseReceptionId = 421564
+@purchaseReceptionNumber = RA10724
+
+### Ultimas recepciones
+GET {{baseUrl}}/purchasing/purchase-receptions?page=1&pageSize=25
+
+### Buscar como el modal OMNIS
+GET {{baseUrl}}/purchasing/purchase-receptions?documentNumber=RA10724&page=1&pageSize=100
+
+### Buscar por fecha, pedido, referencia de proveedor y almacen
+GET {{baseUrl}}/purchasing/purchase-receptions?receivedAt=2026-08-28&orderNumber=OA06307&supplierReference=2009047&warehouse=15&page=1&pageSize=25
+
+### Buscar por proveedor
+GET {{baseUrl}}/purchasing/purchase-receptions?supplierCode=30290&page=1&pageSize=25
+
+### Cargar recepcion por identificador
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}
+
+### Cargar recepcion por documento
+GET {{baseUrl}}/purchasing/purchase-receptions/by-number/{{purchaseReceptionNumber}}
+
+### Recepcion anterior
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/previous
+
+### Recepcion siguiente
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/next
+
+### Accion: Auxiliar
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/auxiliary
+
+### Accion: Clasificar
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/classifications

@@ -16,6 +16,8 @@
     "db:inspect:products": "tsx scripts/inspect-product-schema.ts",
     "db:inspect:invoicing": "tsx scripts/inspect-invoicing-record.ts",
     "db:inspect:banking": "tsx scripts/inspect-banking-schema.ts",
+    "db:inspect:purchase-orders": "tsx scripts/inspect-purchase-orders.ts",
+    "db:inspect:purchase-receptions": "tsx scripts/inspect-purchase-receptions.ts",
     "db:capture:summarize": "tsx scripts/summarize-omnis-capture.ts",
     "api:check:clients": "tsx scripts/check-clients-api.ts",
     "api:check:client-balance": "tsx scripts/check-client-balance-api.ts",

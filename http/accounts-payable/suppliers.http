@@ -1,0 +1,74 @@
+@baseUrl = http://localhost:3000/api
+@supplierId = 678
+
+### Buscar proveedores
+GET {{baseUrl}}/accounts-payable/suppliers?q=INTERLOMAS&status=all&page=1&pageSize=25
+
+### Primer proveedor
+GET {{baseUrl}}/accounts-payable/suppliers/first
+
+### Ficha
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}
+
+### Anterior / siguiente
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/previous
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/next
+
+### Acciones: clasificar, bloqueo, descuentos, eventos, varios y contactos
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/classifications?position=1
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/block-status
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/discounts
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/events
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/various
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/contacts
+
+### Consultas
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/balance
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/movements
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/invoices
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/products/ordered
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/fill-rate
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/products/quoted
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/products/purchased
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/products/purchased-detail
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/products/price-history
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/expenses/purchased
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/purchases/annual
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/purchases/annual-summary
+
+###
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/work-in-progress

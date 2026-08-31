@@ -1,0 +1,59 @@
+@baseUrl = http://localhost:3000/api
+@bankAccountId = 6610
+@bankAccountCode = 1102100001
+
+### Entrada inicial: primera cuenta del catálogo
+GET {{baseUrl}}/treasury/bank-accounts/first
+
+### Cargar directamente por código contable
+GET {{baseUrl}}/treasury/bank-accounts/by-code/{{bankAccountCode}}
+
+### Buscador general: código, número de cuenta o nombre
+GET {{baseUrl}}/treasury/bank-accounts?q=BANAMEX&page=1&pageSize=25
+
+### Buscador de OMNIS: criterios combinables
+GET {{baseUrl}}/treasury/bank-accounts?code=110210&accountNumber=407968&name=BANAMEX&page=1&pageSize=25
+
+### Ficha Datos de la cuenta, Saldos, Control, Moneda y reportes fiscales
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}
+
+### Barra compartida: cuenta anterior
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/previous
+
+### Barra compartida: cuenta siguiente
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/next
+
+### Acciones: Auxiliar (año fiscal configurable)
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/auxiliary?fiscalYear=2024
+
+### Acciones: Conciliar, exclusivamente lectura
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation
+
+### Acciones: Conciliación automática, exclusivamente lectura
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/automatic-reconciliation?asOfDate=2026-08-31
+
+### Acciones: Mayor y presupuesto, exclusivamente lectura
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/general-ledger
+
+### Acciones: Mayor por centro de costo
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/cost-center-ledger?costCenter=1
+
+### Acciones: Revisar autorizaciones
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/authorization-review
+
+### Acciones: Clasificadores 1 a 9
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/classifiers
+
+### Acciones: Configuración del traspaso (no ejecuta el traspaso)
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/transfer
+
+### Acciones: Auxiliar de movimientos no aplicados
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/unapplied-auxiliary?fiscalYear=2024
+
+### Acciones que OMNIS bloquea o no abre para esta cuenta
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/movements
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/deposits
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/payments
+
+### Acciones: Diseño de pago a proveedor en modo lectura
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/supplier-expenses

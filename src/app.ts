@@ -7,6 +7,7 @@ import { createClientsModule } from './modules/accounts-receivable/clients/clien
 import { createProductsModule } from './modules/inventories/products/products-module.js';
 import { createInvoicingModule } from './modules/sales/invoicing/invoicing-module.js';
 import { createOrdersModule } from './modules/sales/orders/orders-module.js';
+import { createBankingModule } from './modules/treasury/banking/banking-module.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
 
@@ -27,6 +28,7 @@ export const createApp = (): Express => {
   app.use(`${env.API_PREFIX}/inventories/products`, createProductsModule());
   app.use(`${env.API_PREFIX}/sales/orders`, createOrdersModule());
   app.use(`${env.API_PREFIX}/sales/invoices`, createInvoicingModule());
+  app.use(`${env.API_PREFIX}/treasury/bank-accounts`, createBankingModule());
 
   app.use(notFoundHandler);
   app.use(errorHandler);

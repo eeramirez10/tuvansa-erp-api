@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { env } from './config/env.js';
 import { createClientsModule } from './modules/accounts-receivable/clients/clients-module.js';
 import { createSuppliersModule } from './modules/accounts-payable/suppliers/suppliers-module.js';
+import { createAccountingPoliciesModule } from './modules/accounting/policies/accounting-policies-module.js';
 import { createProductsModule } from './modules/inventories/products/products-module.js';
 import { createPurchaseOrdersModule } from './modules/purchasing/purchase-orders/purchase-orders-module.js';
 import { createPurchaseReceptionsModule } from './modules/purchasing/purchase-receptions/purchase-receptions-module.js';
@@ -29,6 +30,7 @@ export const createApp = (): Express => {
 
   app.use(`${env.API_PREFIX}/accounts-receivable/clients`, createClientsModule());
   app.use(`${env.API_PREFIX}/accounts-payable/suppliers`, createSuppliersModule());
+  app.use(`${env.API_PREFIX}/accounting/policies`, createAccountingPoliciesModule());
   app.use(`${env.API_PREFIX}/inventories/products`, createProductsModule());
   app.use(`${env.API_PREFIX}/purchasing/purchase-orders`, createPurchaseOrdersModule());
   app.use(`${env.API_PREFIX}/purchasing/purchase-receptions`, createPurchaseReceptionsModule());

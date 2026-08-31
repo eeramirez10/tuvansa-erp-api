@@ -1,0 +1,30 @@
+@baseUrl = http://localhost:3000/api
+@policyId = 598128
+@policyNumber = 312608-0438
+
+### Ultimas polizas
+GET {{baseUrl}}/accounting/policies?page=1&pageSize=25
+
+### Buscar como el modal de OMNIS
+GET {{baseUrl}}/accounting/policies?number=312608&page=1&pageSize=100
+
+### Buscar por fecha
+GET {{baseUrl}}/accounting/policies?date=2026-08-24&page=1&pageSize=25
+
+### Buscar por aplicada, familia y cheque
+GET {{baseUrl}}/accounting/policies?applied=true&family=GASTOS%20MULTIPLES&cheque=GN5441&page=1&pageSize=25
+
+### Cargar poliza por identificador
+GET {{baseUrl}}/accounting/policies/{{policyId}}
+
+### Cargar poliza por numero
+GET {{baseUrl}}/accounting/policies/by-number/{{policyNumber}}
+
+### Poliza anterior
+GET {{baseUrl}}/accounting/policies/{{policyId}}/previous
+
+### Poliza siguiente
+GET {{baseUrl}}/accounting/policies/{{policyId}}/next
+
+### Accion: Clasificar
+GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/classifications

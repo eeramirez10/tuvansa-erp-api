@@ -1,0 +1,33 @@
+@baseUrl = http://localhost:3000/api
+@purchaseOrderId = 218451
+@purchaseOrderNumber = OH00205
+
+### Buscar órdenes de compra (modal Buscar)
+GET {{baseUrl}}/purchasing/purchase-orders?orderNumber=OH&page=1&pageSize=25
+
+### Buscar por pedido del proveedor
+GET {{baseUrl}}/purchasing/purchase-orders?supplierOrderNumber=7879&page=1&pageSize=25
+
+### Buscar por proveedor
+GET {{baseUrl}}/purchasing/purchase-orders?supplierCode=30262&page=1&pageSize=25
+
+### Cargar orden por identificador
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}
+
+### Cargar orden por número
+GET {{baseUrl}}/purchasing/purchase-orders/by-number/{{purchaseOrderNumber}}
+
+### Orden anterior
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/previous
+
+### Orden siguiente
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/next
+
+### Acción: Auxiliar (Recepciones de O.C.)
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/auxiliar
+
+### Acción: Clasificar
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/classifications
+
+### Acción: Comentarios
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/comments

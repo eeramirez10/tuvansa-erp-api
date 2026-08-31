@@ -1,0 +1,74 @@
+import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
+
+const [receipts] = await legacyMysqlPool.query(`
+  SELECT
+    FDOC.DSEQ,
+    FDOC.DNUM,
+    FDOC.DREFER,
+    FDOC.DREFERELLOS,
+    FDOC.DFECHA,
+    FDOC.DALMACEN,
+    FDOC.DESFACT,
+    FDOC.DESCXC,
+    FDOC.DMULTICIA,
+    FPRV.PRVCOD,
+    FPRV.PRVNOM,
+    COUNT(FAXINV.AISEQ) AS LINEAS
+  FROM FDOC
+  LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ
+  LEFT JOIN FAXINV ON FDOC.DSEQ = FAXINV.DSEQ
+  WHERE FDOC.DEST = 0
+    AND FDOC.DNUM LIKE 'R%'
+    AND (FDOC.DESFACT IN (2, 3) OR FDOC.DESCXC = 2)
+    AND FDOC.DMULTICIA = 1
+  GROUP BY
+    FDOC.DSEQ,
+    FDOC.DNUM,
+    FDOC.DREFER,
+    FDOC.DREFERELLOS,
+    FDOC.DFECHA,
+    FDOC.DALMACEN,
+    FDOC.DESFACT,
+    FDOC.DESCXC,
+    FDOC.DMULTICIA,
+    FPRV.PRVCOD,
+    FPRV.PRVNOM
+  HAVING COUNT(FAXINV.AISEQ) > 0
+  ORDER BY FDOC.DSEQ DESC
+  LIMIT 10
+`);
+
+const [sample] = await legacyMysqlPool.query(`
+  SELECT
+    FDOC.DSEQ, DNUM, DREFER, DREFERELLOS, DFECHA, DVENCE, DFECHAPEDIDO,
+    DCLINOM, DDEPTO, DALMACEN, DSUCURSAL, DCANT, DCANTF, DBRUTO, DDESC,
+    DDESC1, DDESC2, DDESC3, DPORCIVA, DFLETE, DSEGURO, DOTROS, DOTROSTXT,
+    DIEPES, DIVA, DIVARET, DPZAS, DSTATUS, DCANCELADA,
+    DPAR1, DPAR2, DPAR3, DPAR4, DPAR5, DPAR6, DPAR7, DPAR8, DPAR9,
+    FPRV.PRVSEQ, PRVCOD, PRVNOM
+  FROM FDOC
+  LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ
+  WHERE FDOC.DSEQ IN (309845, 421564)
+  ORDER BY FDOC.DSEQ
+`);
+
+const [sampleLines] = await legacyMysqlPool.query(`
+  SELECT
+    FAXINV.AISEQ, FAXINV.ISEQ, FINV.ICOD, FINV.IDESCR, AICANT, AICANTF,
+    FINV.IUM, AIPRECIO, AIPREBR, AIDESCTO, AIPZAS, AICOM, AISUCURSAL,
+    FAXINV.LOSEQ, FINV.IALTA
+  FROM FAXINV
+  LEFT JOIN FINV ON FAXINV.ISEQ = FINV.ISEQ
+  LEFT JOIN FLOTES ON FAXINV.LOSEQ = FLOTES.LOSEQ
+  WHERE FAXINV.DSEQ = 421564
+  ORDER BY FAXINV.AISEQ
+`);
+
+const [rawRows] = await legacyMysqlPool.query('SELECT * FROM FDOC WHERE DSEQ = 309845 LIMIT 1');
+const raw = (rawRows as Array<Record<string, unknown>>)[0] ?? {};
+const fieldsMatchingDelay = Object.fromEntries(
+  Object.entries(raw).filter(([, fieldValue]) => String(fieldValue).includes('45073')),
+);
+
+console.log(JSON.stringify({ receipts, sample, sampleLines, fieldsMatchingDelay }, null, 2));
+await legacyMysqlPool.end();

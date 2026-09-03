@@ -178,3 +178,11 @@ Accept: application/json
 ### Accion - Contactos
 GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/contacts?page=1&pageSize=25
 Accept: application/json
+
+### Reporte analitico de clientes - Sucursal 01 Mexico
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/reports/analytics?status=active&risk=all&page=1&pageSize=25
+Accept: application/json
+
+### Reporte analitico - buscar y mostrar solo riesgo critico
+GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/reports/analytics?q=industrial&status=active&risk=critical&page=1&pageSize=25
+Accept: application/json

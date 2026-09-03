@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import type { GetClientBalance } from '../../application/use-cases/get-client-balance.js';
+import type { GetClientAnalytics } from '../../application/use-cases/get-client-analytics.js';
 import type {
   GetClientActionInput,
   GetClientActions,
@@ -124,6 +125,14 @@ const classificationsQuerySchema = z.object({
   position: z.coerce.number().int().min(1).max(9).default(1),
 });
 
+const analyticsQuerySchema = z.object({
+  q: z.string().trim().min(1).optional(),
+  status: z.enum(['active', 'inactive', 'all']).default('active'),
+  risk: z.enum(['healthy', 'watch', 'overdue', 'critical', 'all']).default('all'),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(25),
+});
+
 type ConsultationExecutor = (input: GetClientConsultationInput) => Promise<unknown>;
 type ClientActionExecutor = (clientId: number) => Promise<unknown>;
 type PaginatedClientActionExecutor = (input: GetClientActionInput) => Promise<unknown>;
@@ -137,6 +146,7 @@ export class ClientsController {
     private readonly getClientBalance: GetClientBalance,
     private readonly getClientConsultations: GetClientConsultations,
     private readonly getClientActions: GetClientActions,
+    private readonly getClientAnalytics: GetClientAnalytics,
     private readonly navigateClient: NavigateClient,
     private readonly createClient: CreateClient,
     private readonly updateClient: UpdateClient,
@@ -296,6 +306,21 @@ export class ClientsController {
         pageSize: query.pageSize,
       });
       response.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getAnalytics: RequestHandler = async (request, response, next) => {
+    try {
+      const query = analyticsQuerySchema.parse(request.query);
+      response.json(await this.getClientAnalytics.execute({
+        ...(query.q === undefined ? {} : { query: query.q }),
+        status: query.status,
+        risk: query.risk,
+        page: query.page,
+        pageSize: query.pageSize,
+      }));
     } catch (error) {
       next(error);
     }

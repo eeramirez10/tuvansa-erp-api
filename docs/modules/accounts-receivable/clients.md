@@ -218,6 +218,7 @@ actualizarse cada vez que se agregue un endpoint del modulo.
 | Consultas | Ventas por sucursal | `/api/accounts-receivable/clients/:clientId/sales/by-branch` | `CLIENT_000001_VENTAS_POR_SUCURSAL_RETRY` | `faxinv`, `fdoc`, `finv` |
 | Consultas | Ventas EDI | `/api/accounts-receivable/clients/:clientId/sales/edi` | `CLIENT_000001_VENTAS_EDI` | `fvsucursal`, `fedi`, `finv` |
 | Consultas | WIP | `/api/accounts-receivable/clients/:clientId/work-in-progress` | `CLIENT_000001_CT_WIP` | `ftikets` |
+| Consultas | Analisis de clientes | `/api/accounts-receivable/clients/reports/analytics` | Consulta analitica derivada (no existe como boton en OMNIS) | `fcli`, `fdoc`, `fpenc` |
 | Consultas CT | Productos pedidos | `/api/accounts-receivable/clients/:clientId/ct/products/ordered` | `CLIENT_000001_CT_PRODUCTOS_PEDIDOS` | `fplin`, `fpenc`, `finv` |
 | Consultas CT | Productos vendidos | `/api/accounts-receivable/clients/:clientId/ct/products/sold` | `CLIENT_000001_CT_PRODUCTOS_VENDIDOS` | `faxinv`, `fdoc`, `finv` |
 | Consultas CT | WIP | `/api/accounts-receivable/clients/:clientId/ct/work-in-progress` | `CLIENT_000001_CT_WIP` | `ftikets` |
@@ -233,6 +234,26 @@ actualizarse cada vez que se agregue un endpoint del modulo.
 Los endpoints de tablas aceptan `page` y `pageSize`; `pageSize` tiene un maximo
 de 100 registros. Las consultas adicionales conservan una forma comun con
 `data.client`, `data.items` y `pagination`.
+
+### Reporte analitico de clientes
+
+`GET /api/accounts-receivable/clients/reports/analytics` es una consulta nueva
+para la migracion; no pretende reproducir SQL emitido por un boton de OMNIS.
+El alcance se fija en el servidor a la sucursal **01 - Mexico**, cuyo valor real
+en `fcli.CLISUCURSAL` es `MEXICO`. No se acepta una sucursal por parametro para
+evitar mezclar datos de otras plazas.
+
+Parametros opcionales: `q` (codigo o nombre), `status` (`active`, `inactive` o
+`all`), `risk` (`healthy`, `watch`, `overdue`, `critical` o `all`), `page` y
+`pageSize`. El resumen incluye cartera, credito, documentos vencidos, pedidos
+abiertos y cinco bandas de antiguedad. El detalle calcula credito disponible,
+porcentaje utilizado y nivel de riesgo por cliente.
+
+La cartera conserva los filtros contables usados por Saldo:
+`fdoc.DEST = 0`, `fdoc.DMULTICIA = 1` y `fdoc.DESCXC = 1`. Un pedido se considera
+abierto cuando pertenece a multicompania 1, su numero inicia con `P`,
+`fpenc.PESTATUS` esta vacio y no tiene fecha de cancelacion. En los datos reales
+capturados, `PESTATUS = SURT` identifica pedidos surtidos.
 
 OMNIS hizo consultas adicionales `SELECT * FROM finv` al construir Ventas
 anuales. La API evita ese patron N+1 y obtiene la descripcion mediante el mismo

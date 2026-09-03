@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { GetClientBalance } from './application/use-cases/get-client-balance.js';
 import { GetClientActions } from './application/use-cases/get-client-actions.js';
+import { GetClientAnalytics } from './application/use-cases/get-client-analytics.js';
 import { GetClientMovements } from './application/use-cases/get-client-movements.js';
 import { GetClientConsultations } from './application/use-cases/get-client-consultations.js';
 import { GetClient } from './application/use-cases/get-client.js';
@@ -12,10 +13,12 @@ import { NavigateClient } from './application/use-cases/navigate-client.js';
 import { UpdateClient } from './application/use-cases/update-client.js';
 import { LegacyMysqlClientBalanceDataSource } from './infrastructure/datasources/legacy-mysql-client-balance-data-source.js';
 import { LegacyMysqlClientActionsDataSource } from './infrastructure/datasources/legacy-mysql-client-actions-data-source.js';
+import { LegacyMysqlClientAnalyticsDataSource } from './infrastructure/datasources/legacy-mysql-client-analytics-data-source.js';
 import { LegacyMysqlClientMovementsDataSource } from './infrastructure/datasources/legacy-mysql-client-movements-data-source.js';
 import { LegacyMysqlClientConsultationsDataSource } from './infrastructure/datasources/legacy-mysql-client-consultations-data-source.js';
 import { LegacyMysqlClientsDataSource } from './infrastructure/datasources/legacy-mysql-clients-data-source.js';
 import { ClientActionsRepositoryImpl } from './infrastructure/repositories/client-actions-repository-impl.js';
+import { ClientAnalyticsRepositoryImpl } from './infrastructure/repositories/client-analytics-repository-impl.js';
 import { ClientBalanceRepositoryImpl } from './infrastructure/repositories/client-balance-repository-impl.js';
 import { ClientConsultationsRepositoryImpl } from './infrastructure/repositories/client-consultations-repository-impl.js';
 import { ClientMovementsRepositoryImpl } from './infrastructure/repositories/client-movements-repository-impl.js';
@@ -38,6 +41,9 @@ export const createClientsModule = (): Router => {
   const actionsRepository = new ClientActionsRepositoryImpl(
     new LegacyMysqlClientActionsDataSource(),
   );
+  const analyticsRepository = new ClientAnalyticsRepositoryImpl(
+    new LegacyMysqlClientAnalyticsDataSource(),
+  );
   const getClient = new GetClient(repository);
   const getFirstActiveClient = new GetFirstActiveClient(repository);
   const searchClients = new SearchClients(repository);
@@ -45,6 +51,7 @@ export const createClientsModule = (): Router => {
   const getClientMovements = new GetClientMovements(movementsRepository);
   const getClientConsultations = new GetClientConsultations(consultationsRepository);
   const getClientActions = new GetClientActions(actionsRepository);
+  const getClientAnalytics = new GetClientAnalytics(analyticsRepository);
   const navigateClient = new NavigateClient(repository, repository);
   const createClient = new CreateClient(repository);
   const updateClient = new UpdateClient(repository);
@@ -57,6 +64,7 @@ export const createClientsModule = (): Router => {
     getClientBalance,
     getClientConsultations,
     getClientActions,
+    getClientAnalytics,
     navigateClient,
     createClient,
     updateClient,

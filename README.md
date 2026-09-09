@@ -2,6 +2,10 @@
 
 Backend Express + TypeScript para migrar progresivamente el ERP Proscai.
 
+Para continuar la investigación desde otra instalación de Codex CLI, lee
+[`AGENTS.md`](AGENTS.md) y la
+[`guía de traspaso y captura SQL`](docs/PROSCAI-MIGRATION-HANDOFF.md).
+
 La primera etapa consulta el origen legado y reproduce, modulo por modulo, las
 operaciones confirmadas mediante captura de OMNIS. Las credenciales configuradas
 determinan si los endpoints de escritura pueden ejecutarse contra la base de

@@ -1,3 +1,8 @@
+import { ClientFiscalUseCases } from './application/use-cases/client-fiscal.js';
+import { UnconfiguredClientFiscalVerificationProvider } from './infrastructure/services/unconfigured-client-fiscal-verification-provider.js';
+import { LegacyMysqlClientFiscalDataSource } from './infrastructure/datasources/legacy-mysql-client-fiscal-data-source.js';
+import { ClientFiscalRepositoryImpl } from './infrastructure/repositories/client-fiscal-repository-impl.js';
+import { ClientFiscalController, createClientFiscalRouter } from './presentation/http/client-fiscal-controller.js';
 import type { Router } from 'express';
 import { GetClientBalance } from './application/use-cases/get-client-balance.js';
 import { GetClientActions } from './application/use-cases/get-client-actions.js';
@@ -71,5 +76,12 @@ export const createClientsModule = (): Router => {
     deleteClient,
   );
 
-  return createClientsRouter(controller);
+  const router = createClientsRouter(controller);
+  router.use('/:clientId/actions/fiscal-verification', createClientFiscalRouter(
+    new ClientFiscalController(new ClientFiscalUseCases(
+      new ClientFiscalRepositoryImpl(new LegacyMysqlClientFiscalDataSource()),
+      new UnconfiguredClientFiscalVerificationProvider(),
+    )),
+  ));
+  return router;
 };

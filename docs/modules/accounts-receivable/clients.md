@@ -1,5 +1,7 @@
 # Catalogo de clientes
 
+Actualización 2026-09-14: [Verifica fiscal](client-fiscal-verification.md) incorpora lectura y edición fiscal con control de concurrencia. La verificación automática permanece pendiente del algoritmo de OMNIS; el clic normal responde 501 sin escribir.
+
 Alcance inicial: reproducir la pantalla principal del Catalogo de clientes
 sobre la base MySQL heredada, incluida su barra de navegacion y mantenimiento.
 

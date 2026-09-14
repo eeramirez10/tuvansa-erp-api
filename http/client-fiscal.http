@@ -1,0 +1,31 @@
+@baseUrl = http://localhost:3000/api
+@clientId = 15331
+
+### Leer el caso de prueba confirmado (CLISEQ, no el código visible)
+# @name fiscal
+GET {{baseUrl}}/accounts-receivable/clients/{{clientId}}/actions/fiscal-verification
+
+### Guardar sólo en la copia aislada de pruebas.
+# Copiar values y version del GET; cambiar únicamente los campos deseados.
+# Guardar cambios deja la verificación pendiente en PROSCAI.
+PATCH {{baseUrl}}/accounts-receivable/clients/{{clientId}}/actions/fiscal-verification
+Content-Type: application/json
+
+{
+  "expectedVersion": "{{fiscal.response.body.$.data.version}}",
+  "values": {
+    "taxId": "{{fiscal.response.body.$.data.values.taxId}}",
+    "name": "{{fiscal.response.body.$.data.values.name}}",
+    "postalCode": "{{fiscal.response.body.$.data.values.postalCode}}",
+    "fiscalRegime": "{{fiscal.response.body.$.data.values.fiscalRegime}}"
+  }
+}
+
+### Verificación todavía no disponible: 501, sin escritura
+# Punto de integración preparado. Con proveedor: 422 rechazo, 503 indisponibilidad,
+# 409 edición concurrente o 200 provider-validated con legacySync=pending.
+# Un resultado del proveedor no escribe CLICFDI4CS.
+POST {{baseUrl}}/accounts-receivable/clients/{{clientId}}/actions/fiscal-verification/verify
+Content-Type: application/json
+
+{}

@@ -4,7 +4,7 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
-import type { CaptureCustomer, CaptureCustomerMatch, CaptureInput, CaptureOptions, CaptureProduct } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureInput, CaptureOptions, CaptureProduct } from '../../domain/repositories/order-capture-repository.js';
 import { amountInWords, captureTotals } from '../../domain/entities/order-capture-totals.js';
 import { LegacyMysqlOrdersDataSource } from './legacy-mysql-orders-data-source.js';
 
@@ -54,14 +54,21 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
   }
   customer(code: string) { return this.readCustomer(legacyMysqlPool, code); }
 
-  async searchCustomers(query: string, limit: number): Promise<CaptureCustomerMatch[]> {
-    // Adaptada de ORDERS_CUSTOMER_MATCHES_00000: conserva el rango, la baja lógica y el orden capturados.
+  async searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]> {
+    // Código: adaptada de ORDERS_CUSTOMER_MATCHES_00000. Nombre y RFC: filtros derivados para la ventana de búsqueda.
+    const code = criteria.code ?? '';
+    const name = criteria.name ?? '';
+    const taxId = criteria.taxId ?? '';
     const [rows] = await legacyMysqlPool.execute<Row<CaptureCustomerMatch>[]>(
       `SELECT CLISEQ AS id,CLICOD AS code,CLINOM AS name,CLISUCURSAL AS branch,
        CLIRFC AS taxId,CLIEAN AS ean,CLITEL AS phone,CLITEL3 AS mobile,CLICELULAR AS email
        FROM FCLI
-       WHERE CLICOD>=? AND CLICOD<=CONCAT(?,'zzzzzzzzzzzz') AND CLICURP<>'T'
-       ORDER BY CLICOD,FCLI.CLISEQ LIMIT ?`, [query, query, limit]);
+       WHERE CLICURP<>'T'
+       AND (?='' OR (CLICOD>=? AND CLICOD<=CONCAT(?,'zzzzzzzzzzzz')))
+       AND (?='' OR CLINOM LIKE CONCAT('%',?,'%'))
+       AND (?='' OR CLIRFC LIKE CONCAT(?,'%'))
+       ORDER BY CLICOD,FCLI.CLISEQ LIMIT ?`,
+      [code, code, code, name, name, taxId, taxId, limit]);
     return rows;
   }
 

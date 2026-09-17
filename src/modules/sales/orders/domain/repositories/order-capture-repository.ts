@@ -14,6 +14,11 @@ export interface CaptureCustomerMatch {
   id: number; code: string; name: string; branch: string; taxId: string;
   ean: string; phone: string; mobile: string; email: string;
 }
+export interface CaptureCustomerSearchCriteria {
+  code?: string;
+  name?: string;
+  taxId?: string;
+}
 export interface CaptureProduct {
   id: number; code: string; description: string; unit: string; price: number;
   cost: number;
@@ -30,7 +35,7 @@ export interface CaptureInput {
 export interface OrderCaptureRepository {
   options(): Promise<CaptureOptions>;
   customer(code: string): Promise<CaptureCustomer>;
-  searchCustomers(query: string, limit: number): Promise<CaptureCustomerMatch[]>;
+  searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]>;
   product(code: string, warehouse: string, typeCode: string, customerCode: string): Promise<CaptureProduct>;
   create(input: CaptureInput): Promise<Order>;
   convertQuote(orderId: number): Promise<Order>;

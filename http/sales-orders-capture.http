@@ -13,6 +13,9 @@ GET {{baseUrl}}/sales/orders/capture/customers/000001
 ### Coincidencias al salir con Tab de un código parcial
 GET {{baseUrl}}/sales/orders/capture/customers?query=00000&limit=50
 
+### Ventana Encuentra cliente: filtros independientes
+GET {{baseUrl}}/sales/orders/capture/customers?code=000&name=ACERO&taxId=TUV&limit=50
+
 ### Producto por código, almacén y cliente
 GET {{baseUrl}}/sales/orders/capture/products/01300958?warehouse=01&typeCode=P&customerCode=000001
 

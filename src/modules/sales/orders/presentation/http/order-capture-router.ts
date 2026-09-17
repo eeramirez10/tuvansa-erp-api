@@ -26,10 +26,20 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   router.get('/capture/customers', async (req, res, next) => {
     try {
       const query = z.object({
-        query: z.string().trim().min(1).max(100),
+        query: z.string().trim().min(1).max(100).optional(),
+        code: z.string().trim().min(1).max(20).optional(),
+        name: z.string().trim().min(1).max(100).optional(),
+        taxId: z.string().trim().min(1).max(20).optional(),
         limit: z.coerce.number().int().positive().max(100).default(50),
+      }).refine(value => value.query || value.code || value.name || value.taxId, {
+        message: 'Captura código, nombre o RFC',
       }).parse(req.query);
-      res.json({ data: await useCase.searchCustomers(query.query, query.limit) });
+      const searchCode = query.code ?? query.query;
+      res.json({ data: await useCase.searchCustomers({
+        ...(searchCode ? { code: searchCode } : {}),
+        ...(query.name ? { name: query.name } : {}),
+        ...(query.taxId ? { taxId: query.taxId } : {}),
+      }, query.limit) });
     } catch (error) { next(error); }
   });
   router.get('/capture/customers/:code', async (req, res, next) => {

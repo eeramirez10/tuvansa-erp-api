@@ -70,7 +70,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     return {...options,types:options.types.map(t=>({...t,nextNumber:'Automático en Neon'}))};
   }
   customer(code: string) { return this.references.customer(code); }
-  searchCustomers(query: string, limit: number) { return this.references.searchCustomers(query, limit); }
+  searchCustomers(criteria: Parameters<OrderReferenceDataSource['searchCustomers']>[0], limit: number) { return this.references.searchCustomers(criteria, limit); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,warehouse,type,customerCode); }
 
   private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string) {

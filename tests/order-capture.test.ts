@@ -59,6 +59,17 @@ describe('Alta de pedidos capturada', () => {
     await request(app(repo)).get('/capture/products/01300958?warehouse=01&typeCode=INVALID').expect(400);
     expect(repo.product).not.toHaveBeenCalled();
   });
+  it('busca coincidencias por código, nombre y RFC con filtros parametrizados', async () => {
+    const repo = repository();
+    vi.mocked(repo.searchCustomers).mockResolvedValue([]);
+    await request(app(repo)).get('/capture/customers?code=000&name=ACERO&taxId=TUV&limit=25').expect(200, { data: [] });
+    expect(repo.searchCustomers).toHaveBeenCalledWith({ code: '000', name: 'ACERO', taxId: 'TUV' }, 25);
+    await request(app(repo)).get('/capture/customers').expect(400);
+
+    pool.execute.mockResolvedValueOnce([[]]);
+    await new LegacyMysqlOrderCaptureDataSource().searchCustomers({ code: '000', name: 'ACERO', taxId: 'TUV' }, 25);
+    expect(pool.execute.mock.calls[0]?.[1]).toEqual(['000', '000', '000', 'ACERO', 'ACERO', 'TUV', 'TUV', 25]);
+  });
   it('rechaza tablas no transaccionales sin iniciar escrituras', async () => {
     const c = { execute: vi.fn().mockResolvedValue([[{engine:'MyISAM'}]]), beginTransaction: vi.fn(), rollback: vi.fn(), release: vi.fn(), commit: vi.fn() };
     pool.getConnection.mockResolvedValue(c);

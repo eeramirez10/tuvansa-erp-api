@@ -78,8 +78,12 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     if (!rows[0]) throw new NotFoundError('Almacén');
   }
 
-  private async readProduct(db: Db, code: string, warehouse: string, movement: Movement, customerCode: string): Promise<CaptureProduct> {
-    // Adaptada: código exacto FINV/FUNIDAD de 07-PRODUCT. Búsqueda de SKU/serie pendiente.
+  private async readProduct(db: Db, identifier: string, warehouse: string, movement: Movement, customerCode: string): Promise<CaptureProduct> {
+    // Adaptada de 07-PRODUCT: OMNIS intenta IEAN antes de consultar ICOD.
+    const [eanMatches] = await db.execute<Row<{code: string}>[]>(
+      'SELECT ICOD AS code FROM FINV WHERE UPPER(IEAN)=UPPER(?) ORDER BY ISEQ LIMIT 1', [identifier]);
+    const code = eanMatches[0]?.code ?? identifier;
+    // Proyección explícita de la consulta posterior por ICOD. SKU y serie siguen pendientes.
     const [rows] = await db.execute<Row<Omit<CaptureProduct, 'taxPercentage' | 'stock' | 'assigned' | 'available'> & { taxCode: number; family: string }>[]>(
       `SELECT FINV.ISEQ AS id,ICOD AS code,IDESCR AS description,COALESCE(NULLIF(UCOD,''),IUM) AS unit,
        ILISTA1 AS price,IMONEDA1 AS currencyId,IPORCIVA AS taxCode,IPORCIEPES AS excisePercentage,

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { CaptureOrder } from '../../application/use-cases/capture-order.js';
 
-const code = z.string().trim().min(1).max(13);
+const productCode = z.string().trim().min(1).max(13);
+const productIdentifier = z.string().trim().min(1).max(30);
 const date = z.iso.date();
 export const captureInputSchema = z.object({
   warehouse: z.string().trim().min(1).max(6), typeCode: z.literal('P'),
@@ -12,7 +13,7 @@ export const captureInputSchema = z.object({
   termsDays: z.number().int().min(0).max(999), store: z.string().trim().max(4),
   observations: z.string().max(21).default(''), documentKind: z.enum(['order', 'quote']).default('quote'),
   lines: z.array(z.object({
-    productCode: code, quantity: z.number().positive().max(999999).multipleOf(0.001),
+    productCode, quantity: z.number().positive().max(999999).multipleOf(0.001),
     price: z.number().nonnegative().max(999999999).multipleOf(0.00001),
     discount: z.number().min(0).max(100).multipleOf(0.01).default(0),
   }).strict()).min(1).max(500),
@@ -48,7 +49,7 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   router.get('/capture/products/:code', async (req, res, next) => {
     try {
       const query = z.object({ warehouse: z.string().trim().min(1).max(6), typeCode: z.literal('P'), customerCode: z.string().trim().min(1).max(6) }).parse(req.query);
-      res.json({ data: await useCase.product(code.parse(req.params.code), query.warehouse, query.typeCode, query.customerCode) });
+      res.json({ data: await useCase.product(productIdentifier.parse(req.params.code), query.warehouse, query.typeCode, query.customerCode) });
     } catch (error) { next(error); }
   });
   router.post('/capture', async (req, res, next) => {

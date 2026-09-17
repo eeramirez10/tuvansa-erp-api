@@ -89,11 +89,25 @@ describe('Alta de pedidos capturada', () => {
   it('resuelve el código de IVA 0 usando TIIVA0=16, no como exención', async () => {
     pool.execute.mockResolvedValueOnce([[{code:'01'}]])
       .mockResolvedValueOnce([[{id:2,code:'P',tax0:16,tax1:0,tax2:0}]])
+      .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{...product,taxCode:0}]])
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([[{stock:5,assigned:1}]]);
+      .mockResolvedValueOnce([[{stock:5,assigned:1,cost:40}]]);
     await expect(new LegacyMysqlOrderCaptureDataSource().product('01300958','01','P','000001')).resolves.toMatchObject({ taxPercentage:16,available:4 });
-    expect(pool.execute.mock.calls[4]?.[1]).toEqual(['01300958     01']);
+    expect(pool.execute.mock.calls[5]?.[1]).toEqual(['01300958     01']);
+  });
+  it('resuelve IEAN sin distinguir mayúsculas y continúa con el ICOD canónico', async () => {
+    const eanProduct = { ...product, id:13268, code:'01300938' };
+    pool.execute.mockResolvedValueOnce([[{code:'01'}]])
+      .mockResolvedValueOnce([[{id:2,code:'P',tax0:16,tax1:0,tax2:0}]])
+      .mockResolvedValueOnce([[{code:'01300938'}]])
+      .mockResolvedValueOnce([[{...eanProduct,taxCode:0}]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{stock:5,assigned:1,cost:40}]]);
+    await expect(new LegacyMysqlOrderCaptureDataSource().product('tsc480','01','P','000001')).resolves.toMatchObject({ id:13268,code:'01300938' });
+    expect(pool.execute.mock.calls[2]?.[0]).toContain('UPPER(IEAN)=UPPER(?)');
+    expect(pool.execute.mock.calls[2]?.[1]).toEqual(['tsc480']);
+    expect(pool.execute.mock.calls[3]?.[1]).toEqual(['01300938']);
   });
   it('no convierte cotizaciones surtidas ni asignadas', async () => {
     const c = { execute: vi.fn().mockResolvedValueOnce([Array.from({length:7},()=>({engine:'InnoDB'}))])

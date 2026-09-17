@@ -19,6 +19,9 @@ GET {{baseUrl}}/sales/orders/capture/customers?code=000&name=ACERO&taxId=TUV&lim
 ### Producto por código, almacén y cliente
 GET {{baseUrl}}/sales/orders/capture/products/01300958?warehouse=01&typeCode=P&customerCode=000001
 
+### Producto por IEAN; TSC480 resuelve al ICOD canónico 01300938
+GET {{baseUrl}}/sales/orders/capture/products/tsc480?warehouse=01&typeCode=P&customerCode=000001
+
 ### OK final de Comentarios. Sólo ejecutar en una copia aislada autorizada.
 ### El folio se asigna dentro de la transacción; no enviar number ni totales.
 POST {{baseUrl}}/sales/orders/capture

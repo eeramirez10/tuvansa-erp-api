@@ -105,9 +105,14 @@ describe('Alta de pedidos capturada', () => {
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{stock:5,assigned:1,cost:40}]]);
     await expect(new LegacyMysqlOrderCaptureDataSource().product('tsc480','01','P','000001')).resolves.toMatchObject({ id:13268,code:'01300938' });
-    expect(pool.execute.mock.calls[2]?.[0]).toContain('UPPER(IEAN)=UPPER(?)');
-    expect(pool.execute.mock.calls[2]?.[1]).toEqual(['tsc480']);
+    expect(pool.execute.mock.calls[2]?.[0]).toContain('FALM.ALMNUM=?');
+    expect(pool.execute.mock.calls[2]?.[1]).toEqual(['tsc480','01']);
     expect(pool.execute.mock.calls[3]?.[1]).toEqual(['01300938']);
+  });
+  it('limita la captura actual al almacén 01 México', async () => {
+    await expect(new LegacyMysqlOrderCaptureDataSource().product('tsc480','02','P','000001'))
+      .rejects.toMatchObject({ code:'ORDER_CAPTURE_CONFLICT' });
+    expect(pool.execute).not.toHaveBeenCalled();
   });
   it('no convierte cotizaciones surtidas ni asignadas', async () => {
     const c = { execute: vi.fn().mockResolvedValueOnce([Array.from({length:7},()=>({engine:'InnoDB'}))])

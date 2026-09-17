@@ -13,6 +13,7 @@ type Row<T> = RowDataPacket & T;
 type Movement = { id: number; code: string; description: string; counter: number; width: number; tax0: number; tax1: number; tax2: number };
 const movementFields = 'TISEQ AS id,TICLA AS code,TIDESCR AS description,TINUM AS counter,TICEROS AS width,TIIVA0 AS tax0,TIIVA1 AS tax1,TIIVA2 AS tax2';
 const fail = (message: string) => new ConflictError(message, 'ORDER_CAPTURE_CONFLICT');
+const supportedWarehouse = '01';
 const nextNumber = (m: Movement) => {
   const digits = Math.max(1, Number(m.width) - m.code.length);
   const next = String(Number(m.counter) + 1);
@@ -31,9 +32,10 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
   }
 
   async options(): Promise<CaptureOptions> {
-    // Derivada de 03-NEW: la API no dispone de identidad/permisos del usuario OMNIS.
+    // Derivada de 03-NEW: almacén 01 México hasta integrar identidad/permisos del usuario OMNIS.
     const [warehouses] = await legacyMysqlPool.execute<Row<{ code: string; description: string }>[]>(
-      "SELECT CATALM AS code,CATDESCR AS description FROM FALMCAT WHERE CATTIPO='' AND CATMULTICIA IN (0,1) ORDER BY CATTIPO,CATSEQ");
+      "SELECT CATALM AS code,CATDESCR AS description FROM FALMCAT WHERE CATALM=? AND CATTIPO='' AND CATMULTICIA IN (0,1) ORDER BY CATTIPO,CATSEQ",
+      [supportedWarehouse]);
     const movement = await this.movement(legacyMysqlPool, 'P');
     const [agents] = await legacyMysqlPool.execute<Row<{code: string; displayCode: string; name: string}>[]>(
       "SELECT AGTNUM AS code,AGNUM AS displayCode,AGDESCR AS name FROM FAG WHERE AGT='1' AND AGTIPO IN (0,1) ORDER BY AGTNUM");
@@ -73,15 +75,19 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
   }
 
   private async warehouse(db: Db, code: string) {
+    if (code !== supportedWarehouse) throw fail('La captura de pedidos está habilitada sólo para el almacén 01 México');
     const [rows] = await db.execute<Row<{ code: string }>[]>(
       "SELECT CATALM AS code FROM FALMCAT WHERE CATALM=? AND CATTIPO='' AND CATMULTICIA IN (0,1) LIMIT 1", [code]);
     if (!rows[0]) throw new NotFoundError('Almacén');
   }
 
   private async readProduct(db: Db, identifier: string, warehouse: string, movement: Movement, customerCode: string): Promise<CaptureProduct> {
-    // Adaptada de 07-PRODUCT: OMNIS intenta IEAN antes de consultar ICOD.
+    // Adaptada de 07-PRODUCT: OMNIS intenta IEAN antes de ICOD y luego consulta FALM para el almacén activo.
     const [eanMatches] = await db.execute<Row<{code: string}>[]>(
-      'SELECT ICOD AS code FROM FINV WHERE UPPER(IEAN)=UPPER(?) ORDER BY ISEQ LIMIT 1', [identifier]);
+      `SELECT FINV.ICOD AS code FROM FINV
+       INNER JOIN FALM ON FALM.ISEQ=FINV.ISEQ
+       WHERE UPPER(FINV.IEAN)=UPPER(?) AND FALM.ALMNUM=?
+       ORDER BY FINV.ISEQ LIMIT 1`, [identifier, warehouse]);
     const code = eanMatches[0]?.code ?? identifier;
     // Proyección explícita de la consulta posterior por ICOD. SKU y serie siguen pendientes.
     const [rows] = await db.execute<Row<Omit<CaptureProduct, 'taxPercentage' | 'stock' | 'assigned' | 'available'> & { taxCode: number; family: string }>[]>(

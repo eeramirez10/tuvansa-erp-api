@@ -13,7 +13,7 @@ import type { OrderCreateValues, OrderUpdateValues } from '../../domain/reposito
 
 const orderParamsSchema = z.object({ orderId: z.coerce.number().int().positive() });
 const orderNumberParamsSchema = z.object({ orderNumber: z.string().trim().min(1).max(15) });
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const dateSchema = z.iso.date();
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   orderNumber: z.string().trim().min(1).max(15).optional(),

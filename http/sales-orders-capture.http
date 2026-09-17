@@ -1,0 +1,60 @@
+@baseUrl = http://localhost:3000/api
+@orderId = 5000000000
+
+### Persistencia actual: PostgreSQL/Neon. MySQL sólo aporta referencias.
+### Configurar NEON_DATABASE_URL; el primer uso crea el esquema tuvansa.
+
+### Nuevo: almacenes, tipo, próximo folio orientativo y agentes
+GET {{baseUrl}}/sales/orders/capture/options
+
+### Cliente por código, conserva ceros a la izquierda
+GET {{baseUrl}}/sales/orders/capture/customers/000001
+
+### Producto por código, almacén y cliente
+GET {{baseUrl}}/sales/orders/capture/products/01300958?warehouse=01&typeCode=P&customerCode=000001
+
+### OK final de Comentarios. Sólo ejecutar en una copia aislada autorizada.
+### El folio se asigna dentro de la transacción; no enviar number ni totales.
+POST {{baseUrl}}/sales/orders/capture
+Content-Type: application/json
+
+{
+  "warehouse": "01",
+  "typeCode": "P",
+  "customerCode": "000001",
+  "customerOrderNumber": "PRUEBA-API",
+  "orderedAt": "2026-09-14",
+  "from": "2026-09-14",
+  "dueAt": "2026-09-14",
+  "department": "",
+  "initial": false,
+  "agentCode": "1202",
+  "termsDays": 30,
+  "store": "302",
+  "observations": "PRUEBA API NUEVO",
+  "documentKind": "quote",
+  "lines": [
+    { "productCode": "01300958", "quantity": 1, "price": 59.05, "discount": 0 }
+  ]
+}
+
+### Cotiz: sustituir orderId por el ID devuelto por el alta anterior
+### Sólo convierte cotización a pedido; repetir no vuelve a incrementar acumulados.
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/quote-conversion
+Content-Type: application/json
+
+{}
+
+### Leer el pedido local
+GET {{baseUrl}}/sales/orders/{{orderId}}
+
+### Editar sin modificar MySQL
+PATCH {{baseUrl}}/sales/orders/{{orderId}}
+Content-Type: application/json
+
+{
+  "observations": "EDITADO EN NEON"
+}
+
+### Eliminar localmente; conserva el historial y oculta el registro en la API
+DELETE {{baseUrl}}/sales/orders/{{orderId}}

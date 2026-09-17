@@ -23,6 +23,7 @@ export interface OrderLine {
 }
 
 export interface OrderProps {
+  storage?: { source: 'postgres'; legacyId: number | null; revision: number };
   id: number;
   number: string;
   customerOrderNumber: string;

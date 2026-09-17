@@ -6,11 +6,14 @@ Para continuar la investigación desde otra instalación de Codex CLI, lee
 [`AGENTS.md`](AGENTS.md) y la
 [`guía de traspaso y captura SQL`](docs/PROSCAI-MIGRATION-HANDOFF.md).
 
-La primera etapa consulta el origen legado y reproduce, modulo por modulo, las
-operaciones confirmadas mediante captura de OMNIS. Las credenciales configuradas
-determinan si los endpoints de escritura pueden ejecutarse contra la base de
-pruebas. Al crear la nueva base de datos, los adaptadores se reemplazaran sin
-cambiar los casos de uso ni el contrato HTTP.
+MySQL es el origen heredado de lectura. Las escrituras de **Pedidos** se guardan
+en PostgreSQL/Neon mediante datasources separados. Los demás módulos permanecen
+en lectura hasta migrar sus adaptadores; la API bloquea sus escrituras heredadas.
+
+Pega la URL de Neon en `NEON_DATABASE_URL` dentro del `.env` local y reinicia la
+API. Las migraciones se aplican automáticamente al primer acceso de pedidos.
+También puedes comprobarlas con `pnpm db:neon:check`.
+Consulta [configuración, arquitectura y alcance](docs/NEON-WRITE-DATABASE.md).
 
 ## Arquitectura
 

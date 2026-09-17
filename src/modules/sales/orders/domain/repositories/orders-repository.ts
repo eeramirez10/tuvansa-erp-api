@@ -3,6 +3,11 @@ import type { Order } from '../entities/order.js';
 export type OrderNavigationDirection = 'previous' | 'next';
 
 export interface OrderSearchCriteria {
+  /** Internal overlay filter; never accepted from the HTTP query. */
+  excludeIds?: number[];
+  after?: { number: string; id: number };
+  before?: { number: string; id: number };
+  descending?: boolean;
   query?: string;
   orderNumber?: string;
   customerOrderNumber?: string;

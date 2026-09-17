@@ -31,7 +31,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:neon:check": "tsx scripts/check-neon-db.ts",
+    "db:neon:migrate": "tsx scripts/check-neon-db.ts"
   },
   "packageManager": "pnpm@11.24.0",
   "engines": {
@@ -43,13 +45,16 @@
     "express": "^5.2.1",
     "helmet": "^8.3.0",
     "mysql2": "^3.24.2",
+    "pg": "^8.23.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.3.0",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "eslint": "^10.9.1",
     "supertest": "^7.2.2",

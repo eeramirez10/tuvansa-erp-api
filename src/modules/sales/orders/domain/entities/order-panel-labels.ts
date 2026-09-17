@@ -1,0 +1,26 @@
+import type { OrderPanelKey, OrderPanelSection } from '../repositories/order-panels-repository.js';
+
+export const orderPanelLabels: Record<OrderPanelKey, { button: string; section: OrderPanelSection }> = {
+  'assign-all': { button: 'Asignar todo', section: 'actions' },
+  authorize: { button: 'Autorizar', section: 'actions' },
+  invoices: { button: 'Auxiliar', section: 'actions' },
+  boxes: { button: 'Cajas', section: 'actions' },
+  classifications: { button: 'Clasificar', section: 'actions' },
+  comments: { button: 'Comentarios', section: 'actions' },
+  'quote-conversion': { button: 'Cotiz', section: 'actions' },
+  duplicate: { button: 'Duplicar', section: 'actions' },
+  labels: { button: 'Etiquetas', section: 'actions' },
+  print: { button: 'Imprimir', section: 'actions' },
+  monarch: { button: 'Monarch', section: 'actions' },
+  pieces: { button: 'Piezas', section: 'actions' },
+  transfer: { button: 'Traspaso', section: 'actions' },
+  'assign-ct': { button: 'Asignar CT', section: 'secondary-actions' },
+  consolidate: { button: 'Consolidar', section: 'secondary-actions' },
+  ct: { button: 'CT', section: 'secondary-actions' },
+  'split-ct': { button: 'Divide ct', section: 'secondary-actions' },
+  export: { button: 'EXP', section: 'secondary-actions' },
+  'purchase-order': { button: 'Genera O.C.', section: 'secondary-actions' },
+  split: { button: 'Split', section: 'secondary-actions' },
+  branch: { button: 'Sucursal', section: 'secondary-actions' },
+  wip: { button: 'WIP', section: 'secondary-actions' },
+};

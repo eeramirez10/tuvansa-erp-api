@@ -1,11 +1,34 @@
 # Ventas - Pedidos
 
+**Persistencia actual (2026-09-15):** [MySQL de lectura + PostgreSQL/Neon de escritura](../../NEON-WRITE-DATABASE.md). Incluye ambos POST de alta, PATCH, DELETE, Cotiz y lecturas combinadas. La implementación MySQL de escritura descrita en los documentos anteriores queda como referencia histórica.
+
+| Vista / botón | Endpoint | Origen actual | Procedencia |
+| --- | --- | --- | --- |
+| Pedidos / Nuevo, Comentarios / OK | POST `/api/sales/orders/capture` | PostgreSQL; referencias MySQL | Derivada del flujo `ORDERS_NEW_000001_11-SAVE_OPEN_COMMENTS` y `13-COMMENTS_OK` |
+| Alta anterior | POST `/api/sales/orders` | PostgreSQL | Derivada |
+| Pedidos / Editar | PATCH `/api/sales/orders/:id` | PostgreSQL; copia base si es heredado | Derivada |
+| Pedidos / Eliminar | DELETE `/api/sales/orders/:id` | Marca local en PostgreSQL | Derivada |
+| Pedidos / Cotiz | POST `/api/sales/orders/:id/actions/quote-conversion` | PostgreSQL | Derivada del marcador `ORDERS_NEW_000001_15-COTIZ_TO_ORDER` |
+| Catálogo, búsqueda, navegación | GET `/api/sales/orders/...` | MySQL + versiones locales PostgreSQL | Adaptada y derivada |
+
+Tablas nuevas: `tuvansa.orders`, `tuvansa.order_changes`, `tuvansa.order_stock_deltas`; migraciones en `tuvansa.schema_migrations`. MySQL FPENC/FPLIN/FINV/FALM/FCLI/FTIPMV no reciben escrituras.
+
+Prueba real de desarrollo del 2026-09-15: `POST /api/sales/orders/capture` creó **NP5000000000** con cliente `000001` y producto `01300958`; GET, PATCH, **Cotiz** y DELETE quedaron verificados contra Neon. La baja es lógica: la API devuelve `404` y PostgreSQL conserva cuatro revisiones de auditoría. Detalle en [NEON-WRITE-DATABASE.md](../../NEON-WRITE-DATABASE.md).
+
+Implementación del alta de la versión nueva: [contrato, procedencia SQL, flujo y validación](orders-create-api.md). El frontend usa `POST /api/sales/orders/capture`; el POST heredado no es equivalente.
+
+Ejercicio de la versión nueva (2026-09-14): [alta desde el icono Nuevo](orders-create-new-version.md). Incluye selección de almacén, captura de partida, Comentarios y conversión de Cotización (4) a Pedido (1). Es evidencia visual y de lecturas de comprobación; no una nueva captura SQL.
+
+Repetición con **SQL real capturado**: [alta de P021063](orders-create-sql-new-version.md), 99 sentencias funcionales y 17 escrituras. Confirma el vínculo nuevo de comentarios, la secuencia de persistencia y los ajustes de inventario. Neon registra diferencias locales por pedido; la API no escribe los acumulados ni existencias de MySQL que modifica OMNIS.
+
+Reglas verificadas con SQL real en `P021066`: [búsqueda, costo, autorización, asignación, edición y Cotiz](orders-behaviors-new-version.md). La captura confirma que la asignación exige autorización, la desautorización exige desasignar, la edición autorizada se bloquea y `Cotiz` alterna en ambos sentidos. También demuestra que el indicador visible de autorización es `PEPAR9='O.K.'`; `PEUSRAUT` conserva el usuario después de desautorizar.
+
 ## Origen y alcance
 
 - Acceso OMNIS: `F3` o botón **PEDIDOS**.
 - Pedido usado para contrastar la pantalla: `P010773` (`PESEQ=72391`).
 - Encabezado: `FPENC`; partidas: `FPLIN`; cliente: `FCLI`; productos: `FINV`.
-- Comentarios: `FCOMENT.COMSEQFACT = 10000000 + FPENC.PESEQ`.
+- Comentarios: la API y documentación anterior usan `10000000 + FPENC.PESEQ`; el alta capturada en la versión nueva usa **`1000000000 + FPENC.PESEQ`**. Véase la evidencia enlazada; equivalencia pendiente de corregir.
 - Facturas relacionadas: `FDOC.DREFER = FPENC.PENUM`.
 - Prefijo API: `/api/sales/orders`.
 

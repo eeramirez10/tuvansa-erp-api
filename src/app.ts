@@ -14,6 +14,7 @@ import { createOrdersModule } from './modules/sales/orders/orders-module.js';
 import { createBankingModule } from './modules/treasury/banking/banking-module.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
+import { postgresWriteBoundary } from './shared/infrastructure/http/postgres-write-boundary.js';
 
 export const createApp = (): Express => {
   const app = express();
@@ -23,6 +24,7 @@ export const createApp = (): Express => {
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGINS }));
   app.use(express.json());
+  app.use(env.API_PREFIX, postgresWriteBoundary);
 
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok' });

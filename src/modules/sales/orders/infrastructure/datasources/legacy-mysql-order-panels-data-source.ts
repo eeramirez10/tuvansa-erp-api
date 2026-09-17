@@ -1,36 +1,14 @@
+import { orderPanelLabels } from '../../domain/entities/order-panel-labels.js';
 import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { OrderPanelsDataSource } from '../../domain/datasources/order-panels-data-source.js';
 import type {
-  OrderPanelKey, OrderPanelResult, OrderPanelSection,
+  OrderPanelKey, OrderPanelResult,
 } from '../../domain/repositories/order-panels-repository.js';
 
 interface IdentityRow extends RowDataPacket { id: number; number: string; customerId: number }
 
-const labels: Record<OrderPanelKey, { button: string; section: OrderPanelSection }> = {
-  'assign-all': { button: 'Asignar todo', section: 'actions' },
-  authorize: { button: 'Autorizar', section: 'actions' },
-  invoices: { button: 'Auxiliar', section: 'actions' },
-  boxes: { button: 'Cajas', section: 'actions' },
-  classifications: { button: 'Clasificar', section: 'actions' },
-  comments: { button: 'Comentarios', section: 'actions' },
-  'quote-conversion': { button: 'Cotiz', section: 'actions' },
-  duplicate: { button: 'Duplicar', section: 'actions' },
-  labels: { button: 'Etiquetas', section: 'actions' },
-  print: { button: 'Imprimir', section: 'actions' },
-  monarch: { button: 'Monarch', section: 'actions' },
-  pieces: { button: 'Piezas', section: 'actions' },
-  transfer: { button: 'Traspaso', section: 'actions' },
-  'assign-ct': { button: 'Asignar CT', section: 'secondary-actions' },
-  consolidate: { button: 'Consolidar', section: 'secondary-actions' },
-  ct: { button: 'CT', section: 'secondary-actions' },
-  'split-ct': { button: 'Divide ct', section: 'secondary-actions' },
-  export: { button: 'EXP', section: 'secondary-actions' },
-  'purchase-order': { button: 'Genera O.C.', section: 'secondary-actions' },
-  split: { button: 'Split', section: 'secondary-actions' },
-  branch: { button: 'Sucursal', section: 'secondary-actions' },
-  wip: { button: 'WIP', section: 'secondary-actions' },
-};
+
 
 const queries: Partial<Record<OrderPanelKey, string>> = {
   'assign-all': `SELECT FPLIN.PLSEQ AS lineId, ICOD AS productCode, PLCANT AS ordered,
@@ -84,7 +62,7 @@ export class LegacyMysqlOrderPanelsDataSource implements OrderPanelsDataSource {
     );
     const identity = identityRows[0];
     if (identity === undefined) return null;
-    const metadata = labels[key];
+    const metadata = orderPanelLabels[key];
     let source: OrderPanelResult['source'] = 'mysql';
     let items: Array<Record<string, unknown>> = [];
     let summary: Record<string, unknown> | undefined;
@@ -126,9 +104,9 @@ export class LegacyMysqlOrderPanelsDataSource implements OrderPanelsDataSource {
           COMCAJA3 AS authorizedBy, COMCAJA4 AS changesCount,
           COMCAMBIOS AS auditTrail
          FROM FCOMENT
-         WHERE COMSEQFACT = 10000000 + ?
-         ORDER BY FCOMENT.COMSEQ LIMIT 1`,
-        [orderId],
+         WHERE COMSEQFACT IN (1000000000 + ?, 10000000 + ?)
+         ORDER BY COMSEQFACT DESC,FCOMENT.COMSEQ LIMIT 1`,
+        [orderId, orderId],
       );
       const [headerRows] = await legacyMysqlPool.execute<RowDataPacket[]>(
         `SELECT PENUMELLOS AS customerOrderNumber, PEFECHA AS orderedAt,

@@ -14,7 +14,7 @@ export interface OrderPanelResult {
   section: OrderPanelSection;
   button: string;
   available: boolean;
-  source: 'mysql' | 'static' | 'not-available';
+  source: 'mysql' | 'postgres' | 'static' | 'not-available';
   items: Array<Record<string, unknown>>;
   summary?: Record<string, unknown>;
   reason?: string;

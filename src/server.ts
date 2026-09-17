@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { legacyMysqlPool } from './shared/infrastructure/database/legacy-mysql-pool.js';
+import { closePostgresPool } from './shared/infrastructure/database/postgres-pool.js';
 
 const app = createApp();
 
@@ -19,7 +20,7 @@ const finishShutdown = async (
   if (serverError !== undefined) console.error('Error cerrando el servidor HTTP', serverError);
 
   try {
-    await legacyMysqlPool.end();
+    await Promise.all([legacyMysqlPool.end(), closePostgresPool()]);
   } catch (databaseError) {
     exitCode = 1;
     console.error('Error cerrando el pool MySQL', databaseError);

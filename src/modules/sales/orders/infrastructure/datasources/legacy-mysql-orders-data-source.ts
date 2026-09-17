@@ -153,8 +153,8 @@ const headerAssignments: Record<string, string> = {
 };
 
 export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
-  private async lines(orderId: number): Promise<OrderLine[]> {
-    const [rows] = await legacyMysqlPool.execute<LineRow[]>(
+  private async lines(orderId: number, db: Pick<PoolConnection, 'execute'> = legacyMysqlPool): Promise<OrderLine[]> {
+    const [rows] = await db.execute<LineRow[]>(
       `SELECT ${selectLines}
        FROM FPLIN
        LEFT JOIN FINV ON FPLIN.ISEQ = FINV.ISEQ
@@ -165,8 +165,8 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
     return rows.map((row) => ({ ...row }));
   }
 
-  async findById(orderId: number): Promise<Order | null> {
-    const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
+  async findById(orderId: number, db: Pick<PoolConnection, 'execute'> = legacyMysqlPool): Promise<Order | null> {
+    const [rows] = await db.execute<HeaderRow[]>(
       `SELECT ${selectHeader}
        FROM FPENC
        LEFT JOIN FCLI ON FPENC.CLISEQ = FCLI.CLISEQ
@@ -175,7 +175,7 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
       [orderId],
     );
     const row = rows[0];
-    return row === undefined ? null : toOrder(row, await this.lines(orderId));
+    return row === undefined ? null : toOrder(row, await this.lines(orderId, db));
   }
 
   async findByNumber(orderNumber: string): Promise<Order | null> {
@@ -195,6 +195,17 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
   async search(criteria: OrderSearchCriteria): Promise<OrderSearchResult> {
     const conditions = ['PESPEDIDO IN (1, 4)'];
     const parameters: Array<string | number> = [];
+    if (criteria.excludeIds?.length) {
+      // Derivada: hide PostgreSQL overrides/deletions before COUNT and pagination.
+      conditions.push("FPENC.PESEQ NOT IN (SELECT excluded.id FROM JSON_TABLE(?, '$[*]' COLUMNS(id BIGINT PATH '$')) AS excluded)");
+      parameters.push(JSON.stringify(criteria.excludeIds));
+    }
+    for (const [bound,operator] of [[criteria.after,'>'],[criteria.before,'<']] as const) {
+      if (bound) {
+        conditions.push(`(PENUM ${operator} ? OR (PENUM = ? AND FPENC.PESEQ ${operator} ?))`);
+        parameters.push(bound.number,bound.number,bound.id);
+      }
+    }
     if (criteria.query !== undefined) {
       conditions.push('(UPPER(PENUM) LIKE UPPER(?) OR UPPER(PENUMELLOS) LIKE UPPER(?) OR UPPER(CLICOD) LIKE UPPER(?) OR UPPER(CLINOM) LIKE UPPER(?))');
       parameters.push(...Array(4).fill(`%${criteria.query}%`));
@@ -223,7 +234,7 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
        FROM FPENC
        LEFT JOIN FCLI ON FPENC.CLISEQ = FCLI.CLISEQ
        WHERE ${where}
-       ORDER BY PENUM, FPENC.PESEQ
+       ORDER BY PENUM ${criteria.descending ? 'DESC' : 'ASC'}, FPENC.PESEQ ${criteria.descending ? 'DESC' : 'ASC'}
        LIMIT ? OFFSET ?`,
       [...parameters, criteria.limit, criteria.offset],
     );

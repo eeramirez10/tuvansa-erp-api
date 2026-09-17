@@ -10,6 +10,9 @@ GET {{baseUrl}}/sales/orders/capture/options
 ### Cliente por código, conserva ceros a la izquierda
 GET {{baseUrl}}/sales/orders/capture/customers/000001
 
+### Coincidencias al salir con Tab de un código parcial
+GET {{baseUrl}}/sales/orders/capture/customers?query=00000&limit=50
+
 ### Producto por código, almacén y cliente
 GET {{baseUrl}}/sales/orders/capture/products/01300958?warehouse=01&typeCode=P&customerCode=000001
 
@@ -38,12 +41,35 @@ Content-Type: application/json
   ]
 }
 
-### Cotiz: sustituir orderId por el ID devuelto por el alta anterior
-### Sólo convierte cotización a pedido; repetir no vuelve a incrementar acumulados.
+### Cotiz: alterna cotización y pedido
 POST {{baseUrl}}/sales/orders/{{orderId}}/actions/quote-conversion
 Content-Type: application/json
 
 {}
+
+### Ctrl+A: autorizar
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
+Content-Type: application/json
+
+{ "authorized": true }
+
+### Ctrl+P: asignar una cantidad absoluta a la partida
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/assignment
+Content-Type: application/json
+
+{ "lines": [{ "lineId": 1, "assigned": 1 }] }
+
+### Desasignar antes de desautorizar
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/assignment
+Content-Type: application/json
+
+{ "lines": [{ "lineId": 1, "assigned": 0 }] }
+
+### Ctrl+A: desautorizar
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
+Content-Type: application/json
+
+{ "authorized": false }
 
 ### Leer el pedido local
 GET {{baseUrl}}/sales/orders/{{orderId}}
@@ -52,9 +78,7 @@ GET {{baseUrl}}/sales/orders/{{orderId}}
 PATCH {{baseUrl}}/sales/orders/{{orderId}}
 Content-Type: application/json
 
-{
-  "observations": "EDITADO EN NEON"
-}
+{ "lines": [{ "productId": 13268, "quantity": 2, "price": 77.8, "discount": 0 }] }
 
 ### Eliminar localmente; conserva el historial y oculta el registro en la API
 DELETE {{baseUrl}}/sales/orders/{{orderId}}

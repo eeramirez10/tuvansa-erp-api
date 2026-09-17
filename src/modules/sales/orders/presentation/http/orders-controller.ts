@@ -49,9 +49,8 @@ const createSchema = z.object(editableFields).strict().extend({
   number: z.string().trim().min(1).max(15), customerId: z.number().int().positive(),
   orderedAt: dateSchema, lines: z.array(lineSchema).min(1),
 }).omit({ status: true, classifications: true });
-const updateSchema = z.object(editableFields).strict().refine((value) => Object.keys(value).length > 0, {
-  message: 'Debe proporcionar al menos un campo para modificar',
-});
+// La ventana capturada "Cambio de pedido" modifica únicamente partidas.
+const updateSchema = z.object({ lines: z.array(lineSchema).min(1) }).strict();
 
 export class OrdersController {
   constructor(

@@ -51,7 +51,7 @@ const selectHeader = `
   PEVENCE AS dueAt,
   COALESCE((SELECT AGDESCR FROM FAG WHERE AGTNUM = PEPAR1 LIMIT 1), PEPAR1) AS attention,
   PEPLAZO AS termsDays,
-  CASE WHEN PEUSRAUT > 0 THEN 'O.K.' ELSE '' END AS authorization,
+  CASE WHEN PEPAR9 = 'O.K.' THEN 'O.K.' ELSE '' END AS authorization,
   PEINICIAL AS initial,
   PEALMACEN AS warehouse,
   PEMONEDA AS currencyId,
@@ -220,8 +220,8 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
     if (criteria.branch !== undefined) { conditions.push('PESUCURSAL = ?'); parameters.push(criteria.branch); }
     if (criteria.warehouse !== undefined) { conditions.push('PEALMACEN LIKE ?'); parameters.push(`${criteria.warehouse}%`); }
     if (criteria.authorization !== undefined) {
-      if (/^O\.?K\.?$/i.test(criteria.authorization)) conditions.push('PEUSRAUT > 0');
-      else { conditions.push('CAST(PEUSRAUT AS CHAR) LIKE ?'); parameters.push(`${criteria.authorization}%`); }
+      if (/^O\.?K\.?$/i.test(criteria.authorization)) conditions.push("PEPAR9 = 'O.K.'");
+      else { conditions.push('PEPAR9 LIKE ?'); parameters.push(`${criteria.authorization}%`); }
     }
     if (criteria.minimumFulfillmentPercentage !== undefined) {
       conditions.push('PEPORCMINSUR = ?'); parameters.push(criteria.minimumFulfillmentPercentage);

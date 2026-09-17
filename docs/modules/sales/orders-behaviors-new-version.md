@@ -30,11 +30,11 @@ Captura controlada del 2026-09-17 sobre la copia aislada de pruebas. Se creó `P
 
 | Comportamiento | Endpoint actual o propuesto | Estado después de la captura |
 | --- | --- | --- |
-| Estado de autorización | GET `/api/sales/orders/:orderId/actions/authorize` | Existe; debe corregir el booleano para usar `PEPAR9` |
-| Autorizar / desautorizar | POST `/api/sales/orders/:orderId/actions/authorization` | Propuesto; persistencia PostgreSQL/Neon |
+| Estado de autorización | GET `/api/sales/orders/:orderId/actions/authorize` | Implementado; usa `PEPAR9` en la lectura legacy |
+| Autorizar / desautorizar | POST `/api/sales/orders/:orderId/actions/authorization` | Implementado en PostgreSQL/Neon |
 | Consultar asignación | GET `/api/sales/orders/:orderId/actions/assign-all` | Existe |
-| Asignar / desasignar | POST `/api/sales/orders/:orderId/actions/assignment` | Propuesto; persistencia PostgreSQL/Neon |
-| Cambiar partidas | PATCH `/api/sales/orders/:orderId` | Existe; debe aplicar bloqueo por `PEPAR9='O.K.'` |
-| Alternar Pedido/Cotización | POST `/api/sales/orders/:orderId/actions/quote-conversion` | Existe; sólo cubre 4 → 1 y debe alinearse con la alternancia observada |
+| Asignar / desasignar | POST `/api/sales/orders/:orderId/actions/assignment` | Implementado en PostgreSQL/Neon |
+| Cambiar partidas | PATCH `/api/sales/orders/:orderId` | Implementado; bloquea pedidos con `O.K.` |
+| Alternar Pedido/Cotización | POST `/api/sales/orders/:orderId/actions/quote-conversion` | Implementado en ambos sentidos |
 
-Las futuras consultas adaptadas deben conservar tablas, filtros y significado de la captura, usar parámetros y evitar los `SELECT *` de OMNIS. No se implementó ningún cambio HTTP en esta captura.
+La búsqueda de coincidencias usa SQL adaptado y parametrizado sobre FCLI. Las escrituras nuevas son derivadas y se guardan exclusivamente en PostgreSQL/Neon; no escriben MySQL.

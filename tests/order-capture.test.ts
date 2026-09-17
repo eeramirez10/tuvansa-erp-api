@@ -20,12 +20,13 @@ const input: CaptureInput = {
   lines: [{ productCode: '01300958', quantity: 1, price: 59.05, discount: 0 }],
 };
 const product: CaptureProduct = {
-  id: 13288, code: '01300958', description: 'TEST', unit: 'M', price: 59.05, taxPercentage: 16,
+  id: 13288, code: '01300958', description: 'TEST', unit: 'M', price: 59.05, cost: 40, taxPercentage: 16,
   excisePercentage: 0, currencyId: 2, stock: 5, assigned: 1, available: 4, weight: 16.08, volume: 0,
 };
 const repository = (): OrderCaptureRepository => ({
   options: vi.fn().mockResolvedValue({ warehouses: [], types: [] }),
-  customer: vi.fn(), product: vi.fn(), create: vi.fn(), convertQuote: vi.fn(),
+  customer: vi.fn(), searchCustomers: vi.fn(), product: vi.fn(), create: vi.fn(), convertQuote: vi.fn(),
+  setAuthorization: vi.fn(), setAssignment: vi.fn(),
 });
 const app = (repo: OrderCaptureRepository) => express().use(express.json()).use(createOrderCaptureRouter(new CaptureOrder(repo))).use(errorHandler);
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });

@@ -9,6 +9,7 @@ export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSo
   private readonly source = new LegacyMysqlOrderCaptureDataSource();
   options() { return this.source.options(); }
   customer(code: string) { return this.source.customer(code); }
+  searchCustomers(query: string, limit: number) { return this.source.searchCustomers(query, limit); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.source.product(code,warehouse,type,customerCode); }
   async customerById(id: number) {
     const [rows] = await legacyMysqlPool.execute<(RowDataPacket & {code:string})[]>('SELECT CLICOD AS code FROM FCLI WHERE CLISEQ=? LIMIT 1',[id]);

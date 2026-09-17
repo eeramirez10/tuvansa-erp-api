@@ -34,8 +34,8 @@ POST capture recibe códigos de cliente/productos, almacén, tipo P, fechas, ref
 - Se limita a precio de lista 1 en PESOS (IMONEDA1=2), sin IEPS. Las cuatro claves de FDESCTOS se consultan; si hay reglas comerciales, se rechaza el alta con un motivo explícito hasta validar su aplicación, vigencia y prioridad. No se ignoran silenciosamente ni se inventa su fórmula. Sí se admite descuento manual por partida.
 - Guarda FCOMENT con `1000000000 + PESEQ`, COMDNUM y total en letras; PECLINO conserva `clienteId.folio`. No suplanta el usuario 73 de OMNIS: PEUSRALTA conserva su valor por defecto hasta integrar identidad ERP.
 - `documentKind=quote` es el valor predeterminado y el usado por la UI. Reproduce el estado final observado después de Comentarios (4), moviendo el acumulado de pedidos a cotizaciones. `documentKind=order` permite guardar el estado neto de pedido (1) sin realizar la ida/vuelta intermedia: es una adaptación deliberada.
-- POST Cotiz sólo convierte 4→1 sin partidas asignadas/surtidas ni autorización. Repetir para un pedido ya convertido no duplica acumulados. La conversión inversa no forma parte del endpoint.
-- El número de la pantalla es orientativo; se asigna definitivamente al guardar. No hay reintentos automáticos de creación ni claves de idempotencia persistidas: ante pérdida de respuesta, consultar el catálogo antes de reenviar. La conversión sí es idempotente por estado.
+- POST Cotiz alterna 4↔1 sin partidas asignadas, surtidas ni autorización, conforme a la captura posterior de `P021066`.
+- El número de la pantalla es orientativo; se asigna definitivamente al guardar. No hay reintentos automáticos de creación ni claves de idempotencia persistidas: ante pérdida de respuesta, consultar el catálogo antes de reenviar. `Cotiz` alterna el estado en cada ejecución, por lo que tampoco debe reintentarse automáticamente.
 
 ## Diferencia deliberada del flujo
 

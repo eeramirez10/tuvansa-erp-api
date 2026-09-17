@@ -8,7 +8,9 @@
 | Alta anterior | POST `/api/sales/orders` | PostgreSQL | Derivada |
 | Pedidos / Editar | PATCH `/api/sales/orders/:id` | PostgreSQL; copia base si es heredado | Derivada |
 | Pedidos / Eliminar | DELETE `/api/sales/orders/:id` | Marca local en PostgreSQL | Derivada |
-| Pedidos / Cotiz | POST `/api/sales/orders/:id/actions/quote-conversion` | PostgreSQL | Derivada del marcador `ORDERS_NEW_000001_15-COTIZ_TO_ORDER` |
+| Pedidos / Cotiz | POST `/api/sales/orders/:id/actions/quote-conversion` | PostgreSQL | Derivada de los marcadores capturados de alternancia 1↔4 |
+| Pedidos / Autorizar, Ctrl+A | POST `/api/sales/orders/:id/actions/authorization` | PostgreSQL | Derivada de `ORDERS_AUTHORIZE_CTRL_A` y `ORDERS_DEAUTHORIZE_CTRL_A_SUCCESS` |
+| Pedidos / Asignar todo, Ctrl+P | POST `/api/sales/orders/:id/actions/assignment` | PostgreSQL | Derivada de los marcadores de asignación/desasignación |
 | Catálogo, búsqueda, navegación | GET `/api/sales/orders/...` | MySQL + versiones locales PostgreSQL | Adaptada y derivada |
 
 Tablas nuevas: `tuvansa.orders`, `tuvansa.order_changes`, `tuvansa.order_stock_deltas`; migraciones en `tuvansa.schema_migrations`. MySQL FPENC/FPLIN/FINV/FALM/FCLI/FTIPMV no reciben escrituras.
@@ -49,7 +51,7 @@ uso ni la presentación HTTP.
 | Flecha derecha | `GET /api/sales/orders/:orderId/next` | Pedido siguiente |
 | Hoja / Nuevo | `POST /api/sales/orders` | Alta de encabezado, partidas y acumulados |
 | Borrar | `DELETE /api/sales/orders/:orderId` | Baja protegida si existe factura o surtido |
-| Hoja y lápiz / Editar | `PATCH /api/sales/orders/:orderId` | Cambia encabezado, clasificaciones o partidas |
+| Hoja y lápiz / Editar | `PATCH /api/sales/orders/:orderId` | Cambia únicamente partidas y bloquea pedidos autorizados |
 
 La búsqueda admite `q`, `status`, `customerCode`, `from`, `to`, `page` y
 `pageSize`. `q` compara número de pedido, pedido del cliente, código y nombre del
@@ -110,14 +112,13 @@ Cada respuesta de panel incluye `button`, `section`, `source`, `items` y, cuando
 aplica, `summary`. El frontend usa esas propiedades en el diálogo ERP compartido
 y conserva scroll horizontal y vertical para tablas mayores que la ventana.
 
-## Escrituras preparadas
+## Escrituras migradas
 
-`POST`, `PATCH` y `DELETE` están conectados, pero dependen de que la conexión
-configurada tenga permisos de escritura. El alta crea `FPENC`, `FPLIN` y
-`FCOMENT`, incrementa `FINV.IPEDCLI`, actualiza `FCLI.CLIULTPED` y recalcula
-importes. La sustitución de partidas revierte primero el compromiso anterior. La
-baja rechaza pedidos facturados o surtidos, revierte `IPEDCLI`, elimina
-comentarios/partidas/encabezado y recalcula la última fecha de pedido del cliente.
+`POST`, `PATCH`, `DELETE`, autorización, asignación y `Cotiz` escriben únicamente
+el modelo local de PostgreSQL/Neon. MySQL conserva su función de lectura y
+referencias. La API copia el estado base de un pedido heredado al primer cambio,
+guarda revisiones y diferencias de inventario, y aplica las reglas capturadas sin
+actualizar `FPENC`, `FPLIN`, `FINV`, `FALM` ni otros acumulados legacy.
 
 Los requests reproducibles están en `http/sales/orders.http`. La evidencia SQL
 y la prueba controlada de alta/edición/baja están en `orders-capture.md`.

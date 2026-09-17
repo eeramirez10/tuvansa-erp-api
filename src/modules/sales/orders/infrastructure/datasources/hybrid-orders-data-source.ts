@@ -70,11 +70,16 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     return {...options,types:options.types.map(t=>({...t,nextNumber:'Automático en Neon'}))};
   }
   customer(code: string) { return this.references.customer(code); }
+  searchCustomers(query: string, limit: number) { return this.references.searchCustomers(query, limit); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,warehouse,type,customerCode); }
 
   private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string) {
     const prepared = [];
-    for (const input of lines) prepared.push({input,product:await this.references.product(input.productCode,warehouse,'P',customer.code)});
+    for (const input of lines) {
+      const product = await this.references.product(input.productCode,warehouse,'P',customer.code);
+      if (input.price < product.cost) throw new ConflictError('No se puede vender abajo del costo', 'ORDER_PRICE_BELOW_COST');
+      prepared.push({input,product});
+    }
     return prepared;
   }
   private async fromClassic(values: OrderCreateValues): Promise<CaptureInput> {
@@ -191,9 +196,49 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   async convertQuote(id: number): Promise<Order> {
     this.writable();
     const result = await this.local.change(id,await this.original(id),'convert',async doc => {
-      if (doc.documentKind==='order') return doc;
-      if (doc.documentKind!=='quote') throw new ConflictError('El documento no es una cotización.');
-      await this.assertMutable(doc); doc.documentKind='order'; return doc;
+      if (!['order','quote'].includes(doc.documentKind)) throw new ConflictError('El documento no es un pedido ni una cotización.');
+      await this.assertMutable(doc);
+      doc.documentKind=doc.documentKind==='quote' ? 'order' : 'quote';
+      return doc;
+    });
+    if (!result) throw new NotFoundError('Pedido');
+    return Order.create(localDocument(result));
+  }
+  async setAuthorization(id: number, authorized: boolean): Promise<Order> {
+    this.writable();
+    const result = await this.local.change(id,await this.original(id),'update',async doc => {
+      if (doc.documentKind !== 'order') throw new ConflictError('Sólo se puede autorizar un pedido.', 'ORDER_AUTHORIZATION_REQUIRED');
+      if (!authorized && doc.lines.some(line => line.assigned > 0)) {
+        throw new ConflictError('No se puede des-autorizar un pedido asignado.', 'ORDER_ASSIGNED');
+      }
+      doc.authorization = authorized ? 'O.K.' : '';
+      return doc;
+    });
+    if (!result) throw new NotFoundError('Pedido');
+    return Order.create(localDocument(result));
+  }
+  async setAssignment(id: number, values: Array<{ lineId: number; assigned: number }>): Promise<Order> {
+    this.writable();
+    const result = await this.local.change(id,await this.original(id),'update',async doc => {
+      if (doc.documentKind !== 'order' || doc.authorization !== 'O.K.') {
+        throw new ConflictError('Para asignar un pedido es necesario autorizarlo antes.', 'ORDER_AUTHORIZATION_REQUIRED');
+      }
+      const requested = new Map(values.map(value => [value.lineId, value.assigned]));
+      if (requested.size !== values.length) throw new ConflictError('La asignación contiene partidas repetidas.', 'ORDER_ASSIGNMENT_INVALID');
+      for (const lineId of requested.keys()) {
+        if (!doc.lines.some(line => line.id === lineId)) throw new NotFoundError('Partida');
+      }
+      doc.lines = doc.lines.map(line => {
+        const assigned = requested.get(line.id);
+        if (assigned === undefined) return line;
+        const maximum = Math.max(0, line.ordered - line.fulfilled);
+        if (assigned < 0 || assigned > maximum) {
+          throw new ConflictError(`La cantidad asignada de ${line.productCode} debe estar entre 0 y ${maximum}.`, 'ORDER_ASSIGNMENT_INVALID');
+        }
+        return {...line, assigned};
+      });
+      doc.status = doc.lines.some(line => line.assigned > 0) ? 'ASIGNAD' : '';
+      return doc;
     });
     if (!result) throw new NotFoundError('Pedido');
     return Order.create(localDocument(result));
@@ -210,6 +255,9 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       summary:{customerOrderNumber:doc.customerOrderNumber,orderedAt:doc.dates.orderedAt,fromDate:doc.dates.from,dueAt:doc.dates.dueAt,
         initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,localRevision:local.revision}};
     if (key==='quote-conversion') return {...result,button:'Cotiz',available:true,items:[{documentKind:doc.documentKind}]};
+    if (key==='authorize') return {...result,available:true,reason:'',items:[{authorized:doc.authorization==='O.K.',authorization:doc.authorization}]};
+    if (key==='assign-all') return {...result,available:true,reason:'',items:doc.lines.map(line=>({lineId:line.id,productCode:line.productCode,
+      ordered:line.ordered,fulfilled:line.fulfilled,assigned:line.assigned,assignable:Math.max(0,line.ordered-line.fulfilled-line.assigned)}))};
     return result;
   }
 }

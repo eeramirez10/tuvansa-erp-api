@@ -16,7 +16,7 @@ const queries: Partial<Record<OrderPanelKey, string>> = {
     FROM FPLIN LEFT JOIN FINV ON FPLIN.ISEQ = FINV.ISEQ
     WHERE FPLIN.PESEQ = ? ORDER BY FPLIN.PLSEQ`,
   authorize: `SELECT PEUSRALTA AS createdBy, PEUSRAUT AS authorizedBy,
-    CASE WHEN PEUSRAUT > 0 THEN 1 ELSE 0 END AS authorized, PESTATUS AS status
+    CASE WHEN PEPAR9 = 'O.K.' THEN 1 ELSE 0 END AS authorized, PEPAR9 AS authorization, PESTATUS AS status
     FROM FPENC WHERE PESEQ = ?`,
   classifications: `SELECT PEPAR1 AS agent, PEPAR2 AS sector, PEPAR3 AS branchOffice,
     PEPAR4 AS statusClassifier, PEPAR5 AS driver, PEPAR6 AS reason, PEPAR7 AS freight

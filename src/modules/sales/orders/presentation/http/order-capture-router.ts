@@ -23,6 +23,15 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   router.get('/capture/options', async (_req, res, next) => {
     try { res.json({ data: await useCase.options() }); } catch (error) { next(error); }
   });
+  router.get('/capture/customers', async (req, res, next) => {
+    try {
+      const query = z.object({
+        query: z.string().trim().min(1).max(100),
+        limit: z.coerce.number().int().positive().max(100).default(50),
+      }).parse(req.query);
+      res.json({ data: await useCase.searchCustomers(query.query, query.limit) });
+    } catch (error) { next(error); }
+  });
   router.get('/capture/customers/:code', async (req, res, next) => {
     try { res.json({ data: await useCase.customer(z.string().trim().min(1).max(6).parse(req.params.code)) }); } catch (error) { next(error); }
   });
@@ -39,6 +48,20 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
     try {
       z.object({}).strict().parse(req.body ?? {});
       res.json({ data: await useCase.convertQuote(z.coerce.number().int().positive().parse(req.params.orderId)) });
+    } catch (error) { next(error); }
+  });
+  router.post('/:orderId/actions/authorization', async (req, res, next) => {
+    try {
+      const body = z.object({ authorized: z.boolean() }).strict().parse(req.body);
+      res.json({ data: await useCase.setAuthorization(z.coerce.number().int().positive().parse(req.params.orderId), body.authorized) });
+    } catch (error) { next(error); }
+  });
+  router.post('/:orderId/actions/assignment', async (req, res, next) => {
+    try {
+      const body = z.object({ lines: z.array(z.object({
+        lineId: z.number().int().positive(), assigned: z.number().nonnegative().multipleOf(0.001),
+      }).strict()).min(1).max(500) }).strict().parse(req.body);
+      res.json({ data: await useCase.setAssignment(z.coerce.number().int().positive().parse(req.params.orderId), body.lines) });
     } catch (error) { next(error); }
   });
   return router;

@@ -4,7 +4,7 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
-import type { CaptureCustomer, CaptureInput, CaptureOptions, CaptureProduct } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCustomer, CaptureCustomerMatch, CaptureInput, CaptureOptions, CaptureProduct } from '../../domain/repositories/order-capture-repository.js';
 import { amountInWords, captureTotals } from '../../domain/entities/order-capture-totals.js';
 import { LegacyMysqlOrdersDataSource } from './legacy-mysql-orders-data-source.js';
 
@@ -54,6 +54,17 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
   }
   customer(code: string) { return this.readCustomer(legacyMysqlPool, code); }
 
+  async searchCustomers(query: string, limit: number): Promise<CaptureCustomerMatch[]> {
+    // Adaptada de ORDERS_CUSTOMER_MATCHES_00000: conserva el rango, la baja lógica y el orden capturados.
+    const [rows] = await legacyMysqlPool.execute<Row<CaptureCustomerMatch>[]>(
+      `SELECT CLISEQ AS id,CLICOD AS code,CLINOM AS name,CLISUCURSAL AS branch,
+       CLIRFC AS taxId,CLIEAN AS ean,CLITEL AS phone,CLITEL3 AS mobile,CLICELULAR AS email
+       FROM FCLI
+       WHERE CLICOD>=? AND CLICOD<=CONCAT(?,'zzzzzzzzzzzz') AND CLICURP<>'T'
+       ORDER BY CLICOD,FCLI.CLISEQ LIMIT ?`, [query, query, limit]);
+    return rows;
+  }
+
   private async warehouse(db: Db, code: string) {
     const [rows] = await db.execute<Row<{ code: string }>[]>(
       "SELECT CATALM AS code FROM FALMCAT WHERE CATALM=? AND CATTIPO='' AND CATMULTICIA IN (0,1) LIMIT 1", [code]);
@@ -79,17 +90,24 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       'SELECT DESSEQ AS id FROM FDESCTOS WHERE DESKEY IN (?,?,?,?) ORDER BY DESSEQ LIMIT 1',
       [`${customerCode}+${p.code}`,`${customerCode}+${p.family}`,`*+${p.code}`,`${customerCode}+*`]);
     if (discounts.length) throw fail('Este cliente/producto tiene reglas de descuento comercial que aún requieren validar en PROSCAI');
-    const [stock] = await db.execute<Row<{ stock: number; assigned: number }>[]>(
-      'SELECT ALMCANT AS stock,ALMASIGNADO AS assigned FROM FALM WHERE ALMKEY=? LIMIT 1', [p.code.padEnd(13, ' ') + warehouse]);
+    const [stock] = await db.execute<Row<{ stock: number; assigned: number; cost: number }>[]>(
+      'SELECT ALMCANT AS stock,ALMASIGNADO AS assigned,ALMPREPRECIO AS cost FROM FALM WHERE ALMKEY=? LIMIT 1', [p.code.padEnd(13, ' ') + warehouse]);
     if (!stock[0]) throw fail(`El producto ${code} no tiene registro en el almacén ${warehouse}`);
     return { id: p.id, code: p.code, description: p.description, unit: p.unit,
-      price: Number(p.price), currencyId: Number(p.currencyId), taxPercentage: Number([movement.tax0, movement.tax1, movement.tax2][taxCode]),
+      price: Number(p.price), cost: Number(stock[0].cost), currencyId: Number(p.currencyId), taxPercentage: Number([movement.tax0, movement.tax1, movement.tax2][taxCode]),
       excisePercentage: Number(p.excisePercentage), weight: Number(p.weight), volume: Number(p.volume),
       stock: Number(stock[0].stock), assigned: Number(stock[0].assigned), available: Number(stock[0].stock) - Number(stock[0].assigned) };
   }
   async product(code: string, warehouse: string, typeCode: string, customerCode: string) {
     await this.warehouse(legacyMysqlPool, warehouse);
     return this.readProduct(legacyMysqlPool, code, warehouse, await this.movement(legacyMysqlPool, typeCode), customerCode);
+  }
+
+  setAuthorization(): Promise<never> {
+    throw new ApplicationError('Las acciones de pedidos se guardan exclusivamente en PostgreSQL.', 'POSTGRES_WRITE_REQUIRED', 503);
+  }
+  setAssignment(): Promise<never> {
+    throw new ApplicationError('Las acciones de pedidos se guardan exclusivamente en PostgreSQL.', 'POSTGRES_WRITE_REQUIRED', 503);
   }
 
   private async transaction<T>(operation: (connection: PoolConnection) => Promise<T>): Promise<T> {

@@ -10,8 +10,13 @@ export interface CaptureCustomer {
   termsDays: number; store: string; classification: string;
   branches: Array<{ code: number; name: string }>;
 }
+export interface CaptureCustomerMatch {
+  id: number; code: string; name: string; branch: string; taxId: string;
+  ean: string; phone: string; mobile: string; email: string;
+}
 export interface CaptureProduct {
   id: number; code: string; description: string; unit: string; price: number;
+  cost: number;
   taxPercentage: number; excisePercentage: number; currencyId: number;
   stock: number; assigned: number; available: number; weight: number; volume: number;
 }
@@ -25,7 +30,10 @@ export interface CaptureInput {
 export interface OrderCaptureRepository {
   options(): Promise<CaptureOptions>;
   customer(code: string): Promise<CaptureCustomer>;
+  searchCustomers(query: string, limit: number): Promise<CaptureCustomerMatch[]>;
   product(code: string, warehouse: string, typeCode: string, customerCode: string): Promise<CaptureProduct>;
   create(input: CaptureInput): Promise<Order>;
   convertQuote(orderId: number): Promise<Order>;
+  setAuthorization(orderId: number, authorized: boolean): Promise<Order>;
+  setAssignment(orderId: number, lines: Array<{ lineId: number; assigned: number }>): Promise<Order>;
 }

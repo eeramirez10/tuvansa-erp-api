@@ -47,8 +47,8 @@ const legacy: OrdersDataSource = {
 const customer = {id:15331,code:'000001',name:'Cliente',agentCode:'1202',agentName:'Agente',termsDays:30,store:'302',classification:'211',branches:[]};
 const references: OrderReferenceDataSource = {
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
-  customer:async()=>customer,customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
-  product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,taxPercentage:16,excisePercentage:0,currencyId:2,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
+  customer:async()=>customer,searchCustomers:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
+  product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,taxPercentage:16,excisePercentage:0,currencyId:2,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
 };
 const make = (s=store) => new HybridOrdersDataSource(legacy,s,references,{getPanel:async()=>null});
 const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
@@ -98,9 +98,12 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     const api=make(); const id=(await api.create(input)).toPrimitives().id;
     let rows=(await db.query<{ordered:string;quoted:string}>('SELECT ordered,quoted FROM tuvansa.order_stock_deltas WHERE order_id=$1',[id])).rows;
     expect(Number(rows[0]!.quoted)).toBe(1);expect(Number(rows[0]!.ordered)).toBe(0);
-    await api.convertQuote(id);await api.convertQuote(id);
+    await api.convertQuote(id);
     rows=(await db.query<{ordered:string;quoted:string}>('SELECT ordered,quoted FROM tuvansa.order_stock_deltas WHERE order_id=$1',[id])).rows;
     expect(Number(rows[0]!.quoted)).toBe(0);expect(Number(rows[0]!.ordered)).toBe(1);
+    await api.convertQuote(id);
+    rows=(await db.query<{ordered:string;quoted:string}>('SELECT ordered,quoted FROM tuvansa.order_stock_deltas WHERE order_id=$1',[id])).rows;
+    expect(Number(rows[0]!.quoted)).toBe(1);expect(Number(rows[0]!.ordered)).toBe(0);
     await api.delete(10);
     const removed=(await db.query<{ordered:string}>('SELECT ordered FROM tuvansa.order_stock_deltas WHERE order_id=10')).rows;
     expect(Number(removed[0]!.ordered)).toBe(-1);expect(forbidden).not.toHaveBeenCalled();
@@ -138,12 +141,31 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(await api.getPanel(id,'comments')).toMatchObject({source:'postgres',available:true,summary:{observations:'Prueba'}});
     await api.delete(id); expect(await api.getPanel(id,'comments')).toBeNull();
   });
+  it('enforces authorization, assignment, deauthorization and edit rules',async()=>{
+    const api=make();const id=(await api.create({...input,documentKind:'order'})).toPrimitives().id;
+    await expect(api.setAssignment(id,[{lineId:1,assigned:1}])).rejects.toMatchObject({code:'ORDER_AUTHORIZATION_REQUIRED'});
+    let order=(await api.setAuthorization(id,true)).toPrimitives();
+    expect(order.authorization).toBe('O.K.');
+    await expect(api.update(id,{lines:[{productId:13288,quantity:2,price:59.05}]})).rejects.toMatchObject({code:'ORDER_IN_USE'});
+    order=(await api.setAssignment(id,[{lineId:1,assigned:1}])).toPrimitives();
+    expect(order.status).toBe('ASIGNAD');expect(order.lines[0]?.assigned).toBe(1);
+    await expect(api.setAuthorization(id,false)).rejects.toMatchObject({code:'ORDER_ASSIGNED'});
+    order=(await api.setAssignment(id,[{lineId:1,assigned:0}])).toPrimitives();
+    expect(order.status).toBe('');
+    order=(await api.setAuthorization(id,false)).toPrimitives();
+    expect(order.authorization).toBe('');
+  });
+  it('rejects prices below the warehouse cost',async()=>{
+    await expect(make().create({...input,lines:[{...input.lines[0]!,price:1}]})).rejects.toMatchObject({code:'ORDER_PRICE_BELOW_COST'});
+  });
   it('supports the existing HTTP capture contract with PostgreSQL persistence',async()=>{
     const app=express().use(express.json()).use('/api',postgresWriteBoundary)
       .use('/api/sales/orders',createOrderCaptureRouter(new CaptureOrder(make()))).use(errorHandler);
     const result=await request(app).post('/api/sales/orders/capture').send(input).expect(201);
     expect(result.body.data.number).toBe('NP5000000000');
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/quote-conversion`).send({}).expect(200);
+    await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/authorization`).send({authorized:true}).expect(200);
+    await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/assignment`).send({lines:[{lineId:1,assigned:1}]}).expect(200);
     await request(app).patch('/api/accounts-receivable/clients/123').send({}).expect(503);
     expect(forbidden).not.toHaveBeenCalled();
   });
@@ -154,9 +176,9 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
       lines:[{productId:13288,quantity:1,price:59.05}]}).expect(201);
     const id=created.body.data.id;
     expect(created.body.data.storage).toEqual({source:'postgres',legacyId:null,revision:1});
-    await request(app).patch(`/api/sales/orders/${id}`).send({observations:'EDITADO'}).expect(200);
+    await request(app).patch(`/api/sales/orders/${id}`).send({lines:[{productId:13288,quantity:2,price:59.05}]}).expect(200);
     const loaded=await request(app).get(`/api/sales/orders/${id}`).expect(200);
-    expect(loaded.body.data.observations).toBe('EDITADO');
+    expect(loaded.body.data.totals.quantity).toBe(2);
     await request(app).delete(`/api/sales/orders/${id}`).expect(204);
     await request(app).get(`/api/sales/orders/${id}`).expect(404);
     await request(app).get('/api/sales/orders/by-number/NEON-TEST').expect(404);

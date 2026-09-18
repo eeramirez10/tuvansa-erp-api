@@ -2,7 +2,7 @@ import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { OrderReferenceDataSource } from '../../domain/datasources/order-reference-data-source.js';
-import type { CaptureCustomerSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCustomerSearchCriteria, CaptureProductSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
 import { LegacyMysqlOrderCaptureDataSource } from './legacy-mysql-order-capture-data-source.js';
 
 // Read-only reference port. No capture/create/update/delete method is exposed here.
@@ -11,6 +11,7 @@ export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSo
   options() { return this.source.options(); }
   customer(code: string) { return this.source.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.source.searchCustomers(criteria, limit); }
+  searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.source.product(code,warehouse,type,customerCode); }
   async customerById(id: number) {
     const [rows] = await legacyMysqlPool.execute<(RowDataPacket & {code:string})[]>('SELECT CLICOD AS code FROM FCLI WHERE CLISEQ=? LIMIT 1',[id]);

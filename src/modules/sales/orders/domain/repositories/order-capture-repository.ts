@@ -25,17 +25,31 @@ export interface CaptureProduct {
   taxPercentage: number; excisePercentage: number; currencyId: number;
   stock: number; assigned: number; available: number; weight: number; volume: number;
 }
+export interface CaptureProductMatch {
+  id: number; code: string; description: string; available: number; price: number;
+  warehouse: string; family: string; secondaryFamily: string;
+  nextReceipt: string | null; supplierCode: string;
+}
+export interface CaptureProductSearchCriteria {
+  code?: string;
+  description?: string;
+  supplierCode?: string;
+}
 export interface CaptureLine { productCode: string; quantity: number; price: number; discount: number }
 export interface CaptureInput {
   warehouse: string; typeCode: string; customerCode: string; customerOrderNumber: string;
   orderedAt: string; from: string; dueAt: string; department: string; initial: boolean;
   agentCode: string; termsDays: number; store: string; observations: string;
+  exchangeRate: number; boxes: number; branch: number; collectionCurrency: string;
+  commission: number; noPartialDeliveries: boolean; transportation: string;
+  deliveryAddress: [string, string, string]; contact: string; additionalComments: string;
   documentKind: 'order' | 'quote'; lines: CaptureLine[];
 }
 export interface OrderCaptureRepository {
   options(): Promise<CaptureOptions>;
   customer(code: string): Promise<CaptureCustomer>;
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]>;
+  searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]>;
   product(code: string, warehouse: string, typeCode: string, customerCode: string): Promise<CaptureProduct>;
   create(input: CaptureInput): Promise<Order>;
   convertQuote(orderId: number): Promise<Order>;

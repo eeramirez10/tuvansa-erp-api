@@ -17,6 +17,8 @@ const input: CaptureInput = {
   warehouse: '01', typeCode: 'P', customerCode: '000001', customerOrderNumber: 'TEST',
   orderedAt: '2026-09-14', from: '2026-09-14', dueAt: '2026-09-14', department: '', initial: false,
   agentCode: '1202', termsDays: 30, store: '302', observations: '', documentKind: 'quote',
+  exchangeRate: 1, boxes: 0, branch: 0, collectionCurrency: 'PESOS', commission: 0,
+  noPartialDeliveries: false, transportation: '', deliveryAddress: ['', '', ''], contact: '', additionalComments: '',
   lines: [{ productCode: '01300958', quantity: 1, price: 59.05, discount: 0 }],
 };
 const product: CaptureProduct = {
@@ -25,7 +27,7 @@ const product: CaptureProduct = {
 };
 const repository = (): OrderCaptureRepository => ({
   options: vi.fn().mockResolvedValue({ warehouses: [], types: [] }),
-  customer: vi.fn(), searchCustomers: vi.fn(), product: vi.fn(), create: vi.fn(), convertQuote: vi.fn(),
+  customer: vi.fn(), searchCustomers: vi.fn(), searchProducts: vi.fn(), product: vi.fn(), create: vi.fn(), convertQuote: vi.fn(),
   setAuthorization: vi.fn(), setAssignment: vi.fn(),
 });
 const app = (repo: OrderCaptureRepository) => express().use(express.json()).use(createOrderCaptureRouter(new CaptureOrder(repo))).use(errorHandler);
@@ -69,6 +71,21 @@ describe('Alta de pedidos capturada', () => {
     pool.execute.mockResolvedValueOnce([[]]);
     await new LegacyMysqlOrderCaptureDataSource().searchCustomers({ code: '000', name: 'ACERO', taxId: 'TUV' }, 25);
     expect(pool.execute.mock.calls[0]?.[1]).toEqual(['000', '000', '000', 'ACERO', 'ACERO', 'TUV', 'TUV', 25]);
+  });
+  it('busca productos por código o IEAN, descripción y proveedor en el almacén 01', async () => {
+    const repo = repository();
+    vi.mocked(repo.searchProducts).mockResolvedValue([]);
+    await request(app(repo)).get('/capture/products?warehouse=01&code=TSC480&description=TUBO&supplierCode=PRV&limit=25').expect(200, { data: [] });
+    expect(repo.searchProducts).toHaveBeenCalledWith({ code:'TSC480', description:'TUBO', supplierCode:'PRV' }, '01', 25);
+    await request(app(repo)).get('/capture/products?warehouse=01').expect(400);
+
+    pool.execute.mockResolvedValueOnce([[{code:'01'}]]).mockResolvedValueOnce([[{
+      id:13268,code:'01300938',description:'TUBO',available:'4',price:'77.80',warehouse:'01',
+      family:'A',secondaryFamily:'B',nextReceipt:null,supplierCode:'PRV',
+    }]]);
+    await expect(new LegacyMysqlOrderCaptureDataSource().searchProducts({code:'TSC480',description:'TUBO',supplierCode:'PRV'},'01',25))
+      .resolves.toEqual([expect.objectContaining({code:'01300938',available:4,price:77.8})]);
+    expect(pool.execute.mock.calls[1]?.[1]).toEqual(['01','TSC480','TSC480','TSC480','TUBO','TUBO','PRV','PRV',25]);
   });
   it('rechaza tablas no transaccionales sin iniciar escrituras', async () => {
     const c = { execute: vi.fn().mockResolvedValue([[{engine:'MyISAM'}]]), beginTransaction: vi.fn(), rollback: vi.fn(), release: vi.fn(), commit: vi.fn() };

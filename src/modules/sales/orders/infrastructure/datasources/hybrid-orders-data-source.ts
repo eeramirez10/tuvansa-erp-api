@@ -71,6 +71,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   customer(code: string) { return this.references.customer(code); }
   searchCustomers(criteria: Parameters<OrderReferenceDataSource['searchCustomers']>[0], limit: number) { return this.references.searchCustomers(criteria, limit); }
+  searchProducts(criteria: Parameters<OrderReferenceDataSource['searchProducts']>[0], warehouse: string, limit: number) { return this.references.searchProducts(criteria, warehouse, limit); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,warehouse,type,customerCode); }
 
   private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string) {
@@ -89,7 +90,9 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     return {customerCode:customer.code,warehouse:values.warehouse ?? '01',typeCode:'P',customerOrderNumber:values.customerOrderNumber ?? '',
       orderedAt:values.orderedAt,from:values.from ?? values.orderedAt,dueAt:values.dueAt ?? values.orderedAt,
       department:values.department ?? '',initial:values.initial ?? false,agentCode:values.attentionCode ?? customer.agentCode,
-      termsDays:values.termsDays ?? customer.termsDays,store:customer.store,observations:values.observations ?? '',documentKind:'order',lines};
+      termsDays:values.termsDays ?? customer.termsDays,store:customer.store,observations:values.observations ?? '',
+      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:'PESOS',commission:0,noPartialDeliveries:false,
+      transportation:'',deliveryAddress:['','',''],contact:'',additionalComments:'',documentKind:'order',lines};
   }
   async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
     this.writable();
@@ -114,10 +117,12 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         ordered:l.quantity,fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId:p.currencyId,
         piecesAssignment:'',discount:l.discount,publicPrice:p.price,sku:'',color:'',size:''}));
       return {id,number,customerOrderNumber:input.customerOrderNumber,customer:{id:customer.id,code:customer.code,name:customer.name},
-        documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:'branch' in values ? values.branch ?? 0 : 0,department:input.department,
+        documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:input.branch,department:input.department,
         dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:customer.agentName,termsDays:input.termsDays,
-        authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId:2,exchangeRate:1,minimumFulfillmentPercentage:0,
-        observations:input.observations,classifications:[input.agentCode,customer.classification,input.store,'','','','7'],
+        authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId:2,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
+        observations:input.observations,captureDetails:{boxes:input.boxes,collectionCurrency:input.collectionCurrency,commission:input.commission,
+          noPartialDeliveries:input.noPartialDeliveries,transportation:input.transportation,deliveryAddress:input.deliveryAddress,
+          contact:input.contact,additionalComments:input.additionalComments},classifications:[input.agentCode,customer.classification,input.store,'','','','7'],
         totals:{quantity:totals.quantity,ordered:totals.quantity,fulfilled:0,remaining:totals.quantity,subtotal:totals.subtotal,discount:totals.discount,
           freight:0,insurance:0,other:0,tax:totals.tax,total:totals.total},lines};
     });
@@ -253,7 +258,8 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       reason:'Este panel todavía no está implementado para la versión local del pedido.'};
     if (key==='comments') return {...result,button:'Comentarios',available:true,reason:'',items:[{comments:'',customerDocumentNumber:doc.number,amountInWords:amountInWords(doc.totals.total)}],
       summary:{customerOrderNumber:doc.customerOrderNumber,orderedAt:doc.dates.orderedAt,fromDate:doc.dates.from,dueAt:doc.dates.dueAt,
-        initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,localRevision:local.revision}};
+        initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,
+        branch:doc.branch,exchangeRate:doc.exchangeRate,...doc.captureDetails,localRevision:local.revision}};
     if (key==='quote-conversion') return {...result,button:'Cotiz',available:true,items:[{documentKind:doc.documentKind}]};
     if (key==='authorize') return {...result,available:true,reason:'',items:[{authorized:doc.authorization==='O.K.',authorization:doc.authorization}]};
     if (key==='assign-all') return {...result,available:true,reason:'',items:doc.lines.map(line=>({lineId:line.id,productCode:line.productCode,

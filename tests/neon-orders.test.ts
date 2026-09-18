@@ -47,11 +47,11 @@ const legacy: OrdersDataSource = {
 const customer = {id:15331,code:'000001',name:'Cliente',agentCode:'1202',agentName:'Agente',termsDays:30,store:'302',classification:'211',branches:[]};
 const references: OrderReferenceDataSource = {
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
-  customer:async()=>customer,searchCustomers:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
+  customer:async()=>customer,searchCustomers:async()=>[],searchProducts:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
   product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,taxPercentage:16,excisePercentage:0,currencyId:2,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
 };
 const make = (s=store) => new HybridOrdersDataSource(legacy,s,references,{getPanel:async()=>null});
-const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
+const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',exchangeRate:1.2,boxes:3,branch:4,collectionCurrency:'PESOS',commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',deliveryAddress:['Calle 1','Bodega 2','México'],contact:'Compras',additionalComments:'Entregar por la mañana',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
 
 beforeAll(async()=>{await store.initialize();},30_000);
 beforeEach(async()=>{
@@ -70,6 +70,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   it('creates, reads, edits and deletes local orders without a MySQL write',async()=>{
     const api=make();const created=(await api.create(input)).toPrimitives();
     expect(created.id).toBe(5000000000);expect(created.number).toBe('NP5000000000');expect(created.totals.total).toBe(68.5);
+    expect(created).toMatchObject({branch:4,exchangeRate:1.2,captureDetails:{boxes:3,commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',contact:'Compras',additionalComments:'Entregar por la mañana'}});
     expect((await api.findById(created.id))?.toPrimitives().number).toBe(created.number);
     expect((await api.findByNumber(created.number))?.toPrimitives().id).toBe(created.id);
     const edited=await api.update(created.id,{observations:'Editado',lines:[{productId:13288,quantity:2,price:59.05}]});

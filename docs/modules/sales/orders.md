@@ -11,6 +11,7 @@
 | Pedidos / Cotiz | POST `/api/sales/orders/:id/actions/quote-conversion` | PostgreSQL | Derivada de los marcadores capturados de alternancia 1↔4 |
 | Pedidos / Autorizar, Ctrl+A | POST `/api/sales/orders/:id/actions/authorization` | PostgreSQL | Derivada de `ORDERS_AUTHORIZE_CTRL_A` y `ORDERS_DEAUTHORIZE_CTRL_A_SUCCESS` |
 | Pedidos / Asignar todo, Ctrl+P | POST `/api/sales/orders/:id/actions/assignment` | PostgreSQL | Derivada de los marcadores de asignación/desasignación |
+| Encuentra producto | GET `/api/sales/orders/capture/products` | MySQL de solo lectura, almacén 01 | Derivada de la pantalla observada; SQL literal pendiente de captura |
 | Catálogo, búsqueda, navegación | GET `/api/sales/orders/...` | MySQL + versiones locales PostgreSQL | Adaptada y derivada |
 
 Tablas nuevas: `tuvansa.orders`, `tuvansa.order_changes`, `tuvansa.order_stock_deltas`; migraciones en `tuvansa.schema_migrations`. MySQL FPENC/FPLIN/FINV/FALM/FCLI/FTIPMV no reciben escrituras.

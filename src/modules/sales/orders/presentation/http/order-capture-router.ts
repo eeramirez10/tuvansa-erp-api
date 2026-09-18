@@ -12,6 +12,16 @@ export const captureInputSchema = z.object({
   initial: z.boolean().default(false), agentCode: z.string().trim().min(1).max(5),
   termsDays: z.number().int().min(0).max(999), store: z.string().trim().max(4),
   observations: z.string().max(21).default(''), documentKind: z.enum(['order', 'quote']).default('quote'),
+  exchangeRate: z.number().positive().max(999999).default(1),
+  boxes: z.number().int().nonnegative().max(999999).default(0),
+  branch: z.number().int().nonnegative().max(999999).default(0),
+  collectionCurrency: z.string().trim().min(1).max(20).default('PESOS'),
+  commission: z.number().min(0).max(100).multipleOf(0.01).default(0),
+  noPartialDeliveries: z.boolean().default(false),
+  transportation: z.string().trim().max(100).default(''),
+  deliveryAddress: z.tuple([z.string().max(100), z.string().max(100), z.string().max(100)]).default(['', '', '']),
+  contact: z.string().trim().max(100).default(''),
+  additionalComments: z.string().max(2000).default(''),
   lines: z.array(z.object({
     productCode, quantity: z.number().positive().max(999999).multipleOf(0.001),
     price: z.number().nonnegative().max(999999999).multipleOf(0.00001),
@@ -45,6 +55,26 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   });
   router.get('/capture/customers/:code', async (req, res, next) => {
     try { res.json({ data: await useCase.customer(z.string().trim().min(1).max(6).parse(req.params.code)) }); } catch (error) { next(error); }
+  });
+  router.get('/capture/products', async (req, res, next) => {
+    try {
+      const query = z.object({
+        warehouse: z.string().trim().min(1).max(6),
+        query: z.string().trim().min(1).max(100).optional(),
+        code: z.string().trim().min(1).max(30).optional(),
+        description: z.string().trim().min(1).max(100).optional(),
+        supplierCode: z.string().trim().min(1).max(30).optional(),
+        limit: z.coerce.number().int().positive().max(100).default(50),
+      }).refine(value => value.query || value.code || value.description || value.supplierCode, {
+        message: 'Captura código, descripción o código de proveedor',
+      }).parse(req.query);
+      const searchCode = query.code ?? query.query;
+      res.json({ data: await useCase.searchProducts({
+        ...(searchCode ? { code: searchCode } : {}),
+        ...(query.description ? { description: query.description } : {}),
+        ...(query.supplierCode ? { supplierCode: query.supplierCode } : {}),
+      }, query.warehouse, query.limit) });
+    } catch (error) { next(error); }
   });
   router.get('/capture/products/:code', async (req, res, next) => {
     try {

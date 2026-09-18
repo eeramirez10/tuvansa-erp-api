@@ -22,6 +22,9 @@ GET {{baseUrl}}/sales/orders/capture/products/01300958?warehouse=01&typeCode=P&c
 ### Producto por IEAN; TSC480 resuelve al ICOD canónico 01300938
 GET {{baseUrl}}/sales/orders/capture/products/tsc480?warehouse=01&typeCode=P&customerCode=000001
 
+### Ventana Encuentra producto: filtros independientes, sólo almacén 01
+GET {{baseUrl}}/sales/orders/capture/products?warehouse=01&code=TSC480&description=TUBO&supplierCode=PRV&limit=50
+
 ### OK final de Comentarios. Sólo ejecutar en una copia aislada autorizada.
 ### El folio se asigna dentro de la transacción; no enviar number ni totales.
 POST {{baseUrl}}/sales/orders/capture
@@ -41,6 +44,16 @@ Content-Type: application/json
   "termsDays": 30,
   "store": "302",
   "observations": "PRUEBA API NUEVO",
+  "exchangeRate": 1,
+  "boxes": 2,
+  "branch": 0,
+  "collectionCurrency": "PESOS",
+  "commission": 0,
+  "noPartialDeliveries": true,
+  "transportation": "TRANSPORTE DE PRUEBA",
+  "deliveryAddress": ["CALLE DE PRUEBA", "BODEGA 2", "MEXICO"],
+  "contact": "COMPRAS",
+  "additionalComments": "ENTREGAR POR LA MAÑANA",
   "documentKind": "quote",
   "lines": [
     { "productCode": "01300958", "quantity": 1, "price": 59.05, "discount": 0 }

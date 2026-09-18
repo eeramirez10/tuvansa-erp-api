@@ -4,7 +4,7 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
-import type { CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureInput, CaptureOptions, CaptureProduct } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureInput, CaptureOptions, CaptureProduct, CaptureProductMatch, CaptureProductSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
 import { amountInWords, captureTotals } from '../../domain/entities/order-capture-totals.js';
 import { LegacyMysqlOrdersDataSource } from './legacy-mysql-orders-data-source.js';
 
@@ -79,6 +79,28 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const [rows] = await db.execute<Row<{ code: string }>[]>(
       "SELECT CATALM AS code FROM FALMCAT WHERE CATALM=? AND CATTIPO='' AND CATMULTICIA IN (0,1) LIMIT 1", [code]);
     if (!rows[0]) throw new NotFoundError('Almacén');
+  }
+
+  async searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]> {
+    await this.warehouse(legacyMysqlPool, warehouse);
+    // Derivada: búsqueda de la ventana "Encuentra producto". La captura confirmó la vista y sus columnas,
+    // pero no una sentencia literal de OMNIS para sus filtros.
+    const code = criteria.code ?? '';
+    const description = criteria.description ?? '';
+    const supplierCode = criteria.supplierCode ?? '';
+    const [rows] = await legacyMysqlPool.execute<Row<CaptureProductMatch>[]>(
+      `SELECT FINV.ISEQ AS id,FINV.ICOD AS code,FINV.IDESCR AS description,
+       (FALM.ALMCANT-FALM.ALMASIGNADO) AS available,FINV.ILISTA1 AS price,
+       FALM.ALMNUM AS warehouse,FINV.IFAM AS family,FINV.IFAM1 AS secondaryFamily,
+       NULLIF(FINV.IPROXRECEP,'1900-12-31') AS nextReceipt,FINV.ICODPRV AS supplierCode
+       FROM FINV INNER JOIN FALM ON FALM.ISEQ=FINV.ISEQ
+       WHERE FALM.ALMNUM=? AND FINV.IBAJA='1900-12-31'
+       AND (?='' OR FINV.ICOD LIKE CONCAT(?,'%') OR FINV.IEAN LIKE CONCAT(?,'%'))
+       AND (?='' OR FINV.IDESCR LIKE CONCAT('%',?,'%'))
+       AND (?='' OR FINV.ICODPRV LIKE CONCAT(?,'%'))
+       ORDER BY FINV.ICOD,FINV.ISEQ LIMIT ?`,
+      [warehouse, code, code, code, description, description, supplierCode, supplierCode, limit]);
+    return rows.map(row => ({...row, available:Number(row.available), price:Number(row.price)}));
   }
 
   private async readProduct(db: Db, identifier: string, warehouse: string, movement: Movement, customerCode: string): Promise<CaptureProduct> {

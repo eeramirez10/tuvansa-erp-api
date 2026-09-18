@@ -43,6 +43,16 @@ export interface OrderProps {
   exchangeRate: number;
   minimumFulfillmentPercentage: number;
   observations: string;
+  captureDetails?: {
+    boxes: number;
+    collectionCurrency: string;
+    commission: number;
+    noPartialDeliveries: boolean;
+    transportation: string;
+    deliveryAddress: [string, string, string];
+    contact: string;
+    additionalComments: string;
+  };
   classifications: string[];
   totals: {
     quantity: number;

@@ -44,7 +44,7 @@ Content-Type: application/json
   "termsDays": 30,
   "store": "302",
   "observations": "PRUEBA API NUEVO",
-  "exchangeRate": 1,
+  "exchangeRate": 20.00,
   "boxes": 2,
   "branch": 0,
   "collectionCurrency": "PESOS",
@@ -56,7 +56,7 @@ Content-Type: application/json
   "additionalComments": "ENTREGAR POR LA MAÑANA",
   "documentKind": "quote",
   "lines": [
-    { "productCode": "01300958", "quantity": 1, "price": 59.05, "discount": 0 }
+    { "productCode": "01300958", "quantity": 1, "price": 59.05, "discount": 0, "currencyId": 2 }
   ]
 }
 

@@ -2,7 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CaptureOrder } from '../src/modules/sales/orders/application/use-cases/capture-order.js';
-import { amountInWords, captureTotals } from '../src/modules/sales/orders/domain/entities/order-capture-totals.js';
+import { amountInWords, captureMinimumPrice, captureTotals, convertCaptureAmount } from '../src/modules/sales/orders/domain/entities/order-capture-totals.js';
 import type { CaptureInput, CaptureProduct, OrderCaptureRepository } from '../src/modules/sales/orders/domain/repositories/order-capture-repository.js';
 import { createOrderCaptureRouter, captureInputSchema } from '../src/modules/sales/orders/presentation/http/order-capture-router.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
@@ -22,7 +22,7 @@ const input: CaptureInput = {
   lines: [{ productCode: '01300958', quantity: 1, price: 59.05, discount: 0 }],
 };
 const product: CaptureProduct = {
-  id: 13288, code: '01300958', description: 'TEST', unit: 'M', price: 59.05, cost: 40, taxPercentage: 16,
+  id: 13288, code: '01300958', description: 'TEST', unit: 'M', price: 59.05, cost: 40, costCurrencyId: 2, taxPercentage: 16,
   excisePercentage: 0, currencyId: 2, stock: 5, assigned: 1, available: 4, weight: 16.08, volume: 0,
 };
 const repository = (): OrderCaptureRepository => ({
@@ -43,6 +43,14 @@ describe('Alta de pedidos capturada', () => {
     expect(totals).toMatchObject({ quantity: 3, subtotal: 177.15, discount: 11.81, tax: 26.45, total: 191.79 });
     expect(amountInWords(68.5)).toBe('SESENTA Y OCHO 50/100');
     expect(amountInWords(999.999)).toBe('MIL 00/100');
+  });
+  it('convierte precios y costos entre pesos y dólares con el T.C. capturado', () => {
+    const usdProduct = {...product,price:10,cost:8,currencyId:1 as const,costCurrencyId:1 as const};
+    expect(convertCaptureAmount(10,1,2,20)).toBe(200);
+    expect(convertCaptureAmount(200,2,1,20)).toBe(10);
+    expect(captureMinimumPrice({...usdProduct,cost:160,costCurrencyId:2},1,20)).toBe(8);
+    expect(captureTotals([{input:{productCode:'USD',quantity:2,price:10,discount:0,currencyId:1},product:usdProduct}],2,20))
+      .toMatchObject({subtotal:400,tax:64,total:464});
   });
   it('valida fechas reales, cantidades, campos desconocidos y evita folios del cliente HTTP', () => {
     expect(captureInputSchema.safeParse(input).success).toBe(true);
@@ -81,7 +89,7 @@ describe('Alta de pedidos capturada', () => {
 
     pool.execute.mockResolvedValueOnce([[{code:'01'}]]).mockResolvedValueOnce([[{
       id:13268,code:'01300938',description:'TUBO',available:'4',price:'77.80',warehouse:'01',
-      family:'A',secondaryFamily:'B',nextReceipt:null,supplierCode:'PRV',
+      currencyId:2,family:'A',secondaryFamily:'B',nextReceipt:null,supplierCode:'PRV',
     }]]);
     await expect(new LegacyMysqlOrderCaptureDataSource().searchProducts({code:'TSC480',description:'TUBO',supplierCode:'PRV'},'01',25))
       .resolves.toEqual([expect.objectContaining({code:'01300938',available:4,price:77.8})]);

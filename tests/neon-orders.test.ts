@@ -48,7 +48,7 @@ const customer = {id:15331,code:'000001',name:'Cliente',agentCode:'1202',agentNa
 const references: OrderReferenceDataSource = {
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
   customer:async()=>customer,searchCustomers:async()=>[],searchProducts:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
-  product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,taxPercentage:16,excisePercentage:0,currencyId:2,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
+  product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,costCurrencyId:2,taxPercentage:16,excisePercentage:0,currencyId:2,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
 };
 const make = (s=store) => new HybridOrdersDataSource(legacy,s,references,{getPanel:async()=>null});
 const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',exchangeRate:1.2,boxes:3,branch:4,collectionCurrency:'PESOS',commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',deliveryAddress:['Calle 1','Bodega 2','México'],contact:'Compras',additionalComments:'Entregar por la mañana',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
@@ -158,6 +158,20 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   });
   it('rejects prices below the warehouse cost',async()=>{
     await expect(make().create({...input,lines:[{...input.lines[0]!,price:1}]})).rejects.toMatchObject({code:'ORDER_PRICE_BELOW_COST'});
+  });
+  it('converts dollar and peso products to the selected collection currency',async()=>{
+    const usdProduct={id:13288,code:'01300958',description:'Producto USD',unit:'M',price:10,cost:8,costCurrencyId:1 as const,
+      taxPercentage:16,excisePercentage:0,currencyId:1 as const,stock:50,assigned:0,available:50,weight:1,volume:0};
+    const api=new HybridOrdersDataSource(legacy,store,{...references,product:async()=>usdProduct},{getPanel:async()=>null});
+    const pesos=(await api.create({...input,exchangeRate:20,collectionCurrency:'PESOS',lines:[{productCode:'01300958',quantity:2,price:10,discount:0,currencyId:1}]})).toPrimitives();
+    expect(pesos).toMatchObject({currencyId:2,exchangeRate:20,totals:{subtotal:400,tax:64,total:464}});
+    expect(pesos.lines[0]).toMatchObject({price:200,publicPrice:200,currencyId:2});
+
+    const dollars=(await api.create({...input,exchangeRate:20,collectionCurrency:'DOLARES',lines:[{productCode:'01300958',quantity:2,price:200,discount:0,currencyId:2}]})).toPrimitives();
+    expect(dollars).toMatchObject({currencyId:1,exchangeRate:20,totals:{subtotal:20,tax:3.2,total:23.2}});
+    expect(dollars.lines[0]).toMatchObject({price:10,currencyId:1});
+    await expect(api.create({...input,exchangeRate:20,collectionCurrency:'PESOS',lines:[{productCode:'01300958',quantity:1,price:159,discount:0,currencyId:2}]}))
+      .rejects.toMatchObject({code:'ORDER_PRICE_BELOW_COST'});
   });
   it('supports the existing HTTP capture contract with PostgreSQL persistence',async()=>{
     const app=express().use(express.json()).use('/api',postgresWriteBoundary)

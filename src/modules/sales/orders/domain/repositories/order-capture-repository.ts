@@ -21,12 +21,13 @@ export interface CaptureCustomerSearchCriteria {
 }
 export interface CaptureProduct {
   id: number; code: string; description: string; unit: string; price: number;
-  cost: number;
-  taxPercentage: number; excisePercentage: number; currencyId: number;
+  cost: number; costCurrencyId: CaptureCurrencyId;
+  taxPercentage: number; excisePercentage: number; currencyId: CaptureCurrencyId;
   stock: number; assigned: number; available: number; weight: number; volume: number;
 }
 export interface CaptureProductMatch {
   id: number; code: string; description: string; available: number; price: number;
+  currencyId: CaptureCurrencyId;
   warehouse: string; family: string; secondaryFamily: string;
   nextReceipt: string | null; supplierCode: string;
 }
@@ -35,12 +36,17 @@ export interface CaptureProductSearchCriteria {
   description?: string;
   supplierCode?: string;
 }
-export interface CaptureLine { productCode: string; quantity: number; price: number; discount: number }
+export type CaptureCurrencyId = 1 | 2;
+export type CaptureCurrencyName = 'DOLARES' | 'PESOS';
+export interface CaptureLine {
+  productCode: string; quantity: number; price: number; discount: number;
+  currencyId?: CaptureCurrencyId | undefined;
+}
 export interface CaptureInput {
   warehouse: string; typeCode: string; customerCode: string; customerOrderNumber: string;
   orderedAt: string; from: string; dueAt: string; department: string; initial: boolean;
   agentCode: string; termsDays: number; store: string; observations: string;
-  exchangeRate: number; boxes: number; branch: number; collectionCurrency: string;
+  exchangeRate: number; boxes: number; branch: number; collectionCurrency: CaptureCurrencyName;
   commission: number; noPartialDeliveries: boolean; transportation: string;
   deliveryAddress: [string, string, string]; contact: string; additionalComments: string;
   documentKind: 'order' | 'quote'; lines: CaptureLine[];

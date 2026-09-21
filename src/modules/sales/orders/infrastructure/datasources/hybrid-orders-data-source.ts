@@ -1,6 +1,6 @@
 import { orderPanelLabels } from '../../domain/entities/order-panel-labels.js';
 import { Order, type OrderProps } from '../../domain/entities/order.js';
-import { amountInWords, captureTotals } from '../../domain/entities/order-capture-totals.js';
+import { amountInWords, captureCurrencyId, captureCurrencyName, captureMinimumPrice, captureTotals, convertCaptureAmount } from '../../domain/entities/order-capture-totals.js';
 import type { OrdersDataSource } from '../../domain/datasources/orders-data-source.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
 import type { OrderPanelsDataSource } from '../../domain/datasources/order-panels-data-source.js';
@@ -74,39 +74,41 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   searchProducts(criteria: Parameters<OrderReferenceDataSource['searchProducts']>[0], warehouse: string, limit: number) { return this.references.searchProducts(criteria, warehouse, limit); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,warehouse,type,customerCode); }
 
-  private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string) {
+  private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string, exchangeRate: number) {
     const prepared = [];
     for (const input of lines) {
       const product = await this.references.product(input.productCode,warehouse,'P',customer.code);
-      if (input.price < product.cost) throw new ConflictError('No se puede vender abajo del costo', 'ORDER_PRICE_BELOW_COST');
-      prepared.push({input,product});
+      const currencyId = input.currencyId ?? product.currencyId;
+      if (input.price < captureMinimumPrice(product,currencyId,exchangeRate)) {
+        throw new ConflictError(`No se puede vender ${product.code} abajo del costo`, 'ORDER_PRICE_BELOW_COST');
+      }
+      prepared.push({input:{...input,currencyId},product});
     }
     return prepared;
   }
   private async fromClassic(values: OrderCreateValues): Promise<CaptureInput> {
     const customer = await this.references.customerById(values.customerId);
-    const lines = [];
-    for (const line of values.lines) lines.push({productCode:await this.references.productCodeById(line.productId),quantity:line.quantity,price:line.price,discount:line.discount ?? 0});
+    const lines: CaptureLine[] = [];
+    const currencyId = values.currencyId === 1 ? 1 : 2;
+    for (const line of values.lines) lines.push({productCode:await this.references.productCodeById(line.productId),quantity:line.quantity,price:line.price,discount:line.discount ?? 0,currencyId});
     return {customerCode:customer.code,warehouse:values.warehouse ?? '01',typeCode:'P',customerOrderNumber:values.customerOrderNumber ?? '',
       orderedAt:values.orderedAt,from:values.from ?? values.orderedAt,dueAt:values.dueAt ?? values.orderedAt,
       department:values.department ?? '',initial:values.initial ?? false,agentCode:values.attentionCode ?? customer.agentCode,
       termsDays:values.termsDays ?? customer.termsDays,store:customer.store,observations:values.observations ?? '',
-      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:'PESOS',commission:0,noPartialDeliveries:false,
+      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:captureCurrencyName(currencyId),commission:0,noPartialDeliveries:false,
       transportation:'',deliveryAddress:['','',''],contact:'',additionalComments:'',documentKind:'order',lines};
   }
   async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
     this.writable();
-    if ('currencyId' in values && values.currencyId !== undefined && values.currencyId !== 2) {
-      throw new ConflictError('El alta disponible usa PESOS (currencyId=2).');
-    }
     const input = 'customerCode' in values ? values : await this.fromClassic(values);
     const customer = await this.references.customer(input.customerCode);
     const options = await this.references.options();
     if (!options.warehouses.some(w=>w.code===input.warehouse) || !options.agents.some(a=>a.code===input.agentCode)) {
       throw new ConflictError('Almacén o agente no válido.', 'ORDER_REFERENCE_INVALID');
     }
-    const prepared = await this.prepareLines(input.lines,customer,input.warehouse);
-    const totals = captureTotals(prepared);
+    const currencyId = captureCurrencyId(input.collectionCurrency);
+    const prepared = await this.prepareLines(input.lines,customer,input.warehouse,input.exchangeRate);
+    const totals = captureTotals(prepared,currencyId,input.exchangeRate);
     if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
     const explicitNumber = 'number' in values ? values.number : undefined;
     if (explicitNumber && await this.numberExists(explicitNumber)) throw new ConflictError('El número ya existe.', 'ORDER_NUMBER_EXISTS');
@@ -114,12 +116,13 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       const number = explicitNumber ?? `NP${id}`;
       if (!explicitNumber && await this.legacy.findByNumber(number)) throw new ConflictError('El folio local ya existe en MySQL.', 'ORDER_NUMBER_EXISTS');
       const lines = prepared.map(({input:l,product:p},index)=>({id:index+1,productId:p.id,productCode:p.code,description:p.description,
-        ordered:l.quantity,fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId:p.currencyId,
-        piecesAssignment:'',discount:l.discount,publicPrice:p.price,sku:'',color:'',size:''}));
+        ordered:l.quantity,fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,
+        price:convertCaptureAmount(l.price,l.currencyId ?? p.currencyId,currencyId,input.exchangeRate),classCode:'',currencyId,
+        piecesAssignment:'',discount:l.discount,publicPrice:convertCaptureAmount(p.price,p.currencyId,currencyId,input.exchangeRate),sku:'',color:'',size:''}));
       return {id,number,customerOrderNumber:input.customerOrderNumber,customer:{id:customer.id,code:customer.code,name:customer.name},
         documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:input.branch,department:input.department,
         dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:customer.agentName,termsDays:input.termsDays,
-        authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId:2,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
+        authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
         observations:input.observations,captureDetails:{boxes:input.boxes,collectionCurrency:input.collectionCurrency,commission:input.commission,
           noPartialDeliveries:input.noPartialDeliveries,transportation:input.transportation,deliveryAddress:input.deliveryAddress,
           contact:input.contact,additionalComments:input.additionalComments},classifications:[input.agentCode,customer.classification,input.store,'','','','7'],
@@ -172,14 +175,15 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       if (reprice) {
         const customer = await this.references.customerById(doc.customer.id);
         const sourceLines = values.lines ?? doc.lines.map(l=>({productId:l.productId,quantity:l.ordered,price:l.price,discount:l.discount}));
-        const inputs = [];
-        for (const l of sourceLines) inputs.push({productCode:await this.references.productCodeById(l.productId),quantity:l.quantity,price:l.price,discount:l.discount ?? 0});
-        const prepared = await this.prepareLines(inputs,customer,doc.warehouse);
-        const totals = captureTotals(prepared);
+        const inputs: CaptureLine[] = [];
+        const currencyId = doc.currencyId === 1 ? 1 : 2;
+        for (const l of sourceLines) inputs.push({productCode:await this.references.productCodeById(l.productId),quantity:l.quantity,price:l.price,discount:l.discount ?? 0,currencyId});
+        const prepared = await this.prepareLines(inputs,customer,doc.warehouse,doc.exchangeRate);
+        const totals = captureTotals(prepared,doc.currencyId === 1 ? 1 : 2,doc.exchangeRate);
         if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
         doc.lines=prepared.map(({input:l,product:p},i)=>({id:i+1,productId:p.id,productCode:p.code,description:p.description,ordered:l.quantity,
-          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId:p.currencyId,piecesAssignment:'',
-          discount:l.discount,publicPrice:p.price,sku:'',color:'',size:''}));
+          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId,piecesAssignment:'',
+          discount:l.discount,publicPrice:convertCaptureAmount(p.price,p.currencyId,currencyId,doc.exchangeRate),sku:'',color:'',size:''}));
         doc.totals={...doc.totals,quantity:totals.quantity,ordered:totals.quantity,fulfilled:0,remaining:totals.quantity,subtotal:totals.subtotal,
           discount:totals.discount,tax:totals.tax,total:totals.total+doc.totals.freight+doc.totals.insurance+doc.totals.other};
       }

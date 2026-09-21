@@ -90,7 +90,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const supplierCode = criteria.supplierCode ?? '';
     const [rows] = await legacyMysqlPool.execute<Row<CaptureProductMatch>[]>(
       `SELECT FINV.ISEQ AS id,FINV.ICOD AS code,FINV.IDESCR AS description,
-       (FALM.ALMCANT-FALM.ALMASIGNADO) AS available,FINV.ILISTA1 AS price,
+       (FALM.ALMCANT-FALM.ALMASIGNADO) AS available,FINV.ILISTA1 AS price,FINV.IMONEDA1 AS currencyId,
        FALM.ALMNUM AS warehouse,FINV.IFAM AS family,FINV.IFAM1 AS secondaryFamily,
        NULLIF(FINV.IPROXRECEP,'1900-12-31') AS nextReceipt,FINV.ICODPRV AS supplierCode
        FROM FINV INNER JOIN FALM ON FALM.ISEQ=FINV.ISEQ
@@ -112,9 +112,9 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        ORDER BY FINV.ISEQ LIMIT 1`, [identifier, warehouse]);
     const code = eanMatches[0]?.code ?? identifier;
     // Proyección explícita de la consulta posterior por ICOD. SKU y serie siguen pendientes.
-    const [rows] = await db.execute<Row<Omit<CaptureProduct, 'taxPercentage' | 'stock' | 'assigned' | 'available'> & { taxCode: number; family: string }>[]>(
+    const [rows] = await db.execute<Row<Omit<CaptureProduct, 'taxPercentage' | 'stock' | 'assigned' | 'available' | 'cost' | 'costCurrencyId'> & { taxCode: number; family: string; costCurrencyId: number }>[]>(
       `SELECT FINV.ISEQ AS id,ICOD AS code,IDESCR AS description,COALESCE(NULLIF(UCOD,''),IUM) AS unit,
-       ILISTA1 AS price,IMONEDA1 AS currencyId,IPORCIVA AS taxCode,IPORCIEPES AS excisePercentage,
+       ILISTA1 AS price,IMONEDA1 AS currencyId,IMONEDA AS costCurrencyId,IPORCIVA AS taxCode,IPORCIEPES AS excisePercentage,
        IPESO AS weight,IVOLUMEN AS volume,IFAM AS family
        FROM FINV LEFT JOIN FUNIDAD ON FINV.USEQ=FUNIDAD.USEQ WHERE ICOD=? ORDER BY FINV.ISEQ LIMIT 1`, [code]);
     const p = rows[0];
@@ -122,7 +122,8 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const taxCode = Number(p.taxCode);
     if (![0, 1, 2].includes(taxCode)) throw fail('El código de IVA del producto requiere configuración adicional');
     if (Number(p.excisePercentage) !== 0) throw fail('El alta de productos con IEPS requiere validar su cálculo en PROSCAI');
-    if (Number(p.currencyId) !== 2) throw fail('La captura disponible corresponde a PESOS; falta validar la conversión de moneda de este producto');
+    if (![1,2].includes(Number(p.currencyId))) throw fail('La moneda del precio del producto no es PESOS ni DOLARES');
+    if (![1,2].includes(Number(p.costCurrencyId))) throw fail('La moneda del costo del producto no es PESOS ni DOLARES');
     // Adaptada: las cuatro claves de 08-QUANTITY. La captura no tuvo coincidencias;
     // no inventar la prioridad, vigencia o combinación de DES1/DES2/DES3.
     const [discounts] = await db.execute<Row<{id: number}>[]>(
@@ -133,7 +134,8 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       'SELECT ALMCANT AS stock,ALMASIGNADO AS assigned,ALMPREPRECIO AS cost FROM FALM WHERE ALMKEY=? LIMIT 1', [p.code.padEnd(13, ' ') + warehouse]);
     if (!stock[0]) throw fail(`El producto ${code} no tiene registro en el almacén ${warehouse}`);
     return { id: p.id, code: p.code, description: p.description, unit: p.unit,
-      price: Number(p.price), cost: Number(stock[0].cost), currencyId: Number(p.currencyId), taxPercentage: Number([movement.tax0, movement.tax1, movement.tax2][taxCode]),
+      price: Number(p.price), cost: Number(stock[0].cost), currencyId: Number(p.currencyId) as 1 | 2,
+      costCurrencyId: Number(p.costCurrencyId) as 1 | 2, taxPercentage: Number([movement.tax0, movement.tax1, movement.tax2][taxCode]),
       excisePercentage: Number(p.excisePercentage), weight: Number(p.weight), volume: Number(p.volume),
       stock: Number(stock[0].stock), assigned: Number(stock[0].assigned), available: Number(stock[0].stock) - Number(stock[0].assigned) };
   }

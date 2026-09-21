@@ -26,6 +26,8 @@ Repetición con **SQL real capturado**: [alta de P021063](orders-create-sql-new-
 
 Reglas verificadas con SQL real en `P021066`: [búsqueda, costo, autorización, asignación, edición y Cotiz](orders-behaviors-new-version.md). La captura confirma que la asignación exige autorización, la desautorización exige desasignar, la edición autorizada se bloquea y `Cotiz` alterna en ambos sentidos. También demuestra que el indicador visible de autorización es `PEPAR9='O.K.'`; `PEUSRAUT` conserva el usuario después de desautorizar.
 
+La captura de alta admite precios y costos en PESOS o DOLARES. La moneda de cobro y el T.C. se editan en **Comentarios del pedido**; la API convierte las partidas y totales a esa moneda antes de guardar en Neon. La fórmula de conversión es derivada y está cubierta por pruebas; no se presenta como SQL ni algoritmo capturado de OMNIS.
+
 ## Origen y alcance
 
 - Acceso OMNIS: `F3` o botón **PEDIDOS**.

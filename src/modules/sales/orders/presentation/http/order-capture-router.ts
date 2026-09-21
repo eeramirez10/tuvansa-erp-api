@@ -15,7 +15,7 @@ export const captureInputSchema = z.object({
   exchangeRate: z.number().positive().max(999999).default(1),
   boxes: z.number().int().nonnegative().max(999999).default(0),
   branch: z.number().int().nonnegative().max(999999).default(0),
-  collectionCurrency: z.string().trim().min(1).max(20).default('PESOS'),
+  collectionCurrency: z.enum(['PESOS', 'DOLARES']).default('PESOS'),
   commission: z.number().min(0).max(100).multipleOf(0.01).default(0),
   noPartialDeliveries: z.boolean().default(false),
   transportation: z.string().trim().max(100).default(''),
@@ -26,6 +26,7 @@ export const captureInputSchema = z.object({
     productCode, quantity: z.number().positive().max(999999).multipleOf(0.001),
     price: z.number().nonnegative().max(999999999).multipleOf(0.00001),
     discount: z.number().min(0).max(100).multipleOf(0.01).default(0),
+    currencyId: z.union([z.literal(1), z.literal(2)]).optional(),
   }).strict()).min(1).max(500),
 }).strict().refine(v => v.from <= v.dueAt, { message: 'Desde no puede ser posterior a Vence', path: ['dueAt'] });
 

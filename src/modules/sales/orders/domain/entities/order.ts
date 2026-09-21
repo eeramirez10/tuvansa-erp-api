@@ -45,7 +45,7 @@ export interface OrderProps {
   observations: string;
   captureDetails?: {
     boxes: number;
-    collectionCurrency: string;
+    collectionCurrency: 'DOLARES' | 'PESOS';
     commission: number;
     noPartialDeliveries: boolean;
     transportation: string;

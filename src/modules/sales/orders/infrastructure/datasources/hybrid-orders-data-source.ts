@@ -89,13 +89,13 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   private async fromClassic(values: OrderCreateValues): Promise<CaptureInput> {
     const customer = await this.references.customerById(values.customerId);
     const lines: CaptureLine[] = [];
-    const currencyId = values.currencyId === 1 ? 1 : 2;
-    for (const line of values.lines) lines.push({productCode:await this.references.productCodeById(line.productId),quantity:line.quantity,price:line.price,discount:line.discount ?? 0,currencyId});
+    const captureLineCurrencyId = values.currencyId === 1 ? 2 : 1;
+    for (const line of values.lines) lines.push({productCode:await this.references.productCodeById(line.productId),quantity:line.quantity,price:line.price,discount:line.discount ?? 0,currencyId:captureLineCurrencyId});
     return {customerCode:customer.code,warehouse:values.warehouse ?? '01',typeCode:'P',customerOrderNumber:values.customerOrderNumber ?? '',
       orderedAt:values.orderedAt,from:values.from ?? values.orderedAt,dueAt:values.dueAt ?? values.orderedAt,
       department:values.department ?? '',initial:values.initial ?? false,agentCode:values.attentionCode ?? customer.agentCode,
       termsDays:values.termsDays ?? customer.termsDays,store:customer.store,observations:values.observations ?? '',
-      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:captureCurrencyName(currencyId),commission:0,noPartialDeliveries:false,
+      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:captureCurrencyName(captureLineCurrencyId),commission:0,noPartialDeliveries:false,
       transportation:'',deliveryAddress:['','',''],contact:'',additionalComments:'',documentKind:'order',lines};
   }
   async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
@@ -107,6 +107,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       throw new ConflictError('Almacén o agente no válido.', 'ORDER_REFERENCE_INVALID');
     }
     const currencyId = captureCurrencyId(input.collectionCurrency);
+    const documentCurrencyId = input.collectionCurrency === 'DOLARES' ? 1 : 0;
     const prepared = await this.prepareLines(input.lines,customer,input.warehouse,input.exchangeRate);
     const totals = captureTotals(prepared,currencyId,input.exchangeRate);
     if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
@@ -117,12 +118,12 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       if (!explicitNumber && await this.legacy.findByNumber(number)) throw new ConflictError('El folio local ya existe en MySQL.', 'ORDER_NUMBER_EXISTS');
       const lines = prepared.map(({input:l,product:p},index)=>({id:index+1,productId:p.id,productCode:p.code,description:p.description,
         ordered:l.quantity,fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,
-        price:convertCaptureAmount(l.price,l.currencyId ?? p.currencyId,currencyId,input.exchangeRate),classCode:'',currencyId,
+        price:convertCaptureAmount(l.price,l.currencyId ?? p.currencyId,currencyId,input.exchangeRate),classCode:'',currencyId:documentCurrencyId,
         piecesAssignment:'',discount:l.discount,publicPrice:convertCaptureAmount(p.price,p.currencyId,currencyId,input.exchangeRate),sku:'',color:'',size:''}));
       return {id,number,customerOrderNumber:input.customerOrderNumber,customer:{id:customer.id,code:customer.code,name:customer.name},
         documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:input.branch,department:input.department,
         dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:customer.agentName,termsDays:input.termsDays,
-        authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
+        authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId:documentCurrencyId,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
         observations:input.observations,captureDetails:{boxes:input.boxes,collectionCurrency:input.collectionCurrency,commission:input.commission,
           noPartialDeliveries:input.noPartialDeliveries,transportation:input.transportation,deliveryAddress:input.deliveryAddress,
           contact:input.contact,additionalComments:input.additionalComments},classifications:[input.agentCode,customer.classification,input.store,'','','','7'],
@@ -176,13 +177,13 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         const customer = await this.references.customerById(doc.customer.id);
         const sourceLines = values.lines ?? doc.lines.map(l=>({productId:l.productId,quantity:l.ordered,price:l.price,discount:l.discount}));
         const inputs: CaptureLine[] = [];
-        const currencyId = doc.currencyId === 1 ? 1 : 2;
+        const currencyId = doc.currencyId === 1 ? 2 : 1;
         for (const l of sourceLines) inputs.push({productCode:await this.references.productCodeById(l.productId),quantity:l.quantity,price:l.price,discount:l.discount ?? 0,currencyId});
         const prepared = await this.prepareLines(inputs,customer,doc.warehouse,doc.exchangeRate);
-        const totals = captureTotals(prepared,doc.currencyId === 1 ? 1 : 2,doc.exchangeRate);
+        const totals = captureTotals(prepared,currencyId,doc.exchangeRate);
         if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
         doc.lines=prepared.map(({input:l,product:p},i)=>({id:i+1,productId:p.id,productCode:p.code,description:p.description,ordered:l.quantity,
-          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId,piecesAssignment:'',
+          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId:doc.currencyId,piecesAssignment:'',
           discount:l.discount,publicPrice:convertCaptureAmount(p.price,p.currencyId,currencyId,doc.exchangeRate),sku:'',color:'',size:''}));
         doc.totals={...doc.totals,quantity:totals.quantity,ordered:totals.quantity,fulfilled:0,remaining:totals.quantity,subtotal:totals.subtotal,
           discount:totals.discount,tax:totals.tax,total:totals.total+doc.totals.freight+doc.totals.insurance+doc.totals.other};

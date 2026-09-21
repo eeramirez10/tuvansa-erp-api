@@ -1,13 +1,13 @@
 import type { CaptureCurrencyId, CaptureCurrencyName, CaptureLine, CaptureProduct } from '../repositories/order-capture-repository.js';
 
 export const roundAmount = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
-export const captureCurrencyId = (currency: CaptureCurrencyName): CaptureCurrencyId => currency === 'DOLARES' ? 1 : 2;
-export const captureCurrencyName = (currencyId: CaptureCurrencyId): CaptureCurrencyName => currencyId === 1 ? 'DOLARES' : 'PESOS';
+export const captureCurrencyId = (currency: CaptureCurrencyName): CaptureCurrencyId => currency === 'PESOS' ? 1 : 2;
+export const captureCurrencyName = (currencyId: CaptureCurrencyId): CaptureCurrencyName => currencyId === 1 ? 'PESOS' : 'DOLARES';
 
 // Derivada: el tipo de cambio representa pesos por dólar.
 export function convertCaptureAmount(amount: number, from: CaptureCurrencyId, to: CaptureCurrencyId, exchangeRate: number) {
   if (from === to) return amount;
-  return from === 1 ? amount * exchangeRate : amount / exchangeRate;
+  return from === 2 ? amount * exchangeRate : amount / exchangeRate;
 }
 
 export function captureMinimumPrice(product: CaptureProduct, priceCurrencyId: CaptureCurrencyId, exchangeRate: number) {
@@ -15,7 +15,7 @@ export function captureMinimumPrice(product: CaptureProduct, priceCurrencyId: Ca
 }
 
 // Derivada: cálculo equivalente para el caso capturado; la captura no contiene SUM().
-export function captureTotals(lines: Array<{ input: CaptureLine; product: CaptureProduct }>, targetCurrencyId: CaptureCurrencyId = 2, exchangeRate = 1) {
+export function captureTotals(lines: Array<{ input: CaptureLine; product: CaptureProduct }>, targetCurrencyId: CaptureCurrencyId = 1, exchangeRate = 1) {
   let quantity = 0, subtotal = 0, discount = 0, tax = 0, excise = 0;
   for (const { input, product } of lines) {
     const sourceCurrencyId = input.currencyId ?? product.currencyId;

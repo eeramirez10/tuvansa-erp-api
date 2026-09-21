@@ -22,8 +22,8 @@ const input: CaptureInput = {
   lines: [{ productCode: '01300958', quantity: 1, price: 59.05, discount: 0 }],
 };
 const product: CaptureProduct = {
-  id: 13288, code: '01300958', description: 'TEST', unit: 'M', price: 59.05, cost: 40, costCurrencyId: 2, taxPercentage: 16,
-  excisePercentage: 0, currencyId: 2, stock: 5, assigned: 1, available: 4, weight: 16.08, volume: 0,
+  id: 13288, code: '01300958', description: 'TEST', unit: 'M', price: 59.05, cost: 40, costCurrencyId: 1, taxPercentage: 16,
+  excisePercentage: 0, currencyId: 1, stock: 5, assigned: 1, available: 4, weight: 16.08, volume: 0,
 };
 const repository = (): OrderCaptureRepository => ({
   options: vi.fn().mockResolvedValue({ warehouses: [], types: [] }),
@@ -45,11 +45,11 @@ describe('Alta de pedidos capturada', () => {
     expect(amountInWords(999.999)).toBe('MIL 00/100');
   });
   it('convierte precios y costos entre pesos y dólares con el T.C. capturado', () => {
-    const usdProduct = {...product,price:10,cost:8,currencyId:1 as const,costCurrencyId:1 as const};
-    expect(convertCaptureAmount(10,1,2,20)).toBe(200);
-    expect(convertCaptureAmount(200,2,1,20)).toBe(10);
-    expect(captureMinimumPrice({...usdProduct,cost:160,costCurrencyId:2},1,20)).toBe(8);
-    expect(captureTotals([{input:{productCode:'USD',quantity:2,price:10,discount:0,currencyId:1},product:usdProduct}],2,20))
+    const usdProduct = {...product,price:10,cost:8,currencyId:2 as const,costCurrencyId:2 as const};
+    expect(convertCaptureAmount(10,2,1,20)).toBe(200);
+    expect(convertCaptureAmount(200,1,2,20)).toBe(10);
+    expect(captureMinimumPrice({...usdProduct,cost:160,costCurrencyId:1},2,20)).toBe(8);
+    expect(captureTotals([{input:{productCode:'USD',quantity:2,price:10,discount:0,currencyId:2},product:usdProduct}],1,20))
       .toMatchObject({subtotal:400,tax:64,total:464});
   });
   it('valida fechas reales, cantidades, campos desconocidos y evita folios del cliente HTTP', () => {
@@ -89,7 +89,7 @@ describe('Alta de pedidos capturada', () => {
 
     pool.execute.mockResolvedValueOnce([[{code:'01'}]]).mockResolvedValueOnce([[{
       id:13268,code:'01300938',description:'TUBO',available:'4',price:'77.80',warehouse:'01',
-      currencyId:2,family:'A',secondaryFamily:'B',nextReceipt:null,supplierCode:'PRV',
+      currencyId:1,family:'A',secondaryFamily:'B',nextReceipt:null,supplierCode:'PRV',
     }]]);
     await expect(new LegacyMysqlOrderCaptureDataSource().searchProducts({code:'TSC480',description:'TUBO',supplierCode:'PRV'},'01',25))
       .resolves.toEqual([expect.objectContaining({code:'01300938',available:4,price:77.8})]);
@@ -115,20 +115,33 @@ describe('Alta de pedidos capturada', () => {
     pool.execute.mockResolvedValueOnce([[{code:'01'}]])
       .mockResolvedValueOnce([[{id:2,code:'P',tax0:16,tax1:0,tax2:0}]])
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([[{...product,taxCode:0}]])
+      .mockResolvedValueOnce([[{...product,taxCode:0,pesoCost:40,dollarCost:2}]])
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([[{stock:5,assigned:1,cost:40}]]);
-    await expect(new LegacyMysqlOrderCaptureDataSource().product('01300958','01','P','000001')).resolves.toMatchObject({ taxPercentage:16,available:4 });
+      .mockResolvedValueOnce([[{stock:5,assigned:1}]]);
+    await expect(new LegacyMysqlOrderCaptureDataSource().product('01300958','01','P','000001'))
+      .resolves.toMatchObject({ taxPercentage:16,available:4,cost:40,costCurrencyId:1 });
     expect(pool.execute.mock.calls[5]?.[1]).toEqual(['01300958     01']);
+  });
+  it('usa lista 5 para pesos y lista 6 para dólares al validar el costo', async () => {
+    pool.execute.mockResolvedValueOnce([[{code:'01'}]])
+      .mockResolvedValueOnce([[{id:2,code:'P',tax0:16,tax1:0,tax2:0}]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{...product,currencyId:2,taxCode:0,pesoCost:800,dollarCost:40}]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{stock:5,assigned:1}]]);
+    await expect(new LegacyMysqlOrderCaptureDataSource().product('01300958','01','P','000001'))
+      .resolves.toMatchObject({currencyId:2,cost:40,costCurrencyId:2});
+    expect(pool.execute.mock.calls[3]?.[0]).toContain('ILISTA5 AS pesoCost');
+    expect(pool.execute.mock.calls[3]?.[0]).toContain('ILISTA6 AS dollarCost');
   });
   it('resuelve IEAN sin distinguir mayúsculas y continúa con el ICOD canónico', async () => {
     const eanProduct = { ...product, id:13268, code:'01300938' };
     pool.execute.mockResolvedValueOnce([[{code:'01'}]])
       .mockResolvedValueOnce([[{id:2,code:'P',tax0:16,tax1:0,tax2:0}]])
       .mockResolvedValueOnce([[{code:'01300938'}]])
-      .mockResolvedValueOnce([[{...eanProduct,taxCode:0}]])
+      .mockResolvedValueOnce([[{...eanProduct,taxCode:0,pesoCost:40,dollarCost:2}]])
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([[{stock:5,assigned:1,cost:40}]]);
+      .mockResolvedValueOnce([[{stock:5,assigned:1}]]);
     await expect(new LegacyMysqlOrderCaptureDataSource().product('tsc480','01','P','000001')).resolves.toMatchObject({ id:13268,code:'01300938' });
     expect(pool.execute.mock.calls[2]?.[0]).toContain('FALM.ALMNUM=?');
     expect(pool.execute.mock.calls[2]?.[1]).toEqual(['tsc480','01']);
@@ -158,7 +171,7 @@ describe('Alta de pedidos capturada', () => {
       if (sql.includes('FROM FCLI')) return [[{id:15331,code:'000001',termsDays:30,classification:'211'}]];
       if (sql.includes('FROM FSUCURSALES')) return [[]];
       if (sql.includes('FROM FAG')) return [[{code:'1202'}]];
-      if (sql.includes('FROM FINV')) return [[{...product,taxCode:0}]];
+      if (sql.includes('FROM FINV')) return [[{...product,taxCode:0,pesoCost:40,dollarCost:2}]];
       if (sql.includes('FROM FDESCTOS')) return [[]];
       if (sql.includes('FROM FALM')) return [[{stock:5,assigned:1}]];
       if (sql.startsWith('INSERT INTO FPENC')) return [{insertId:204820}];
@@ -197,7 +210,7 @@ describe('Alta de pedidos capturada', () => {
       if (sql.includes('FROM FCLI')) return [[{id:15331,code:'000001',termsDays:30,classification:'211'}]];
       if (sql.includes('FROM FSUCURSALES')) return [[]];
       if (sql.includes('FROM FAG')) return [[{code:'1202'}]];
-      if (sql.includes('FROM FINV')) return [[{...product,taxCode:0}]];
+      if (sql.includes('FROM FINV')) return [[{...product,taxCode:0,pesoCost:40,dollarCost:2}]];
       if (sql.includes('FROM FDESCTOS')) return [[]];
       if (sql.includes('FROM FALM')) return [[{stock:5,assigned:1}]];
       if (sql.startsWith('INSERT INTO FPENC')) return [{insertId:204820}];

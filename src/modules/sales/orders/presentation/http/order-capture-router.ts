@@ -16,6 +16,10 @@ export const captureInputSchema = z.object({
   boxes: z.number().int().nonnegative().max(999999).default(0),
   branch: z.number().int().nonnegative().max(999999).default(0),
   collectionCurrency: z.enum(['PESOS', 'DOLARES']).default('PESOS'),
+  orderDiscounts: z.tuple([
+    z.number().min(0).max(100).multipleOf(0.01), z.number().min(0).max(100).multipleOf(0.01),
+    z.number().min(0).max(100).multipleOf(0.01), z.number().min(0).max(100).multipleOf(0.01),
+  ]).default([0, 0, 0, 0]),
   commission: z.number().min(0).max(100).multipleOf(0.01).default(0),
   noPartialDeliveries: z.boolean().default(false),
   transportation: z.string().trim().max(100).default(''),

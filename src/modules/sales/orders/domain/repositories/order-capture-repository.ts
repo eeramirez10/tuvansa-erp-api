@@ -38,6 +38,7 @@ export interface CaptureProductSearchCriteria {
 }
 export type CaptureCurrencyId = 1 | 2;
 export type CaptureCurrencyName = 'DOLARES' | 'PESOS';
+export type CaptureOrderDiscounts = [number, number, number, number];
 export interface CaptureLine {
   productCode: string; quantity: number; price: number; discount: number;
   currencyId?: CaptureCurrencyId | undefined;
@@ -47,6 +48,7 @@ export interface CaptureInput {
   orderedAt: string; from: string; dueAt: string; department: string; initial: boolean;
   agentCode: string; termsDays: number; store: string; observations: string;
   exchangeRate: number; boxes: number; branch: number; collectionCurrency: CaptureCurrencyName;
+  orderDiscounts: CaptureOrderDiscounts;
   commission: number; noPartialDeliveries: boolean; transportation: string;
   deliveryAddress: [string, string, string]; contact: string; additionalComments: string;
   documentKind: 'order' | 'quote'; lines: CaptureLine[];

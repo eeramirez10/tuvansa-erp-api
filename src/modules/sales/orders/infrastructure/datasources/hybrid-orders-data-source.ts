@@ -95,7 +95,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       orderedAt:values.orderedAt,from:values.from ?? values.orderedAt,dueAt:values.dueAt ?? values.orderedAt,
       department:values.department ?? '',initial:values.initial ?? false,agentCode:values.attentionCode ?? customer.agentCode,
       termsDays:values.termsDays ?? customer.termsDays,store:customer.store,observations:values.observations ?? '',
-      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:captureCurrencyName(captureLineCurrencyId),commission:0,noPartialDeliveries:false,
+      exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:captureCurrencyName(captureLineCurrencyId),orderDiscounts:[0,0,0,0],commission:0,noPartialDeliveries:false,
       transportation:'',deliveryAddress:['','',''],contact:'',additionalComments:'',documentKind:'order',lines};
   }
   async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
@@ -109,7 +109,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     const currencyId = captureCurrencyId(input.collectionCurrency);
     const documentCurrencyId = input.collectionCurrency === 'DOLARES' ? 1 : 0;
     const prepared = await this.prepareLines(input.lines,customer,input.warehouse,input.exchangeRate);
-    const totals = captureTotals(prepared,currencyId,input.exchangeRate);
+    const totals = captureTotals(prepared,currencyId,input.exchangeRate,input.orderDiscounts);
     if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
     const explicitNumber = 'number' in values ? values.number : undefined;
     if (explicitNumber && await this.numberExists(explicitNumber)) throw new ConflictError('El número ya existe.', 'ORDER_NUMBER_EXISTS');
@@ -125,7 +125,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:input.branch,department:input.department,
         dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:customer.agentName,termsDays:input.termsDays,
         authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId:documentCurrencyId,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
-        observations:input.observations,captureDetails:{boxes:input.boxes,collectionCurrency:input.collectionCurrency,commission:input.commission,
+        observations:input.observations,captureDetails:{boxes:input.boxes,collectionCurrency:input.collectionCurrency,orderDiscounts:input.orderDiscounts,commission:input.commission,
           noPartialDeliveries:input.noPartialDeliveries,transportation:input.transportation,deliveryAddress:input.deliveryAddress,
           contact:input.contact,additionalComments:input.additionalComments},classifications:[input.agentCode,customer.classification,input.store,'','','','7'],
         totals:{quantity:totals.quantity,ordered:totals.quantity,fulfilled:0,remaining:totals.quantity,subtotal:totals.subtotal,discount:totals.discount,
@@ -189,7 +189,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         const inputs: CaptureLine[] = [];
         for (const l of sourceLines) inputs.push({productCode:await this.references.productCodeById(l.productId),quantity:l.quantity,price:l.price,discount:l.discount ?? 0,currencyId:l.currencyId});
         const prepared = await this.prepareLines(inputs,customer,doc.warehouse,exchangeRate);
-        const totals = captureTotals(prepared,targetCurrencyId,exchangeRate);
+        const totals = captureTotals(prepared,targetCurrencyId,exchangeRate,doc.captureDetails?.orderDiscounts ?? [0,0,0,0]);
         if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
         const freight = roundAmount(convertCaptureAmount(doc.totals.freight,sourceCurrencyId,targetCurrencyId,exchangeRate));
         const insurance = roundAmount(convertCaptureAmount(doc.totals.insurance,sourceCurrencyId,targetCurrencyId,exchangeRate));

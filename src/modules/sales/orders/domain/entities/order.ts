@@ -48,6 +48,7 @@ export interface OrderProps {
   captureDetails?: {
     boxes: number;
     collectionCurrency: 'DOLARES' | 'PESOS';
+    orderDiscounts?: [number, number, number, number];
     commission: number;
     noPartialDeliveries: boolean;
     transportation: string;

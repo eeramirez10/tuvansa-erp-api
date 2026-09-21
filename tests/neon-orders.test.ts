@@ -49,7 +49,7 @@ const references: OrderReferenceDataSource = {
   product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,costCurrencyId:1,taxPercentage:16,excisePercentage:0,currencyId:1,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
 };
 const make = (s=store) => new HybridOrdersDataSource(legacy,s,references,{getPanel:async()=>null});
-const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',exchangeRate:1.2,boxes:3,branch:4,collectionCurrency:'PESOS',commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',deliveryAddress:['Calle 1','Bodega 2','México'],contact:'Compras',additionalComments:'Entregar por la mañana',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
+const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',exchangeRate:1.2,boxes:3,branch:4,collectionCurrency:'PESOS',orderDiscounts:[0,0,0,0],commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',deliveryAddress:['Calle 1','Bodega 2','México'],contact:'Compras',additionalComments:'Entregar por la mañana',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
 
 beforeAll(async()=>{await store.initialize();},30_000);
 beforeEach(async()=>{
@@ -77,6 +77,12 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(await api.findById(created.id)).toBeNull();expect(await api.findByNumber(created.number)).toBeNull();
     expect(await api.numberExists(created.number)).toBe(true);
     expect((await db.query('SELECT operation FROM tuvansa.order_changes ORDER BY revision')).rows).toEqual([{operation:'create'},{operation:'update'},{operation:'delete'}]);
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+  it('persists four cascading order discounts and their recalculated total',async()=>{
+    const created=(await make().create({...input,orderDiscounts:[10,20,0,0]})).toPrimitives();
+    expect(created.captureDetails?.orderDiscounts).toEqual([10,20,0,0]);
+    expect(created.totals).toMatchObject({subtotal:59.05,discount:16.53,tax:6.8,total:49.32});
     expect(forbidden).not.toHaveBeenCalled();
   });
   it('overrides and tombstones legacy records, including filtered counts and pagination',async()=>{

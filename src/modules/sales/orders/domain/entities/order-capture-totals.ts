@@ -1,4 +1,4 @@
-import type { CaptureCurrencyId, CaptureCurrencyName, CaptureLine, CaptureProduct } from '../repositories/order-capture-repository.js';
+import type { CaptureCurrencyId, CaptureCurrencyName, CaptureLine, CaptureOrderDiscounts, CaptureProduct } from '../repositories/order-capture-repository.js';
 
 export const roundAmount = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 export const roundCapturePrice = (value: number) => Math.round((value + Number.EPSILON) * 100_000) / 100_000;
@@ -16,16 +16,22 @@ export function captureMinimumPrice(product: CaptureProduct, priceCurrencyId: Ca
 }
 
 // Derivada: cálculo equivalente para el caso capturado; la captura no contiene SUM().
-export function captureTotals(lines: Array<{ input: CaptureLine; product: CaptureProduct }>, targetCurrencyId: CaptureCurrencyId = 1, exchangeRate = 1) {
+export function captureTotals(
+  lines: Array<{ input: CaptureLine; product: CaptureProduct }>,
+  targetCurrencyId: CaptureCurrencyId = 1,
+  exchangeRate = 1,
+  orderDiscounts: CaptureOrderDiscounts = [0, 0, 0, 0],
+) {
   let quantity = 0, subtotal = 0, discount = 0, tax = 0, excise = 0;
   for (const { input, product } of lines) {
     const sourceCurrencyId = input.currencyId ?? product.currencyId;
     const price = convertCaptureAmount(input.price, sourceCurrencyId, targetCurrencyId, exchangeRate);
     const gross = input.quantity * price;
-    const reduction = gross * input.discount / 100;
-    quantity += input.quantity; subtotal += gross; discount += reduction;
-    tax += (gross - reduction) * product.taxPercentage / 100;
-    excise += (gross - reduction) * product.excisePercentage / 100;
+    let taxable = gross * (1 - input.discount / 100);
+    for (const percentage of orderDiscounts) taxable *= 1 - percentage / 100;
+    quantity += input.quantity; subtotal += gross; discount += gross - taxable;
+    tax += taxable * product.taxPercentage / 100;
+    excise += taxable * product.excisePercentage / 100;
   }
   return { quantity: Math.round(quantity * 1000) / 1000, subtotal: roundAmount(subtotal), discount: roundAmount(discount),
     tax: roundAmount(tax), excise: roundAmount(excise),

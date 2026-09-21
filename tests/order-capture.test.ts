@@ -18,6 +18,7 @@ const input: CaptureInput = {
   orderedAt: '2026-09-14', from: '2026-09-14', dueAt: '2026-09-14', department: '', initial: false,
   agentCode: '1202', termsDays: 30, store: '302', observations: '', documentKind: 'quote',
   exchangeRate: 1, boxes: 0, branch: 0, collectionCurrency: 'PESOS', commission: 0,
+  orderDiscounts: [0, 0, 0, 0],
   noPartialDeliveries: false, transportation: '', deliveryAddress: ['', '', ''], contact: '', additionalComments: '',
   lines: [{ productCode: '01300958', quantity: 1, price: 59.05, discount: 0 }],
 };
@@ -51,6 +52,13 @@ describe('Alta de pedidos capturada', () => {
     expect(captureMinimumPrice({...usdProduct,cost:160,costCurrencyId:1},2,20)).toBe(8);
     expect(captureTotals([{input:{productCode:'USD',quantity:2,price:10,discount:0,currencyId:2},product:usdProduct}],1,20))
       .toMatchObject({subtotal:400,tax:64,total:464});
+  });
+  it('aplica cuatro descuentos de pedido en cascada después del descuento de partida', () => {
+    const totals = captureTotals(
+      [{input:{...input.lines[0]!,price:100,discount:10},product}],
+      1, 1, [10,20,0,0],
+    );
+    expect(totals).toMatchObject({subtotal:100,discount:35.2,tax:10.37,total:75.17});
   });
   it('valida fechas reales, cantidades, campos desconocidos y evita folios del cliente HTTP', () => {
     expect(captureInputSchema.safeParse(input).success).toBe(true);

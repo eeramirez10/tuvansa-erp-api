@@ -189,7 +189,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       if (!agents[0]) throw new NotFoundError('Agente');
       const lines = [];
       for (const line of input.lines) lines.push({ input: line, product: await this.readProduct(c, line.productCode, input.warehouse, movement, customer.code) });
-      const totals = captureTotals(lines);
+      const totals = captureTotals(lines,1,1,input.orderDiscounts);
       if (totals.total > 999999999) throw fail('El total excede el límite de captura');
       // Adaptada: 11-SAVE_OPEN_COMMENTS. No se suplanta PEUSRALTA de la sesión OMNIS.
       const [header] = await c.execute<ResultSetHeader>(

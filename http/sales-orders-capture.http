@@ -48,6 +48,7 @@ Content-Type: application/json
   "boxes": 2,
   "branch": 0,
   "collectionCurrency": "PESOS",
+  "orderDiscounts": [10, 5, 0, 0],
   "commission": 0,
   "noPartialDeliveries": true,
   "transportation": "TRANSPORTE DE PRUEBA",

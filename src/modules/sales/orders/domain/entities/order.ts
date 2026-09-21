@@ -12,6 +12,8 @@ export interface OrderLine {
   assigned: number;
   branch: number;
   price: number;
+  sourcePrice?: number;
+  sourceCurrencyId?: 1 | 2;
   classCode: string;
   currencyId: number;
   piecesAssignment: string;

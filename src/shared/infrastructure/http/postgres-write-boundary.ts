@@ -8,7 +8,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const path = req.path.replace(/\/+$/,'');
   const create = req.method==='POST' && (path==='/sales/orders' || path==='/sales/orders/capture');
   const orderAction = req.method==='POST' && /^\/sales\/orders\/[1-9]\d*\/actions\/(quote-conversion|authorization|assignment)$/.test(path);
+  const orderComments = req.method==='PATCH' && /^\/sales\/orders\/[1-9]\d*\/actions\/comments$/.test(path);
   const modify = ['PATCH','DELETE'].includes(req.method) && /^\/sales\/orders\/[1-9]\d*$/.test(path);
-  if (create || orderAction || modify) { next(); return; }
+  if (create || orderAction || orderComments || modify) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

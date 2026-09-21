@@ -66,6 +66,12 @@ Content-Type: application/json
 
 {}
 
+### Comentarios: cambiar T.C. y moneda de cobro; recalcula y guarda en Neon
+PATCH {{baseUrl}}/sales/orders/{{orderId}}/actions/comments
+Content-Type: application/json
+
+{ "exchangeRate": 20.00, "collectionCurrency": "DOLARES" }
+
 ### Ctrl+A: autorizar
 POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
 Content-Type: application/json

@@ -51,6 +51,10 @@ const createSchema = z.object(editableFields).strict().extend({
 }).omit({ status: true, classifications: true });
 // La ventana capturada "Cambio de pedido" modifica únicamente partidas.
 const updateSchema = z.object({ lines: z.array(lineSchema).min(1) }).strict();
+const commentsUpdateSchema = z.object({
+  exchangeRate: z.number().positive().max(999999),
+  collectionCurrency: z.enum(['PESOS', 'DOLARES']),
+}).strict();
 
 export class OrdersController {
   constructor(
@@ -127,6 +131,14 @@ export class OrdersController {
     try {
       const { orderId } = orderParamsSchema.parse(request.params);
       const input = updateSchema.parse(request.body) as OrderUpdateValues;
+      response.json({ data: await this.updateOrder.execute(orderId, input) });
+    } catch (error) { next(error); }
+  };
+
+  updateComments: RequestHandler = async (request, response, next) => {
+    try {
+      const { orderId } = orderParamsSchema.parse(request.params);
+      const input = commentsUpdateSchema.parse(request.body) as OrderUpdateValues;
       response.json({ data: await this.updateOrder.execute(orderId, input) });
     } catch (error) { next(error); }
   };

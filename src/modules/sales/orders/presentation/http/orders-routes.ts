@@ -23,6 +23,7 @@ export const createOrdersRouter = (controller: OrdersController): Router => {
   router.get('/by-number/:orderNumber', controller.getByNumber);
   router.get('/:orderId/previous', controller.getPrevious);
   router.get('/:orderId/next', controller.getNext);
+  router.patch('/:orderId/actions/comments', controller.updateComments);
   panelRoutes.forEach(([path, key]) => router.get(`/:orderId/${path}`, controller.panel(key)));
   router.get('/:orderId', controller.getById);
   router.patch('/:orderId', controller.update);

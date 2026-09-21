@@ -12,8 +12,6 @@ import { compareOrders, matchesOrder } from '../src/modules/sales/orders/infrast
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
 import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgres-write-boundary.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
-import { CaptureOrder } from '../src/modules/sales/orders/application/use-cases/capture-order.js';
-import { createOrderCaptureRouter } from '../src/modules/sales/orders/presentation/http/order-capture-router.js';
 import { createOrdersModule } from '../src/modules/sales/orders/orders-module.js';
 
 // Real PostgreSQL engine in isolated WASM memory: no Neon URL or MySQL credentials used.
@@ -165,7 +163,10 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     const api=new HybridOrdersDataSource(legacy,store,{...references,product:async()=>usdProduct},{getPanel:async()=>null});
     const pesos=(await api.create({...input,exchangeRate:20,collectionCurrency:'PESOS',lines:[{productCode:'01300958',quantity:2,price:10,discount:0,currencyId:2}]})).toPrimitives();
     expect(pesos).toMatchObject({currencyId:0,exchangeRate:20,totals:{subtotal:400,tax:64,total:464}});
-    expect(pesos.lines[0]).toMatchObject({price:200,publicPrice:200,currencyId:0});
+    expect(pesos.lines[0]).toMatchObject({price:200,sourcePrice:10,sourceCurrencyId:2,publicPrice:200,currencyId:0});
+    const nextRate=(await api.update(pesos.id,{exchangeRate:25,collectionCurrency:'PESOS'}))!.toPrimitives();
+    expect(nextRate).toMatchObject({currencyId:0,exchangeRate:25,totals:{subtotal:500,tax:80,total:580}});
+    expect(nextRate.lines[0]).toMatchObject({price:250,sourcePrice:10,sourceCurrencyId:2,currencyId:0});
 
     const dollars=(await api.create({...input,exchangeRate:20,collectionCurrency:'DOLARES',lines:[{productCode:'01300958',quantity:2,price:200,discount:0,currencyId:1}]})).toPrimitives();
     expect(dollars).toMatchObject({currencyId:1,exchangeRate:20,totals:{subtotal:20,tax:3.2,total:23.2}});
@@ -173,11 +174,24 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     await expect(api.create({...input,exchangeRate:20,collectionCurrency:'PESOS',lines:[{productCode:'01300958',quantity:1,price:159,discount:0,currencyId:1}]}))
       .rejects.toMatchObject({code:'ORDER_PRICE_BELOW_COST'});
   });
+  it('updates exchange rate and collection currency from Comentarios',async()=>{
+    const api=make();
+    const created=(await api.create({...input,exchangeRate:20,collectionCurrency:'PESOS'})).toPrimitives();
+    const dollars=(await api.update(created.id,{exchangeRate:20,collectionCurrency:'DOLARES'}))!.toPrimitives();
+    expect(dollars).toMatchObject({currencyId:1,exchangeRate:20,captureDetails:{collectionCurrency:'DOLARES'},totals:{subtotal:2.95,tax:0.47,total:3.42}});
+    expect(dollars.lines[0]).toMatchObject({price:2.9525,currencyId:1});
+    const pesos=(await api.update(created.id,{exchangeRate:20,collectionCurrency:'PESOS'}))!.toPrimitives();
+    expect(pesos).toMatchObject({currencyId:0,captureDetails:{collectionCurrency:'PESOS'},totals:{subtotal:59.05,tax:9.45,total:68.5}});
+    expect(pesos.lines[0]).toMatchObject({price:59.05,currencyId:0});
+  });
   it('supports the existing HTTP capture contract with PostgreSQL persistence',async()=>{
     const app=express().use(express.json()).use('/api',postgresWriteBoundary)
-      .use('/api/sales/orders',createOrderCaptureRouter(new CaptureOrder(make()))).use(errorHandler);
+      .use('/api/sales/orders',createOrdersModule(make())).use(errorHandler);
     const result=await request(app).post('/api/sales/orders/capture').send(input).expect(201);
     expect(result.body.data.number).toBe('NP5000000000');
+    const comments=await request(app).patch(`/api/sales/orders/${result.body.data.id}/actions/comments`)
+      .send({exchangeRate:20,collectionCurrency:'DOLARES'}).expect(200);
+    expect(comments.body.data).toMatchObject({currencyId:1,exchangeRate:20,captureDetails:{collectionCurrency:'DOLARES'}});
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/quote-conversion`).send({}).expect(200);
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/authorization`).send({authorized:true}).expect(200);
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/assignment`).send({lines:[{lineId:1,assigned:1}]}).expect(200);

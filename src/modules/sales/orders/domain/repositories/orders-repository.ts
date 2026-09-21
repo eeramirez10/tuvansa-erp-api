@@ -58,6 +58,8 @@ export type OrderUpdateValues = Partial<Omit<OrderCreateValues, 'number' | 'cust
   status?: string;
   classifications?: string[];
   lines?: OrderLineWriteValues[];
+  exchangeRate?: number;
+  collectionCurrency?: 'DOLARES' | 'PESOS';
 };
 
 export type DeleteOrderResult =

@@ -1,13 +1,13 @@
 import { orderPanelLabels } from '../../domain/entities/order-panel-labels.js';
 import { Order, type OrderProps } from '../../domain/entities/order.js';
-import { amountInWords, captureCurrencyId, captureCurrencyName, captureMinimumPrice, captureTotals, convertCaptureAmount } from '../../domain/entities/order-capture-totals.js';
+import { amountInWords, captureCurrencyId, captureCurrencyName, captureMinimumPrice, captureTotals, convertCaptureAmount, roundAmount, roundCapturePrice } from '../../domain/entities/order-capture-totals.js';
 import type { OrdersDataSource } from '../../domain/datasources/orders-data-source.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
 import type { OrderPanelsDataSource } from '../../domain/datasources/order-panels-data-source.js';
 import type { OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
 import type { OrderReferenceDataSource } from '../../domain/datasources/order-reference-data-source.js';
-import type { CaptureInput, CaptureLine, CaptureCustomer } from '../../domain/repositories/order-capture-repository.js';
-import type { DeleteOrderResult, OrderCreateValues, OrderNavigationDirection, OrderSearchCriteria, OrderUpdateValues } from '../../domain/repositories/orders-repository.js';
+import type { CaptureCurrencyId, CaptureInput, CaptureLine, CaptureCustomer } from '../../domain/repositories/order-capture-repository.js';
+import type { DeleteOrderResult, OrderCreateValues, OrderLineWriteValues, OrderNavigationDirection, OrderSearchCriteria, OrderUpdateValues } from '../../domain/repositories/orders-repository.js';
 import type { OrderPanelKey, OrderPanelResult } from '../../domain/repositories/order-panels-repository.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
@@ -118,8 +118,9 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       if (!explicitNumber && await this.legacy.findByNumber(number)) throw new ConflictError('El folio local ya existe en MySQL.', 'ORDER_NUMBER_EXISTS');
       const lines = prepared.map(({input:l,product:p},index)=>({id:index+1,productId:p.id,productCode:p.code,description:p.description,
         ordered:l.quantity,fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,
-        price:convertCaptureAmount(l.price,l.currencyId ?? p.currencyId,currencyId,input.exchangeRate),classCode:'',currencyId:documentCurrencyId,
-        piecesAssignment:'',discount:l.discount,publicPrice:convertCaptureAmount(p.price,p.currencyId,currencyId,input.exchangeRate),sku:'',color:'',size:''}));
+        price:roundCapturePrice(convertCaptureAmount(l.price,l.currencyId ?? p.currencyId,currencyId,input.exchangeRate)),
+        sourcePrice:l.price,sourceCurrencyId:l.currencyId ?? p.currencyId,classCode:'',currencyId:documentCurrencyId,
+        piecesAssignment:'',discount:l.discount,publicPrice:roundCapturePrice(convertCaptureAmount(p.price,p.currencyId,currencyId,input.exchangeRate)),sku:'',color:'',size:''}));
       return {id,number,customerOrderNumber:input.customerOrderNumber,customer:{id:customer.id,code:customer.code,name:customer.name},
         documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:input.branch,department:input.department,
         dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:customer.agentName,termsDays:input.termsDays,
@@ -145,9 +146,10 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     this.writable();
     const result = await this.local.change(id,await this.original(id),'update',async doc => {
       await this.assertMutable(doc);
+      const commentsReprice = values.exchangeRate !== undefined || values.collectionCurrency !== undefined;
       const reprice = values.lines !== undefined ||
         (values.customerId !== undefined && values.customerId !== doc.customer.id) ||
-        (values.warehouse !== undefined && values.warehouse !== doc.warehouse);
+        (values.warehouse !== undefined && values.warehouse !== doc.warehouse) || commentsReprice;
       if (values.currencyId !== undefined && values.currencyId !== doc.currencyId) throw new ConflictError('El cambio de moneda requiere conversión de importes.');
       if (values.customerId !== undefined) {
         const c = await this.references.customerById(values.customerId);
@@ -175,18 +177,34 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       }
       if (reprice) {
         const customer = await this.references.customerById(doc.customer.id);
-        const sourceLines = values.lines ?? doc.lines.map(l=>({productId:l.productId,quantity:l.ordered,price:l.price,discount:l.discount}));
+        const sourceCurrencyId = doc.currencyId === 1 ? 2 : 1;
+        const collectionCurrency = values.collectionCurrency ?? doc.captureDetails?.collectionCurrency ?? captureCurrencyName(sourceCurrencyId);
+        const targetCurrencyId = captureCurrencyId(collectionCurrency);
+        const exchangeRate = values.exchangeRate ?? (doc.exchangeRate > 0 ? doc.exchangeRate : 1);
+        const sourceLines: Array<OrderLineWriteValues & {currencyId: CaptureCurrencyId}> = values.lines
+          ? values.lines.map(line=>({...line,currencyId:sourceCurrencyId}))
+          : doc.lines.map(line=>({productId:line.productId,quantity:line.ordered,
+              price:commentsReprice ? (line.sourcePrice ?? line.price) : line.price,discount:line.discount,
+              currencyId:commentsReprice && (line.sourceCurrencyId === 1 || line.sourceCurrencyId === 2) ? line.sourceCurrencyId : sourceCurrencyId}));
         const inputs: CaptureLine[] = [];
-        const currencyId = doc.currencyId === 1 ? 2 : 1;
-        for (const l of sourceLines) inputs.push({productCode:await this.references.productCodeById(l.productId),quantity:l.quantity,price:l.price,discount:l.discount ?? 0,currencyId});
-        const prepared = await this.prepareLines(inputs,customer,doc.warehouse,doc.exchangeRate);
-        const totals = captureTotals(prepared,currencyId,doc.exchangeRate);
+        for (const l of sourceLines) inputs.push({productCode:await this.references.productCodeById(l.productId),quantity:l.quantity,price:l.price,discount:l.discount ?? 0,currencyId:l.currencyId});
+        const prepared = await this.prepareLines(inputs,customer,doc.warehouse,exchangeRate);
+        const totals = captureTotals(prepared,targetCurrencyId,exchangeRate);
         if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
+        const freight = roundAmount(convertCaptureAmount(doc.totals.freight,sourceCurrencyId,targetCurrencyId,exchangeRate));
+        const insurance = roundAmount(convertCaptureAmount(doc.totals.insurance,sourceCurrencyId,targetCurrencyId,exchangeRate));
+        const other = roundAmount(convertCaptureAmount(doc.totals.other,sourceCurrencyId,targetCurrencyId,exchangeRate));
+        const documentCurrencyId = collectionCurrency === 'DOLARES' ? 1 : 0;
         doc.lines=prepared.map(({input:l,product:p},i)=>({id:i+1,productId:p.id,productCode:p.code,description:p.description,ordered:l.quantity,
-          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,price:l.price,classCode:'',currencyId:doc.currencyId,piecesAssignment:'',
-          discount:l.discount,publicPrice:convertCaptureAmount(p.price,p.currencyId,currencyId,doc.exchangeRate),sku:'',color:'',size:''}));
+          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,
+          price:roundCapturePrice(convertCaptureAmount(l.price,l.currencyId ?? sourceCurrencyId,targetCurrencyId,exchangeRate)),
+          sourcePrice:l.price,sourceCurrencyId:l.currencyId ?? sourceCurrencyId,classCode:'',currencyId:documentCurrencyId,piecesAssignment:'',
+          discount:l.discount,publicPrice:roundCapturePrice(convertCaptureAmount(p.price,p.currencyId,targetCurrencyId,exchangeRate)),sku:'',color:'',size:''}));
+        doc.currencyId=documentCurrencyId; doc.exchangeRate=exchangeRate;
+        doc.captureDetails={boxes:0,commission:0,noPartialDeliveries:false,transportation:'',deliveryAddress:['','',''],
+          contact:'',additionalComments:'',...doc.captureDetails,collectionCurrency};
         doc.totals={...doc.totals,quantity:totals.quantity,ordered:totals.quantity,fulfilled:0,remaining:totals.quantity,subtotal:totals.subtotal,
-          discount:totals.discount,tax:totals.tax,total:totals.total+doc.totals.freight+doc.totals.insurance+doc.totals.other};
+          discount:totals.discount,freight,insurance,other,tax:totals.tax,total:roundAmount(totals.total+freight+insurance+other)};
       }
       if (doc.dates.from && doc.dates.dueAt && doc.dates.from>doc.dates.dueAt) throw new ConflictError('Desde no puede ser posterior a Vence.');
       return doc;

@@ -1,6 +1,7 @@
 import type { CaptureCurrencyId, CaptureCurrencyName, CaptureLine, CaptureProduct } from '../repositories/order-capture-repository.js';
 
 export const roundAmount = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+export const roundCapturePrice = (value: number) => Math.round((value + Number.EPSILON) * 100_000) / 100_000;
 export const captureCurrencyId = (currency: CaptureCurrencyName): CaptureCurrencyId => currency === 'PESOS' ? 1 : 2;
 export const captureCurrencyName = (currencyId: CaptureCurrencyId): CaptureCurrencyName => currencyId === 1 ? 'PESOS' : 'DOLARES';
 

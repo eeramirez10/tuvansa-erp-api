@@ -55,7 +55,7 @@ uso ni la presentación HTTP.
 | Flecha derecha | `GET /api/sales/orders/:orderId/next` | Pedido siguiente |
 | Hoja / Nuevo | `POST /api/sales/orders` | Alta de encabezado, partidas y acumulados |
 | Borrar | `DELETE /api/sales/orders/:orderId` | Baja protegida si existe factura o surtido |
-| Hoja y lápiz / Editar | `PATCH /api/sales/orders/:orderId` | Cambia únicamente partidas y bloquea pedidos autorizados |
+| Hoja y lápiz / Editar | `PATCH /api/sales/orders/:orderId` | Reemplaza el detalle completo: agrega, modifica o elimina partidas; bloquea pedidos autorizados |
 
 La búsqueda admite `q`, `status`, `customerCode`, `from`, `to`, `page` y
 `pageSize`. `q` compara número de pedido, pedido del cliente, código y nombre del

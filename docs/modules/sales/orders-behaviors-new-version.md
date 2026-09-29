@@ -22,7 +22,7 @@ Captura controlada del 2026-09-17 sobre la copia aislada de pruebas. Se creó `P
 - La autorización visible se representa con `FPENC.PEPAR9='O.K.'`. `PEUSRAUT` conserva el usuario incluso después de desautorizar, por lo que no sirve por sí solo como booleano.
 - Para asignar, el pedido debe estar autorizado.
 - Para desautorizar, el pedido no debe tener cantidades asignadas.
-- Para editar, el pedido no debe estar autorizado. La ventana `Cambio de pedido` expone sólo las partidas.
+- Para editar, el pedido no debe estar autorizado. La ventana `Cambio de pedido` expone sólo el detalle y permite agregar productos, cambiar código, cantidad, precio o descuento, y eliminar renglones. El PATCH recibe el detalle final completo y Neon conserva una nueva revisión. El servidor vuelve a bloquear pedidos autorizados, asignados, surtidos o facturados.
 - `Cotiz` funciona en ambos sentidos y mueve acumulados entre pedido y cotización.
 - El precio bajo costo se valida en la aplicación con los datos del producto ya cargados; el marcador de advertencia no emitió SQL.
 
@@ -34,7 +34,7 @@ Captura controlada del 2026-09-17 sobre la copia aislada de pruebas. Se creó `P
 | Autorizar / desautorizar | POST `/api/sales/orders/:orderId/actions/authorization` | Implementado en PostgreSQL/Neon |
 | Consultar asignación | GET `/api/sales/orders/:orderId/actions/assign-all` | Existe |
 | Asignar / desasignar | POST `/api/sales/orders/:orderId/actions/assignment` | Implementado en PostgreSQL/Neon |
-| Cambiar partidas | PATCH `/api/sales/orders/:orderId` | Implementado; bloquea pedidos con `O.K.` |
+| Cambiar partidas | PATCH `/api/sales/orders/:orderId` | Implementado; reemplaza el detalle completo y bloquea pedidos con `O.K.` |
 | Alternar Pedido/Cotización | POST `/api/sales/orders/:orderId/actions/quote-conversion` | Implementado en ambos sentidos |
 
 La búsqueda de coincidencias usa SQL adaptado y parametrizado sobre FCLI. Las escrituras nuevas son derivadas y se guardan exclusivamente en PostgreSQL/Neon; no escriben MySQL.

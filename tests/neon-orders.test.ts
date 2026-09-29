@@ -85,6 +85,16 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(created.totals).toMatchObject({subtotal:59.05,discount:16.53,tax:6.8,total:49.32});
     expect(forbidden).not.toHaveBeenCalled();
   });
+  it('replaces the complete editable detail and permits removing lines before authorization',async()=>{
+    const api=make();
+    const created=(await api.create({...input,lines:[...input.lines,{...input.lines[0]!,quantity:2}]})).toPrimitives();
+    expect(created.lines).toHaveLength(2);
+    const edited=(await api.update(created.id,{lines:[{productId:13288,quantity:3,price:60,discount:5}]}))!.toPrimitives();
+    expect(edited.lines).toHaveLength(1);
+    expect(edited.lines[0]).toMatchObject({productId:13288,ordered:3,price:60,discount:5});
+    expect(edited.totals).toMatchObject({quantity:3,subtotal:180,discount:9,tax:27.36,total:198.36});
+    expect(forbidden).not.toHaveBeenCalled();
+  });
   it('overrides and tombstones legacy records, including filtered counts and pagination',async()=>{
     const api=make(); await api.update(10,{customerOrderNumber:'CAMBIO',observations:'Local'});
     expect((await api.findById(10))?.toPrimitives().observations).toBe('Local');

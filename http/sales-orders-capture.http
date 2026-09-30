@@ -108,3 +108,15 @@ Content-Type: application/json
 
 ### Eliminar localmente; conserva el historial y oculta el registro en la API
 DELETE {{baseUrl}}/sales/orders/{{orderId}}
+
+### Sugerencias por nomenclatura en captura o edición (lectura)
+GET {{baseUrl}}/sales/orders/capture/products?warehouse=01&code=01300&limit=50
+
+### IEAN sin distinguir mayúsculas, almacén heredado 1 equivalente a 01
+GET {{baseUrl}}/sales/orders/capture/products?warehouse=1&code=tsc480&limit=50
+
+### Buscar por descripción sin depender de un código previo
+GET {{baseUrl}}/sales/orders/capture/products?warehouse=01&description=tubo&limit=50
+
+### Identificador inexistente: 404 abre Encuentra producto
+GET {{baseUrl}}/sales/orders/capture/products/NO-EXISTE?warehouse=01&typeCode=P&customerCode=000001

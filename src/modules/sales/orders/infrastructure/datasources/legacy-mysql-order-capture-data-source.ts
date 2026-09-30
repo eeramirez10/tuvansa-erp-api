@@ -85,7 +85,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
   }
 
   async searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]> {
-    warehouse = await this.warehouse(legacyMysqlPool, warehouse);
+    warehouse = normalizeOrderWarehouse(warehouse);
     // Derivada: búsqueda de la ventana "Encuentra producto". La captura confirmó la vista y sus columnas,
     // pero no una sentencia literal de OMNIS para sus filtros.
     const code = criteria.code ?? '';
@@ -98,8 +98,8 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        NULLIF(FINV.IPROXRECEP,'1900-12-31') AS nextReceipt,FINV.ICODPRV AS supplierCode
        FROM FINV INNER JOIN FALM ON FALM.ISEQ=FINV.ISEQ
        WHERE FALM.ALMNUM=? AND FINV.IBAJA='1900-12-31'
-       AND (?='' OR FINV.ICOD LIKE CONCAT(?,'%') OR FINV.IEAN LIKE CONCAT(?,'%'))
-       AND (?='' OR FINV.IDESCR LIKE CONCAT('%',?,'%'))
+       AND (?='' OR UPPER(FINV.ICOD) LIKE CONCAT(UPPER(?),'%') OR UPPER(FINV.IEAN) LIKE CONCAT(UPPER(?),'%'))
+       AND (?='' OR UPPER(FINV.IDESCR) LIKE CONCAT('%',UPPER(?),'%'))
        AND (?='' OR FINV.ICODPRV LIKE CONCAT(?,'%'))
        ORDER BY FINV.ICOD,FINV.ISEQ LIMIT ?`,
       [warehouse, code, code, code, description, description, supplierCode, supplierCode, limit]);
@@ -120,7 +120,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        ILISTA1 AS price,IMONEDA1 AS currencyId,ILISTA5 AS pesoCost,ILISTA6 AS dollarCost,
        IPORCIVA AS taxCode,IPORCIEPES AS excisePercentage,
        IPESO AS weight,IVOLUMEN AS volume,IFAM AS family
-       FROM FINV LEFT JOIN FUNIDAD ON FINV.USEQ=FUNIDAD.USEQ WHERE ICOD=? ORDER BY FINV.ISEQ LIMIT 1`, [code]);
+       FROM FINV LEFT JOIN FUNIDAD ON FINV.USEQ=FUNIDAD.USEQ WHERE UPPER(ICOD)=UPPER(?) ORDER BY FINV.ISEQ LIMIT 1`, [code]);
     const p = rows[0];
     if (!p) throw new NotFoundError('Producto');
     const taxCode = Number(p.taxCode);
@@ -135,7 +135,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     if (discounts.length) throw fail('Este cliente/producto tiene reglas de descuento comercial que aún requieren validar en PROSCAI');
     const [stock] = await db.execute<Row<{ stock: number; assigned: number }>[]>(
       'SELECT ALMCANT AS stock,ALMASIGNADO AS assigned FROM FALM WHERE ALMKEY=? LIMIT 1', [p.code.padEnd(13, ' ') + warehouse]);
-    if (!stock[0]) throw fail(`El producto ${code} no tiene registro en el almacén ${warehouse}`);
+    if (!stock[0]) throw new NotFoundError('Producto en el almacén activo');
     const currencyId = Number(p.currencyId) as 1 | 2;
     const cost = currencyId === 1 ? Number(p.pesoCost) : Number(p.dollarCost);
     return { id: p.id, code: p.code, description: p.description, unit: p.unit,
@@ -145,7 +145,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       stock: Number(stock[0].stock), assigned: Number(stock[0].assigned), available: Number(stock[0].stock) - Number(stock[0].assigned) };
   }
   async product(code: string, warehouse: string, typeCode: string, customerCode: string) {
-    warehouse = await this.warehouse(legacyMysqlPool, warehouse);
+    warehouse = normalizeOrderWarehouse(warehouse);
     return this.readProduct(legacyMysqlPool, code, warehouse, await this.movement(legacyMysqlPool, typeCode), customerCode);
   }
 

@@ -54,3 +54,23 @@ Los DTO de pedidos heredados/locales muestran 01; los documentos base conservan 
 Validación: regresiones de carga por código/IEAN, búsqueda, rechazo de otros almacenes, alta y edición de documentos con 1, y cálculo de diferencias en PostgreSQL embebido, sin escribir en MySQL ni Neon.
 
 Comprobación directa de sólo lectura: 01300938 retorna el mismo producto y disponibilidad con almacén 1 y 01; IEAN tsc480 resuelve a 01300938; las coincidencias por código corresponden a 01 y un encabezado heredado con 1 se entrega como 01. general_log permaneció OFF. Backend: pnpm lint, pnpm build y pnpm test (102 pruebas) correctos; frontend: pnpm lint, pnpm typecheck y pnpm build correctos.
+
+## Coincidencias de productos y búsqueda durante la edición (2026-09-30)
+
+Requisito funcional del usuario: Captura de pedido y Cambio de pedido muestran sugerencias al escribir un prefijo de código/IEAN. Un identificador sin resolución o con varias coincidencias abre Encuentra producto. Sus filtros son Código / IEAN, Descripción y Cod Prv; doble clic u OK seleccionan, recargan las referencias y agregan o sustituyen la partida en el borrador. Si no había cantidad, se usa 1; una cantidad ya capturada se conserva. No se guarda el pedido hasta el OK final.
+
+| Vista | Control / acción | Marcador | Procedencia | Endpoint | Tablas |
+| --- | --- | --- | --- | --- | --- |
+| Captura de pedido / Cambio de pedido | Código / IEAN; sugerencias al escribir | Sin nueva captura OMNIS; requisito del usuario | Derivada | GET /api/sales/orders/capture/products?warehouse=...&code=... | FINV, FALM |
+| Encuentra producto | Buscar por código / IEAN o descripción | Sin nueva captura OMNIS | Derivada | GET /api/sales/orders/capture/products | FINV, FALM |
+| Encuentra producto | Doble clic / OK | Lectura existente; sin nuevo marcador | Adaptada; comparación sin mayúsculas derivada | GET /api/sales/orders/capture/products/:identifier | FINV, FALM, FTIPMV, FDESCTOS |
+
+La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
+
+Código, IEAN y descripción se comparan sin distinguir mayúsculas en la búsqueda parametrizada. Esta mejora es derivada y no se presenta como SQL literal de OMNIS. La validación de costo en la moneda correspondiente (listas 5/6 y conversión con T.C.) permanece en UI y backend.
+
+Validación de sólo lectura del catálogo real: tsc480/TSC480 devuelven las mismas coincidencias en 01, el prefijo 01300 devuelve múltiples productos de México, y tsc480 resuelve 01300938. general_log=OFF. No se modificó MySQL ni Neon.
+
+Prueba local en Chromium con respuestas HTTP simuladas: entrada directa a /pedidos/10, sugerencias en ambas ventanas, navegación con flechas/Enter, apertura del buscador para código inexistente, búsqueda por descripción y por IEAN, doble clic que agrega al borrador, Tab que agrega y vuelve a Código, y bloqueo de precio bajo costo. Se verificó que las solicitudes de producto usaran 01 para el encabezado heredado con 1 y que no hubiera solicitudes de escritura. Evidencia local excluida de Git: captures/ui/new-version/order-product-suggestions/.
+
+Comprobaciones finales: pnpm lint, pnpm build y pnpm test del backend (101 pruebas), pnpm lint, pnpm typecheck y pnpm build del frontend, y prueba en Chromium con respuestas simuladas; todas correctas.

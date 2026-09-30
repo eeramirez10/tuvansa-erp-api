@@ -1,3 +1,4 @@
+import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { OrdersDataSource } from '../../domain/datasources/orders-data-source.js';
@@ -120,7 +121,7 @@ const toOrder = (row: HeaderRow, lines: OrderLine[]): Order => Order.create({
   termsDays: Number(row.termsDays),
   authorization: row.authorization,
   initial: row.initial === 1,
-  warehouse: row.warehouse,
+  warehouse: normalizeOrderWarehouse(row.warehouse),
   currencyId: row.currencyId,
   exchangeRate: row.exchangeRate,
   minimumFulfillmentPercentage: row.minimumFulfillmentPercentage,

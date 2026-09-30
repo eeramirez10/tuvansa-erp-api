@@ -1,3 +1,4 @@
+import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
@@ -75,14 +76,16 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
   }
 
   private async warehouse(db: Db, code: string) {
+    code = normalizeOrderWarehouse(code);
     if (code !== supportedWarehouse) throw fail('La captura de pedidos está habilitada sólo para el almacén 01 México');
     const [rows] = await db.execute<Row<{ code: string }>[]>(
       "SELECT CATALM AS code FROM FALMCAT WHERE CATALM=? AND CATTIPO='' AND CATMULTICIA IN (0,1) LIMIT 1", [code]);
     if (!rows[0]) throw new NotFoundError('Almacén');
+    return code;
   }
 
   async searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]> {
-    await this.warehouse(legacyMysqlPool, warehouse);
+    warehouse = await this.warehouse(legacyMysqlPool, warehouse);
     // Derivada: búsqueda de la ventana "Encuentra producto". La captura confirmó la vista y sus columnas,
     // pero no una sentencia literal de OMNIS para sus filtros.
     const code = criteria.code ?? '';
@@ -142,7 +145,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       stock: Number(stock[0].stock), assigned: Number(stock[0].assigned), available: Number(stock[0].stock) - Number(stock[0].assigned) };
   }
   async product(code: string, warehouse: string, typeCode: string, customerCode: string) {
-    await this.warehouse(legacyMysqlPool, warehouse);
+    warehouse = await this.warehouse(legacyMysqlPool, warehouse);
     return this.readProduct(legacyMysqlPool, code, warehouse, await this.movement(legacyMysqlPool, typeCode), customerCode);
   }
 
@@ -183,7 +186,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       const number = nextNumber(movement);
       const [duplicates] = await c.execute<Row<{ id: number }>[]>('SELECT PESEQ AS id FROM FPENC WHERE PENUM=? LIMIT 1', [number]);
       if (duplicates.length) throw fail('El siguiente folio ya existe; revisa el contador de PROSCAI');
-      await this.warehouse(c, input.warehouse);
+      input = {...input,warehouse:await this.warehouse(c, input.warehouse)};
       const customer = await this.readCustomer(c, input.customerCode);
       const [agents] = await c.execute<Row<{ code: string }>[]>('SELECT AGTNUM AS code FROM FAG WHERE AGTNUM=? LIMIT 1', [input.agentCode]);
       if (!agents[0]) throw new NotFoundError('Agente');

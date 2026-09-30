@@ -155,6 +155,31 @@ describe('Alta de pedidos capturada', () => {
     expect(pool.execute.mock.calls[2]?.[1]).toEqual(['tsc480','01']);
     expect(pool.execute.mock.calls[3]?.[1]).toEqual(['01300938']);
   });
+  it.each(['1','01',' 1 ','01 '])('usa México canónico al cargar un código o IEAN con almacén %s', async warehouse => {
+    pool.execute.mockResolvedValueOnce([[{code:'01'}]])
+      .mockResolvedValueOnce([[{id:2,code:'P',tax0:16,tax1:0,tax2:0}]])
+      .mockResolvedValueOnce([[{code:'01300958'}]])
+      .mockResolvedValueOnce([[{...product,taxCode:0,pesoCost:40,dollarCost:2}]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{stock:5,assigned:1}]]);
+    await expect(new LegacyMysqlOrderCaptureDataSource().product('tsc480',warehouse,'P','000001'))
+      .resolves.toMatchObject({code:'01300958',available:4});
+    expect(pool.execute.mock.calls[0]?.[1]).toEqual(['01']);
+    expect(pool.execute.mock.calls[2]?.[1]).toEqual(['tsc480','01']);
+    expect(pool.execute.mock.calls[5]?.[1]).toEqual(['01300958     01']);
+  });
+  it('busca coincidencias con ALMNUM=01 cuando el pedido heredado tiene almacén 1', async () => {
+    pool.execute.mockResolvedValueOnce([[{code:'01'}]]).mockResolvedValueOnce([[]]);
+    await new LegacyMysqlOrderCaptureDataSource().searchProducts({code:'TSC480'},'1',25);
+    expect(pool.execute.mock.calls[0]?.[1]).toEqual(['01']);
+    expect(pool.execute.mock.calls[1]?.[1]).toEqual(['01','TSC480','TSC480','TSC480','','','','',25]);
+  });
+  it.each(['02','2','','MEXICO'])('no convierte otro almacén o uno desconocido (%s) en México', async warehouse => {
+    const source = new LegacyMysqlOrderCaptureDataSource();
+    await expect(source.product('tsc480',warehouse,'P','000001')).rejects.toMatchObject({code:'ORDER_CAPTURE_CONFLICT'});
+    await expect(source.searchProducts({code:'TSC480'},warehouse,25)).rejects.toMatchObject({code:'ORDER_CAPTURE_CONFLICT'});
+    expect(pool.execute).not.toHaveBeenCalled();
+  });
   it('limita la captura actual al almacén 01 México', async () => {
     await expect(new LegacyMysqlOrderCaptureDataSource().product('tsc480','02','P','000001'))
       .rejects.toMatchObject({ code:'ORDER_CAPTURE_CONFLICT' });

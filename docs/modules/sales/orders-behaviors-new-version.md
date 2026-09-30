@@ -38,3 +38,19 @@ Captura controlada del 2026-09-17 sobre la copia aislada de pruebas. Se creó `P
 | Alternar Pedido/Cotización | POST `/api/sales/orders/:orderId/actions/quote-conversion` | Implementado en ambos sentidos |
 
 La búsqueda de coincidencias usa SQL adaptado y parametrizado sobre FCLI. Las escrituras nuevas son derivadas y se guardan exclusivamente en PostgreSQL/Neon; no escriben MySQL.
+
+## Corrección del almacén México (2026-09-30)
+
+La inspección de lectura del respaldo de la API confirmó FALMCAT.CATALM=01 para SUC. MEXICO y encabezados FPENC.PEALMACEN con ambos formatos, 01 y 1. La comparación estricta rechazaba esos pedidos al cargar un producto. Se normaliza exclusivamente 1 a 01 (quitando espacios exteriores); otros almacenes y códigos vacíos conservan su validación.
+
+| Vista / botón | Endpoint | Evidencia / procedencia | Tablas |
+| --- | --- | --- | --- |
+| Pedido / capturar código o IEAN | GET /api/sales/orders/capture/products/:code | Consultas adaptadas existentes; normalización derivada, sin nueva captura OMNIS | FALMCAT, FINV, FALM, FTIPMV, FDESCTOS |
+| Encuentra producto / buscar | GET /api/sales/orders/capture/products | Consulta derivada existente, filtro ALMNUM=01 | FALMCAT, FINV, FALM |
+| Pedido / guardar o editar detalle | POST /api/sales/orders/capture, PATCH /api/sales/orders/:id | Persistencia derivada en PostgreSQL; código canónico en documento y diferencias de inventario | tuvansa.orders, tuvansa.order_stock_deltas, tuvansa.order_changes |
+
+Los DTO de pedidos heredados/locales muestran 01; los documentos base conservan el respaldo original. Al calcular diferencias de inventario se normalizan ambos lados para evitar separar México en dos almacenes. No se actualizó el respaldo MySQL ni se activó general_log; la comprobación de lectura devolvió OFF.
+
+Validación: regresiones de carga por código/IEAN, búsqueda, rechazo de otros almacenes, alta y edición de documentos con 1, y cálculo de diferencias en PostgreSQL embebido, sin escribir en MySQL ni Neon.
+
+Comprobación directa de sólo lectura: 01300938 retorna el mismo producto y disponibilidad con almacén 1 y 01; IEAN tsc480 resuelve a 01300938; las coincidencias por código corresponden a 01 y un encabezado heredado con 1 se entrega como 01. general_log permaneció OFF. Backend: pnpm lint, pnpm build y pnpm test (102 pruebas) correctos; frontend: pnpm lint, pnpm typecheck y pnpm build correctos.

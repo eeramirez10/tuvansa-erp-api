@@ -59,6 +59,34 @@ beforeEach(async()=>{
 afterAll(async()=>{await db.close();});
 
 describe('Neon orders / real embedded PostgreSQL',()=>{
+  it('creates a Mexico order with historical code 1 and stores canonical code 01',async()=>{
+    const readProduct=vi.fn(references.product);
+    const api=new HybridOrdersDataSource(legacy,store,{...references,product:readProduct},{getPanel:async()=>null});
+    const created=(await api.create({...input,warehouse:'1'})).toPrimitives();
+    expect(created.warehouse).toBe('01');
+    expect(readProduct).toHaveBeenCalledWith('01300958','01','P','000001');
+    expect((await store.get(created.id))?.document.warehouse).toBe('01');
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+  it('edits legacy Mexico detail without treating 1 and 01 as separate stock warehouses',async()=>{
+    const historical={...base(),warehouse:'1'};
+    const readProduct=vi.fn(references.product);
+    const api=new HybridOrdersDataSource({...legacy,findById:async()=>Order.create(historical)},store,
+      {...references,product:readProduct},{getPanel:async()=>null});
+    const edited=(await api.update(10,{warehouse:'1',lines:[{productId:13288,quantity:2,price:59.05}]}))!.toPrimitives();
+    expect(edited.warehouse).toBe('01');
+    expect(readProduct).toHaveBeenCalledWith('01300958','01','P','000001');
+    const rows=(await db.query<{warehouse:string;ordered:string}>('SELECT warehouse,ordered FROM tuvansa.order_stock_deltas WHERE order_id=10')).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.warehouse).toBe('01');
+    expect(Number(rows[0]?.ordered)).toBe(1);
+    expect(historical.warehouse).toBe('1');
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+  it('returns canonical Mexico for a previously stored local order with code 1',async()=>{
+    const old=await store.create(async id=>({...base(id,'LOCAL'),warehouse:'1'}));
+    expect((await make().findById(old.id))?.toPrimitives().warehouse).toBe('01');
+  });
   it('applies migrations once and preserves their checksum',async()=>{
     await new PostgresOrderOverlayDataSource(connect,()=>true).initialize();
     const result=await db.query('SELECT id,checksum FROM tuvansa.schema_migrations');

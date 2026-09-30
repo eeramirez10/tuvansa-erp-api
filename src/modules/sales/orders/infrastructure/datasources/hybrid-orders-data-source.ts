@@ -1,3 +1,4 @@
+import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import { orderPanelLabels } from '../../domain/entities/order-panel-labels.js';
 import { Order, type OrderProps } from '../../domain/entities/order.js';
 import { amountInWords, captureCurrencyId, captureCurrencyName, captureMinimumPrice, captureTotals, convertCaptureAmount, roundAmount, roundCapturePrice } from '../../domain/entities/order-capture-totals.js';
@@ -15,7 +16,7 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { compareOrders, matchesOrder } from './order-overlay-filter.js';
 
 type LegacyRead = Pick<OrdersDataSource,'findById'|'findByNumber'|'search'|'findAdjacent'|'customerExists'>;
-const localDocument = (row: OrderOverlay): OrderProps => ({...row.document,storage:{source:'postgres',legacyId:row.base?.id ?? null,revision:row.revision}});
+const localDocument = (row: OrderOverlay): OrderProps => ({...row.document,warehouse:normalizeOrderWarehouse(row.document.warehouse),storage:{source:'postgres',legacyId:row.base?.id ?? null,revision:row.revision}});
 
 export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDataSource, OrderPanelsDataSource {
   constructor(private readonly legacy: LegacyRead, private readonly local: OrderOverlayDataSource,
@@ -71,8 +72,8 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   customer(code: string) { return this.references.customer(code); }
   searchCustomers(criteria: Parameters<OrderReferenceDataSource['searchCustomers']>[0], limit: number) { return this.references.searchCustomers(criteria, limit); }
-  searchProducts(criteria: Parameters<OrderReferenceDataSource['searchProducts']>[0], warehouse: string, limit: number) { return this.references.searchProducts(criteria, warehouse, limit); }
-  product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,warehouse,type,customerCode); }
+  searchProducts(criteria: Parameters<OrderReferenceDataSource['searchProducts']>[0], warehouse: string, limit: number) { return this.references.searchProducts(criteria, normalizeOrderWarehouse(warehouse), limit); }
+  product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,normalizeOrderWarehouse(warehouse),type,customerCode); }
 
   private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string, exchangeRate: number) {
     const prepared = [];
@@ -100,7 +101,8 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
     this.writable();
-    const input = 'customerCode' in values ? values : await this.fromClassic(values);
+    const source = 'customerCode' in values ? values : await this.fromClassic(values);
+    const input = {...source,warehouse:normalizeOrderWarehouse(source.warehouse)};
     const customer = await this.references.customer(input.customerCode);
     const options = await this.references.options();
     if (!options.warehouses.some(w=>w.code===input.warehouse) || !options.agents.some(a=>a.code===input.agentCode)) {
@@ -144,8 +146,10 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   async update(id: number, values: OrderUpdateValues): Promise<Order | null> {
     this.writable();
+    values = {...values,...(values.warehouse !== undefined ? {warehouse:normalizeOrderWarehouse(values.warehouse)} : {})};
     const result = await this.local.change(id,await this.original(id),'update',async doc => {
       await this.assertMutable(doc);
+      doc.warehouse = normalizeOrderWarehouse(doc.warehouse);
       const commentsReprice = values.exchangeRate !== undefined || values.collectionCurrency !== undefined;
       const reprice = values.lines !== undefined ||
         (values.customerId !== undefined && values.customerId !== doc.customer.id) ||

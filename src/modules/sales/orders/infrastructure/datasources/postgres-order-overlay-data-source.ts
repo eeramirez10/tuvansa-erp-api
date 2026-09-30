@@ -1,3 +1,4 @@
+import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
 import type { OrderProps } from '../../domain/entities/order.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
@@ -90,9 +91,10 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
     await c.query('DELETE FROM tuvansa.order_stock_deltas WHERE order_id=$1', [doc.id]);
     const deltas = new Map<string,{productId:number;warehouse:string;ordered:number;quoted:number}>();
     const add = (order: OrderProps, sign: number) => {
+      const warehouse = normalizeOrderWarehouse(order.warehouse);
       for (const line of order.lines) {
-        const key = `${line.productId}:${order.warehouse}`;
-        const value = deltas.get(key) ?? {productId:line.productId,warehouse:order.warehouse,ordered:0,quoted:0};
+        const key = `${line.productId}:${warehouse}`;
+        const value = deltas.get(key) ?? {productId:line.productId,warehouse,ordered:0,quoted:0};
         const pending = Math.max(line.ordered-line.fulfilled,0) * sign;
         if (order.documentKind === 'order') value.ordered += pending;
         if (order.documentKind === 'quote') value.quoted += pending;

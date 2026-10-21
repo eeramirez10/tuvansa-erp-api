@@ -47,3 +47,7 @@ Los totales se calculan sumando cargos y abonos. `difference` permite comprobar 
 Comentarios, Duplicar, Duplicar pasivo, Imprimir, Aplicar y Des-Aplicar aparecen en la interfaz. No se publican endpoints de mutacion porque esta etapa solamente permite lectura.
 
 La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, dos movimientos y balance de cargos/abonos.
+
+## Reportes de la versión nueva
+
+La captura de Contabilidad → Reportes → Estado de resultados se documenta en [income-statement.md](income-statement.md). La lectura usa FCCBENC + FBENC; su endpoint todavía no está implementado.

@@ -1,3 +1,4 @@
+import { createAccountingReportsModule } from './modules/accounting/reports/accounting-reports-module.js';
 import cors from 'cors';
 import express from 'express';
 import type { Express } from 'express';
@@ -33,6 +34,7 @@ export const createApp = (): Express => {
   app.use(`${env.API_PREFIX}/accounts-receivable/clients`, createClientsModule());
   app.use(`${env.API_PREFIX}/accounts-payable/suppliers`, createSuppliersModule());
   app.use(`${env.API_PREFIX}/accounting/policies`, createAccountingPoliciesModule());
+  app.use(`${env.API_PREFIX}/accounting/reports`, createAccountingReportsModule());
   app.use(`${env.API_PREFIX}/inventories/products`, createProductsModule());
   app.use(`${env.API_PREFIX}/purchasing/purchase-orders`, createPurchaseOrdersModule());
   app.use(`${env.API_PREFIX}/purchasing/purchase-receptions`, createPurchaseReceptionsModule());

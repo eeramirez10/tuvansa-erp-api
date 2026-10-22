@@ -1,0 +1,13 @@
+@baseUrl = http://localhost:3000/api
+
+### Calendario y niveles del ejercicio configurado
+GET {{baseUrl}}/accounting/reports/income-statement/options
+
+### Mes 22 / nivel 3: captura OMNIS de referencia (si está disponible en el ejercicio)
+GET {{baseUrl}}/accounting/reports/income-statement?accounts=8&month=22&level=3
+
+### Cambiar mes y nivel sin mezclar fechas de otro respaldo
+GET {{baseUrl}}/accounting/reports/income-statement?accounts=8&month=23&level=2
+
+### Parámetro no habilitado: respuesta 400, sin lectura de saldos
+GET {{baseUrl}}/accounting/reports/income-statement?accounts=9&month=22&level=3

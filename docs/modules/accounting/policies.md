@@ -50,4 +50,4 @@ La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, d
 
 ## Reportes de la versión nueva
 
-La captura de Contabilidad → Reportes → Estado de resultados se documenta en [income-statement.md](income-statement.md). La lectura usa FCCBENC + FBENC; su endpoint todavía no está implementado.
+La captura de Contabilidad → Reportes → Estado de resultados se documenta en [income-statement.md](income-statement.md). La lectura usa FCCBENC + FBENC y está disponible en GET /api/accounting/reports/income-statement, con parámetros en GET /api/accounting/reports/income-statement/options y vista imprimible en el frontend.

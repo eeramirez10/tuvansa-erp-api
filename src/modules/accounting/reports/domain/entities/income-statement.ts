@@ -2,6 +2,8 @@ export interface IncomeStatementCriteria { month: number; level: number; account
 export interface IncomeStatementSettings {
   companyName: string; companyLegalName: string; fiscalStart: string; fiscalEnd: string;
   levelLengths: number[];
+  currentYear?: number;
+  mexico?: MexicoIncomeStatementScope;
 }
 export interface IncomeStatementAccount {
   id: number; code: string; name: string; nature: number;
@@ -46,4 +48,22 @@ export interface FinancialIncomeStatement {
     differenceMonth: number;
     differenceAccumulated: number;
   };
+}
+
+
+export interface IncomeStatementScope {
+  companyId: number;
+  costCenter: number;
+}
+export interface MexicoIncomeStatementScope extends IncomeStatementScope {
+  warehouseCode: '01';
+  name: string;
+}
+export interface MexicoIncomeStatementCriteria { month: number; year: number }
+export interface MexicoIncomeStatementOptions {
+  companyName: string;
+  year: number;
+  branch: MexicoIncomeStatementScope;
+  months: Array<{ value: number; label: string }>;
+  defaultMonth: number;
 }

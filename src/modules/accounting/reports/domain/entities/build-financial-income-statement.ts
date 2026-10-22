@@ -16,7 +16,10 @@ const money = (cents: number) => cents === 0 ? 0 : cents / 100;
 
 // DERIVADA: regrouping requested in the spreadsheet; uses original accounting signs.
 // Parents already include children. All arithmetic below uses integer cents.
-export function buildFinancialIncomeStatement(accounts: IncomeStatementAccount[]): FinancialIncomeStatement {
+export function buildFinancialIncomeStatement(
+  accounts: IncomeStatementAccount[],
+  options: { scopeLabel?: string; zeroProvisions?: boolean } = {},
+): FinancialIncomeStatement {
   const byCode = new Map<string, Amounts>();
   for (const account of accounts) {
     if (byCode.has(account.code)) throw new Error('Duplicate accounting code in financial statement');
@@ -90,18 +93,20 @@ export function buildFinancialIncomeStatement(accounts: IncomeStatementAccount[]
   space('before-tax');
   row('before-tax', 'Utilidad antes de Impuestos', beforeTax, 'result');
   space('before-provisions');
-  row('isr', 'ISR', null);
-  row('ptu', 'PTU', null);
-  row('additional-centralized', 'GASTOS CENTRALIZADOS ADICIONALES', null);
-  row('net-profit', 'Utilidad Neta', null, 'result');
+  // The supplied Mexico worksheet leaves provisions blank; Excel treats those blanks as zero.
+  const provisions=options.zeroProvisions ? zero() : null;
+  row('isr', 'ISR', provisions);
+  row('ptu', 'PTU', provisions);
+  row('additional-centralized', 'GASTOS CENTRALIZADOS ADICIONALES', provisions);
+  row('net-profit', 'Utilidad Neta', options.zeroProvisions ? beforeTax : null, 'result');
   space('before-reconciliation');
   row('erp-result', 'RESULTADO DEL ERP (ANTES DE ISR/PTU)', legacy, 'total');
   row('reconciliation', 'DIFERENCIA CONTRA ERP', subtract(beforeTax, legacy), 'total');
 
   return {
-    scopeLabel: 'COMPAÑÍA 1 · TODOS LOS CENTROS DE COSTOS', rows,
+    scopeLabel: options.scopeLabel ?? 'COMPAÑÍA 1 · TODOS LOS CENTROS DE COSTOS', rows,
     notices: [
-      'ISR y PTU sin cuentas asignadas: la utilidad neta queda pendiente. N/D indica un importe no disponible.',
+      options.zeroProvisions ? 'ISR, PTU y gastos centralizados adicionales se toman en cero, como las celdas vacías del Excel; no se estiman provisiones fiscales.' : 'ISR y PTU sin cuentas asignadas: la utilidad neta queda pendiente. N/D indica un importe no disponible.',
       'Los gastos centralizados ya están incluidos en Total gastos; no se descuentan nuevamente.',
       'Porcentajes calculados sobre Total de ingresos de cada columna. Sin ingresos, el porcentaje se deja en blanco.',
     ],

@@ -16,9 +16,34 @@ export interface IncomeStatement {
   title: string; companyName: string; companyLegalName: string; generatedAt: string; asOf: string;
   criteria: IncomeStatementCriteria; rows: IncomeStatementRow[];
   totals: { month: number; accumulated: number }; empty: boolean;
+  financial?: FinancialIncomeStatement;
 }
 export interface IncomeStatementOptions extends IncomeStatementSettings {
   months: Array<{ value: number; label: string; asOf: string }>;
   levels: Array<{ value: number; codeLength: number }>;
   defaultMonth: number; defaultLevel: number;
+}
+
+
+export interface FinancialIncomeStatementRow {
+  key: string;
+  label: string;
+  kind: 'detail' | 'total' | 'result' | 'spacer';
+  month: number | null;
+  accumulated: number | null;
+  monthPercent: number | null;
+  accumulatedPercent: number | null;
+  sourceCodes: string[];
+}
+
+export interface FinancialIncomeStatement {
+  scopeLabel: string;
+  rows: FinancialIncomeStatementRow[];
+  notices: string[];
+  reconciliation: {
+    month: number;
+    accumulated: number;
+    differenceMonth: number;
+    differenceAccumulated: number;
+  };
 }

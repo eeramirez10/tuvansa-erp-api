@@ -11,3 +11,9 @@ GET {{baseUrl}}/accounting/reports/income-statement?accounts=8&month=23&level=2
 
 ### Parámetro no habilitado: respuesta 400, sin lectura de saldos
 GET {{baseUrl}}/accounting/reports/income-statement?accounts=9&month=22&level=3
+
+### Agosto 2026 del ejercicio 2025-2026: devuelve también financial (formato gerencial)
+GET {{baseUrl}}/accounting/reports/income-statement?accounts=8&month=20&level=3
+
+### Nivel 1: rows resumido y financial con desglose completo
+GET {{baseUrl}}/accounting/reports/income-statement?accounts=8&month=20&level=1

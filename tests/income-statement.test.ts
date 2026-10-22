@@ -2,6 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GetIncomeStatement } from '../src/modules/accounting/reports/application/use-cases/get-income-statement.js';
+import { buildFinancialIncomeStatement } from '../src/modules/accounting/reports/domain/entities/build-financial-income-statement.js';
 import { buildIncomeStatement } from '../src/modules/accounting/reports/domain/entities/build-income-statement.js';
 import type { IncomeStatementAccount, IncomeStatementSettings } from '../src/modules/accounting/reports/domain/entities/income-statement.js';
 import type { IncomeStatementRepository } from '../src/modules/accounting/reports/domain/repositories/income-statement-repository.js';
@@ -100,5 +101,72 @@ describe('Estado de resultados',()=>{
     pool.execute.mockClear();
     await expect(source.accounts({...criteria,month:Number.NaN},4)).rejects.toMatchObject({statusCode:400});
     expect(pool.execute).not.toHaveBeenCalled();
+  });
+});
+
+
+const financialBalances = () => ([
+  ['4', -950], ['40', -950], ['4001', -1000], ['4002', 100], ['4003', -50],
+  ['5', 400], ['50', 400], ['5001', 400],
+  ['6', 500], ['60', 500], ['6001', 100], ['6002', 200], ['6003', 100],
+  ['6004', 20], ['6005', 5], ['6006', 50], ['6007', 25],
+  ['7', 25], ['70', 25], ['7000', -5], ['7001', 50], ['7002', -10], ['7003', 10], ['7004', -20],
+  ['8', 5],
+] as const).map(([code, value]) => account(code, code.startsWith('4') && code !== '4002' ? 1 : 0, value, Math.max(value, 0), Math.max(-value, 0)));
+
+describe('Estado de resultados gerencial del Excel', () => {
+  it('separa devoluciones, gastos, depreciaciones y financiamiento sin doble conteo y cuadra con ERP', () => {
+    const result = buildFinancialIncomeStatement(financialBalances());
+    const row = (key: string) => result.rows.find(value => value.key === key)!;
+    expect(row('sales').accumulated).toBe(1000);
+    expect(row('returns').accumulated).toBe(-100);
+    expect(row('other-sales').accumulated).toBe(50);
+    expect(row('total-income')).toMatchObject({month:950, accumulated:950, monthPercent:1, accumulatedPercent:1});
+    expect(row('gross-profit').accumulated).toBe(550);
+    expect(row('total-expenses').accumulated).toBe(475);
+    expect(row('operating-profit').accumulated).toBe(75);
+    expect(row('financing').accumulated).toBe(35);
+    expect(row('other-products').accumulated).toBe(-20);
+    expect(row('before-tax')).toMatchObject({month:20, accumulated:20});
+    expect(row('before-tax').accumulatedPercent).toBeCloseTo(20 / 950);
+    expect(result.reconciliation).toEqual({month:20, accumulated:20, differenceMonth:0, differenceAccumulated:0});
+    expect(result.reconciliation.accumulated).toBe(buildIncomeStatement(settings, criteria, financialBalances(), '', '').totals.accumulated);
+  });
+  it('mantiene ajustes y cuentas nuevas en renglones residuales sin perder el cuadre', () => {
+    const balances = financialBalances();
+    balances.find(value => value.code === '4')!.balance = -960;
+    balances.find(value => value.code === '5')!.balance = 395;
+    balances.find(value => value.code === '6')!.balance = 503;
+    const result = buildFinancialIncomeStatement(balances);
+    expect(result.rows.find(value => value.key === 'unclassified-income')?.accumulated).toBe(10);
+    expect(result.rows.find(value => value.key === 'other-costs')?.accumulated).toBe(-5);
+    expect(result.rows.find(value => value.key === 'unclassified-expenses')?.accumulated).toBe(3);
+    expect(result.rows.find(value => value.key === 'before-tax')?.accumulated).toBe(32);
+    expect(result.reconciliation.differenceAccumulated).toBe(0);
+  });
+  it('no inventa provisiones ni utilidad neta y no produce porcentajes inválidos sin ingresos', () => {
+    const result = buildFinancialIncomeStatement([account('6', 0, 10)]);
+    for (const row of result.rows) {
+      expect(row.monthPercent).toBeNull();
+      expect(row.accumulatedPercent).toBeNull();
+    }
+    for (const key of ['isr', 'ptu', 'additional-centralized', 'net-profit']) {
+      expect(result.rows.find(row => row.key === key)).toMatchObject({month:null, accumulated:null});
+    }
+    expect(result.rows.find(row => row.key === 'before-tax')?.accumulated).toBe(-10);
+  });
+  it('conserva centavos y rechaza cuentas duplicadas', () => {
+    const accounts = [account('4', 1, -0.3), account('5', 0, 0.1)];
+    expect(buildFinancialIncomeStatement(accounts).reconciliation.accumulated).toBe(0.2);
+    expect(() => buildFinancialIncomeStatement([...accounts, accounts[0]!])).toThrow('Duplicate accounting code');
+  });
+  it('el formato gerencial conserva el desglose al seleccionar nivel 1 en PROSCAI', async () => {
+    const repository = repo();
+    vi.mocked(repository.accounts).mockResolvedValue(financialBalances());
+    const result = await new GetIncomeStatement(repository).execute({...criteria, level:1});
+    expect(repository.accounts).toHaveBeenCalledWith({...criteria, level:1},4);
+    expect(result.rows.filter(row => row.code.length > 1)).toEqual([]);
+    expect(result.financial.rows.find(row => row.key === 'expense-6002')?.accumulated).toBe(200);
+    expect(result.financial.reconciliation.accumulated).toBe(result.totals.accumulated);
   });
 });

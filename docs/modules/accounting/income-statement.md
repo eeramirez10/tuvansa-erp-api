@@ -138,3 +138,66 @@ El navegador se comprobó con el servicio real local: entrada directa y menú, g
 Evidencia local excluida de Git: captures/ui/new-version/income-statement-implementation/. Incluye referencia renderizada, respuesta local, captura frontend, browser-result.json y estado-de-resultados-generado.pdf. El PDF generado se verificó como una sola página de 612 × 792 puntos (carta), sin menús de la aplicación.
 
 La impresión usa el diálogo del navegador: seleccionar Guardar como PDF, tamaño Carta, escala 100% y desactivar encabezados y pies del navegador. El documento incluye su propia numeración de página. Niveles con más detalle pueden ocupar varias páginas.
+
+
+## Formato gerencial basado en Excel (2026-10-22)
+
+El usuario proporcionó como ejemplo el libro Estado de resultados agosto 2026.xlsx. Se inspeccionaron sus celdas, fórmulas, estilos y salida PDF abriendo una instancia aislada de Excel, en sólo lectura y sin guardar el original. Una hoja contiene el reporte y una conciliación posterior; su exportación original ocupa dos páginas. La adaptación se genera con información de la misma consulta de la API, sin incorporar importes del archivo al código.
+
+El contrato GET /api/accounting/reports/income-statement se amplía con financial: scopeLabel, rows, notices y reconciliation. Se conservan rows/totals originales. No hay endpoint nuevo ni escrituras. El selector Formato alterna Gerencial (Excel), predeterminado, y PROSCAI, sin otra petición HTTP. Ambos se imprimen mediante Imprimir / Guardar PDF.
+
+| Vista / botón | Endpoint | Procedencia | Marcador / tablas |
+| --- | --- | --- | --- |
+| Estado de resultados / OK | GET /api/accounting/reports/income-statement?accounts=8&month=20&level=3 | adaptada: lectura existente; derivada: agrupación gerencial | Referencia ACCOUNTING_INCOME_STATEMENT_ACCOUNTS8_MONTH22_LEVEL3_SCREEN; FCCBENC, FBENC |
+| Formato / Gerencial (Excel) | Sin petición adicional | derivada: presentación del Excel, no observada en OMNIS | Respuesta financial del mismo reporte |
+| Imprimir / Guardar PDF | Sin petición adicional | Presentación del formato seleccionado | Sin SQL adicional |
+
+Mes 20 representa agosto de 2026 sólo en el ejercicio configurado con CIAFI=2025-01-01. El encabezado cambia según el mes elegido y conserva el alcance real: COMPAÑÍA 1 · TODOS LOS CENTROS DE COSTOS (BCCCIA=1, BCCCENCOS=-1). El rótulo MEXICO del Excel no se utiliza para afirmar un filtro por sucursal que no está confirmado en esta captura.
+
+### Agrupación derivada
+
+Los valores siguientes usan el saldo contable original: acumulado=BCCS1mm y mes=BCCSC1mm−BCCSA1mm. Se invierte el signo de ingresos; en egresos se conserva el signo contable, incluyendo créditos que reducen gastos. No se aplica valor absoluto.
+
+| Renglón gerencial | Cuenta o fórmula |
+| --- | --- |
+| VENTAS | -4001 |
+| VENTAS OTROS INGRESOS | -4003 |
+| DESCUENTOS Y DEVOLUCIONES S/VENTAS | -4002, presentación negativa cuando reduce ventas |
+| TOTAL VENTAS / Total de ingresos | -4 |
+| COSTO DE VENTAS, detalle | 5001 |
+| COSTO DE VENTAS, total | 5 |
+| Utilidad Bruta | Ingresos − costos |
+| GASTOS DE OPERACION | 6002 |
+| GASTOS DE ADMINISTRACION | 6003 |
+| GASTOS CENTRALIZADOS | 6001 |
+| GASTOS DE ALMACEN | 6006 |
+| GASTOS DE COMPRAS | 6007 |
+| Total gastos | 6 − 6004 − 6005 |
+| Utilidad de operación | Utilidad Bruta − Total gastos |
+| DEPRECIACIONES / AMORTIZACIONES | 6004 / 6005 |
+| RESULTADO INTEGRAL DE FINANCIAMIENTO | 7 − 7003 − 7004; separa otros gastos/productos ya incluidos en el padre |
+| OTROS GASTOS / OTROS PRODUCTOS | 7003 / 7004; productos con su signo contable para restarlos una sola vez |
+| Primera Utilidad Antes de Impuestos | Utilidad de operación − depreciación − amortización − financiamiento − otros gastos − otros productos |
+| OTROS | Grupo 8, si existe; no se presupone su clasificación fiscal |
+| Segunda Utilidad antes de Impuestos | Resultado anterior − grupo 8 |
+| ISR / PTU / gastos centralizados adicionales / Utilidad Neta | null: fuente o asignación no confirmada; se muestra N/D |
+| RESULTADO DEL ERP | Negativo de suma de raíces 4, 5, 6, 7, 8 |
+| DIFERENCIA CONTRA ERP | Segunda utilidad antes de impuestos − resultado ERP; cero en las verificaciones |
+
+Las cuentas nuevas o ajustes que no estén en el mapeo se conservan en renglones residuales de ingresos, costos o gastos, de manera que el total siga cuadrando. Los padres no se suman con sus descendientes. Se consulta como mínimo longitud cuatro aunque el usuario elija nivel 1 o 2; rows originales se filtra al nivel seleccionado y financial conserva el detalle necesario. Para niveles superiores se ignoran descendientes de más de cuatro caracteres al agrupar financial, evitando duplicidades.
+
+Cada porcentaje es importe / Total de ingresos de su columna. Si el denominador es cero se devuelve null y se muestra vacío. Los importes del formato gerencial se presentan redondeados sin decimales, porcentajes con dos decimales y negativos en rojo con paréntesis; los cálculos y la conciliación conservan centavos.
+
+### Diferencias intencionales frente al ejemplo
+
+El libro contiene referencias inválidas (#REF!), divisiones entre celdas vacías (#DIV/0!) y ajustes escritos directamente en celdas. La adaptación calcula los porcentajes con el denominador correcto, no copia esos errores ni ajustes, y no descuenta gastos centralizados dos veces. No inventa provisiones ISR/PTU: por falta de un mapeo confirmado, la utilidad neta se muestra N/D, acompañada de una nota explícita. El resultado contable antes de esas provisiones permanece disponible y conciliado.
+
+La implementación actual toma como base los datos del ERP y no incorpora captura manual de ajustes. Una modificación futura deberá definir fuentes, persistencia y tratamiento de esas provisiones antes de afirmar una utilidad neta definitiva.
+
+### Evidencia y validación del formato
+
+Evidencia local excluida de Git: captures/ui/new-version/income-statement-spreadsheet/. Contiene excel-reference.pdf, sus dos páginas renderizadas, financial-response.json, frontend-gerencial.png, estado-resultados-gerencial-agosto-2026.pdf, gerencial-1.png, estado-resultados-proscai.pdf y browser-result.json. La salida gerencial verificada ocupa una página carta y no incluye los controles del frontend.
+
+Pruebas nuevas cubren devoluciones, gastos, separación de depreciaciones/financiamiento, grupos residuales, centavos, falta de ingresos, ausencia de provisiones fiscales y conservación del desglose cuando PROSCAI usa nivel 1. El navegador se verificó con el servicio real local, cambio de formato sin request, cambio de mes/nivel, ruta directa/menú, impresión, errores/reintento y vacío. Los importes proceden del respaldo de la API utilizado para la prueba y pueden diferir del Excel.
+
+Validación final de esta adaptación: pnpm lint, pnpm build y pnpm test aprobados (117 pruebas en 16 archivos). Se verificaron también ambos PDF como una página carta, sin controles de aplicación ni errores del Excel. La conexión configurada y la local devolvieron general_log=OFF; MySQL80 permaneció Running, sin cambios de configuración ni reinicios. La conciliación fue cero en ambas fuentes.

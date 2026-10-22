@@ -1,4 +1,5 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import { buildFinancialIncomeStatement } from '../../domain/entities/build-financial-income-statement.js';
 import { buildIncomeStatement } from '../../domain/entities/build-income-statement.js';
 import type { IncomeStatementCriteria, IncomeStatementOptions } from '../../domain/entities/income-statement.js';
 import type { IncomeStatementRepository } from '../../domain/repositories/income-statement-repository.js';
@@ -30,7 +31,9 @@ export class GetIncomeStatement {
     const period=options.months.find(m=>m.value===criteria.month);
     const level=options.levels.find(l=>l.value===criteria.level);
     if (criteria.accounts!=='8' || !period || !level) throw invalid('Selecciona un mes y nivel disponibles para el ejercicio.');
-    const accounts=await this.repository.accounts(criteria,level.codeLength);
-    return buildIncomeStatement(options,criteria,accounts,period.asOf,this.now().toISOString());
+    // The financial layout needs four-character groups regardless of the detail level.
+    const accounts=await this.repository.accounts(criteria,Math.max(4,level.codeLength));
+    const report=buildIncomeStatement(options,criteria,accounts.filter(account=>account.code.length<=level.codeLength),period.asOf,this.now().toISOString());
+    return {...report,financial:buildFinancialIncomeStatement(accounts.filter(account=>account.code.length<=4))};
   }
 }

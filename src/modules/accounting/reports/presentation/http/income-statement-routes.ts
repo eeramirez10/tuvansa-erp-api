@@ -1,3 +1,4 @@
+import type { GetBranchIncomeStatements } from '../../application/use-cases/get-branch-income-statements.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { GetMexicoIncomeStatement } from '../../application/use-cases/get-mexico-income-statement.js';
@@ -9,8 +10,13 @@ const criteria=z.object({
   level:z.coerce.number().int().min(1).max(8).default(3),
 }).strict();
 
-export const createIncomeStatementRouter = (report: GetIncomeStatement, mexico?: GetMexicoIncomeStatement): Router => {
+export const createIncomeStatementRouter = (report: GetIncomeStatement, mexico?: GetMexicoIncomeStatement, branches?: GetBranchIncomeStatements): Router => {
   const router=Router();
+  if(branches) {
+    const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2000).max(2100)}).strict();
+    router.get('/income-statement/branches/options',async(_req,res,next)=>{try{res.set('Cache-Control','no-store').json({data:await branches.options()});}catch(error){next(error);}});
+    router.get('/income-statement/branches',async(req,res,next)=>{try{res.set('Cache-Control','no-store').json({data:await branches.execute(input.parse(req.query))});}catch(error){next(error);}});
+  }
   if (mexico) {
     const mexicoCriteria=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2000).max(2100)}).strict();
     router.get('/income-statement/mexico/options',async (_req,res,next)=>{

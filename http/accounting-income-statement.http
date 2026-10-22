@@ -29,3 +29,12 @@ GET {{baseUrl}}/accounting/reports/income-statement/mexico?year=2026&month=12
 
 ### No se permite solicitar otra sucursal (400)
 GET {{baseUrl}}/accounting/reports/income-statement/mexico?year=2026&month=8&branch=02
+
+### Siete sucursales: catálogo y ejercicio del archivo completo
+GET {{baseUrl}}/accounting/reports/income-statement/branches/options
+
+### Siete reportes y consolidado: MES y ACUMULADO
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8
+
+### No se permite modificar el conjunto de compañías desde HTTP (400)
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&companyId=1

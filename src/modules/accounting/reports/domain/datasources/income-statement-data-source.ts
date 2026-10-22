@@ -1,3 +1,5 @@
 import type { IncomeStatementRepository } from '../repositories/income-statement-repository.js';
 
-export type IncomeStatementDataSource = IncomeStatementRepository;
+import type { BranchIncomeStatementsRepository } from '../repositories/branch-income-statements-repository.js';
+
+export type IncomeStatementDataSource = IncomeStatementRepository & BranchIncomeStatementsRepository;

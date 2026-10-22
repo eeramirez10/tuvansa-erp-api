@@ -3,7 +3,7 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { IncomeStatementDataSource } from '../../domain/datasources/income-statement-data-source.js';
-import type { IncomeStatementAccount, IncomeStatementCriteria, IncomeStatementSettings, IncomeStatementScope } from '../../domain/entities/income-statement.js';
+import type { IncomeStatementAccount, IncomeStatementCriteria, IncomeStatementSettings, IncomeStatementScope, IncomeStatementBranch, CompanyIncomeStatementAccounts } from '../../domain/entities/income-statement.js';
 
 // Fixed whitelist from internal constants, never SQL identifiers supplied by HTTP.
 const periods = Array.from({length:24},(_,index)=>{
@@ -47,4 +47,29 @@ export class LegacyMysqlIncomeStatementDataSource implements IncomeStatementData
     return rows.map(row=>({id:Number(row.id),code:String(row.code).trim(),name:String(row.name).trim(),
       nature:Number(row.nature),balance:Number(row.balance),debit:Number(row.debit),credit:Number(row.credit)}));
   }
+  async branches(): Promise<IncomeStatementBranch[]> {
+    // DERIVADA: the seven operational branches, excluding transit/storage warehouses.
+    const [rows]=await this.db.execute<RowDataPacket[]>(
+      'SELECT CATALM AS warehouseCode,CATDESCR AS name,CATMULTICIA AS companyId FROM falmcat '+
+      'WHERE CATKEY=? AND CATALM IN (?,?,?,?,?,?,?) ORDER BY CATALM,CATSEQ',['','01','02','03','04','05','06','07']);
+    return rows.map(row=>({warehouseCode:String(row.warehouseCode).trim(),name:String(row.name).trim(),companyId:Number(row.companyId),costCenter:-1}));
+  }
+  async accountsByCompanies(criteria: IncomeStatementCriteria, codeLength: number, companyIds: number[]): Promise<CompanyIncomeStatementAccounts[]> {
+    const fields=Number.isInteger(criteria.month) ? periods[criteria.month-1] : undefined;
+    if (!fields || criteria.accounts!=='8' || !Number.isInteger(codeLength) || codeLength<1 || codeLength>30 || companyIds.length!==7 || new Set(companyIds).size!==7 || companyIds.some(id=>!Number.isInteger(id)||id<1)) {
+      throw new ApplicationError('Alcance contable de sucursales inválido.','BRANCH_INCOME_STATEMENT_INVALID',400);
+    }
+    // DERIVADA: batches the adapted balance projection across seven catalog-mapped companies.
+    const sql='SELECT c.BCCCIA AS companyId,c.BCCSEQ AS id,b.BCOD AS code,b.BNOMBRE AS name,b.BNATUR AS nature,'+
+      'c.'+fields.balance+' AS balance,c.'+fields.debit+' AS debit,c.'+fields.credit+' AS credit '+
+      'FROM fccbenc c LEFT JOIN fbenc b ON c.BSEQ=b.BSEQ '+
+      'WHERE b.BCOD>=? AND b.BCOD<CONCAT(?,?) AND CHAR_LENGTH(b.BCOD)<=? AND c.BCCCENCOS=? '+
+      'AND c.BCCCIA IN ('+companyIds.map(()=>'?').join(',')+') ORDER BY c.BCCCIA,b.BCOD,c.BCCSEQ';
+    const [rows]=await this.db.execute<RowDataPacket[]>(sql,['4',8,'Z',codeLength,-1,...companyIds]);
+    return companyIds.map(companyId=>({companyId,accounts:rows.filter(row=>Number(row.companyId)===companyId).map(row=>({
+      id:Number(row.id),code:String(row.code).trim(),name:String(row.name).trim(),nature:Number(row.nature),
+      balance:Number(row.balance),debit:Number(row.debit),credit:Number(row.credit),
+    }))}));
+  }
+
 }

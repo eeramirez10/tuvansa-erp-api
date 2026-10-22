@@ -1,3 +1,4 @@
+import { GetBranchIncomeStatements } from './application/use-cases/get-branch-income-statements.js';
 import { GetMexicoIncomeStatement } from './application/use-cases/get-mexico-income-statement.js';
 import { GetIncomeStatement } from './application/use-cases/get-income-statement.js';
 import type { IncomeStatementDataSource } from './domain/datasources/income-statement-data-source.js';
@@ -7,5 +8,5 @@ import { createIncomeStatementRouter } from './presentation/http/income-statemen
 
 export const createAccountingReportsModule = (source: IncomeStatementDataSource = new LegacyMysqlIncomeStatementDataSource()) => {
   const repository=new IncomeStatementRepositoryImpl(source);
-  return createIncomeStatementRouter(new GetIncomeStatement(repository),new GetMexicoIncomeStatement(repository));
+  return createIncomeStatementRouter(new GetIncomeStatement(repository),new GetMexicoIncomeStatement(repository),new GetBranchIncomeStatements(repository));
 };

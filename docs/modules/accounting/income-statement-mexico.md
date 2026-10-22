@@ -1,5 +1,7 @@
 # Estado de resultados: México, formato Excel
 
+La modalidad individual de México se conserva; el [reporte completo](income-statement-branches.md) agrega las siete sucursales y el consolidado. La limitación a México descrita en esta captura corresponde a su etapa inicial.
+
 Implementación y verificación del 2026-10-22. Alcance autorizado: sucursal 01 México; las demás sucursales quedan pendientes. Referencia local: Estado de resultados agosto 2026.xlsx, hoja Hoja1, columnas B–E. SHA-256 revisado: d6bb8abafc4a70bcb6e7eff6e8e094f190bbf063f22c1f092ec50b74833dc2f7. No se modificó el archivo original.
 
 ## Uso y contrato HTTP

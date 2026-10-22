@@ -67,3 +67,16 @@ export interface MexicoIncomeStatementOptions {
   months: Array<{ value: number; label: string }>;
   defaultMonth: number;
 }
+
+
+export interface IncomeStatementBranch extends IncomeStatementScope { warehouseCode: string; name: string }
+export interface CompanyIncomeStatementAccounts { companyId: number; accounts: IncomeStatementAccount[] }
+export interface BranchIncomeStatementsOptions {
+  companyName: string; year: number; branches: IncomeStatementBranch[];
+  months: Array<{value:number;label:string}>; defaultMonth: number;
+}
+export interface BranchIncomeStatements {
+  year: number; month: number; generatedAt: string;
+  branches: Array<{branch:IncomeStatementBranch;report:IncomeStatement}>;
+  consolidated: IncomeStatement; empty: boolean;
+}

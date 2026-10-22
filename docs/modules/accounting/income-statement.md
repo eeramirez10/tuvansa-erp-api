@@ -1,5 +1,7 @@
 # Contabilidad: Estado de resultados
 
+Actualización: [reporte completo de siete sucursales, consolidado y Excel](income-statement-branches.md).
+
 Estado actual: el formato Excel exclusivo de México se documenta en [income-statement-mexico.md](income-statement-mexico.md). Usa CIAPERIODO y mes 1..12; el calendario y las limitaciones descritos abajo corresponden al historial del reporte PROSCAI y a la primera adaptación gerencial.
 
 Captura del 2026-10-21, sobre el ERP local de pruebas previamente confirmado por el usuario. Recorrido: Contabilidad → menú Reportes → Estado de resultados → OK. En esa captura no se modificaron API ni frontend; la implementación posterior se describe al final de este documento.

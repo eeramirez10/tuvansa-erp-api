@@ -25,6 +25,12 @@
 - Diseña contratos que permitan reemplazar MySQL por PostgreSQL sin cambiar los casos de uso ni HTTP.
 - Usa consultas parametrizadas. No concatentes valores proporcionados por el cliente.
 
+## UI del frontend relacionado
+
+- Toda interfaz debe utilizar componentes de shadcn con Base UI, respetando el estilo del proyecto.
+- Reutiliza los componentes compartidos. Si falta un componente, incorpora el equivalente de shadcn.
+- No implementes controles alternativos cuando exista un equivalente en shadcn.
+
 ## Evidencia y procedencia SQL
 
 - Nunca afirmes que una consulta es SQL real de OMNIS sin haberla observado en el log de MySQL o en el tráfico MySQL.

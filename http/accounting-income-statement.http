@@ -38,3 +38,15 @@ GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8
 
 ### No se permite modificar el conjunto de compañías desde HTTP (400)
 GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&companyId=1
+
+### Todas las sucursales de forma explícita; mismo resultado que omitir branch
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&branch=all
+
+### Una sucursal: Veracruz, sin consolidado duplicado
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&branch=03
+
+### Sucursal no disponible (400)
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&branch=08
+
+### Ejercicio sin correspondencia de saldos verificada (400 en el respaldo actual)
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2025&month=8&branch=01

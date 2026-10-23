@@ -13,7 +13,7 @@ const criteria=z.object({
 export const createIncomeStatementRouter = (report: GetIncomeStatement, mexico?: GetMexicoIncomeStatement, branches?: GetBranchIncomeStatements): Router => {
   const router=Router();
   if(branches) {
-    const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2000).max(2100)}).strict();
+    const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2000).max(2100),branch:z.enum(['all','01','02','03','04','05','06','07']).default('all')}).strict();
     router.get('/income-statement/branches/options',async(_req,res,next)=>{try{res.set('Cache-Control','no-store').json({data:await branches.options()});}catch(error){next(error);}});
     router.get('/income-statement/branches',async(req,res,next)=>{try{res.set('Cache-Control','no-store').json({data:await branches.execute(input.parse(req.query))});}catch(error){next(error);}});
   }

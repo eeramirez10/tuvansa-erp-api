@@ -37,7 +37,7 @@ export class LegacyMysqlIncomeStatementDataSource implements IncomeStatementData
     }
     // ADAPTADA: ACCOUNTING_INCOME_STATEMENT_ACCOUNTS8_MONTH22_LEVEL3_SCREEN.
     // Captured LEFT JOIN, range and order preserved. Default scope is captured company 1 / center -1.
-    // Mexico company is derived from CATMULTICIA; no client-supplied branch. No LIMIT: full report.
+    // Mexico company is derived from CATMULTICIA; no client-supplied company. No LIMIT: full report.
     const sql='SELECT c.BCCSEQ AS id,b.BCOD AS code,b.BNOMBRE AS name,b.BNATUR AS nature,'+
       'c.'+fields.balance+' AS balance,c.'+fields.debit+' AS debit,c.'+fields.credit+' AS credit '+
       'FROM fccbenc c LEFT JOIN fbenc b ON c.BSEQ=b.BSEQ '+
@@ -56,10 +56,10 @@ export class LegacyMysqlIncomeStatementDataSource implements IncomeStatementData
   }
   async accountsByCompanies(criteria: IncomeStatementCriteria, codeLength: number, companyIds: number[]): Promise<CompanyIncomeStatementAccounts[]> {
     const fields=Number.isInteger(criteria.month) ? periods[criteria.month-1] : undefined;
-    if (!fields || criteria.accounts!=='8' || !Number.isInteger(codeLength) || codeLength<1 || codeLength>30 || companyIds.length!==7 || new Set(companyIds).size!==7 || companyIds.some(id=>!Number.isInteger(id)||id<1)) {
+    if (!fields || criteria.accounts!=='8' || !Number.isInteger(codeLength) || codeLength<1 || codeLength>30 || ![1,7].includes(companyIds.length) || new Set(companyIds).size!==companyIds.length || companyIds.some(id=>!Number.isInteger(id)||id<1)) {
       throw new ApplicationError('Alcance contable de sucursales inválido.','BRANCH_INCOME_STATEMENT_INVALID',400);
     }
-    // DERIVADA: batches the adapted balance projection across seven catalog-mapped companies.
+    // DERIVADA: one branch or seven catalog-mapped companies; same adapted balance projection.
     const sql='SELECT c.BCCCIA AS companyId,c.BCCSEQ AS id,b.BCOD AS code,b.BNOMBRE AS name,b.BNATUR AS nature,'+
       'c.'+fields.balance+' AS balance,c.'+fields.debit+' AS debit,c.'+fields.credit+' AS credit '+
       'FROM fccbenc c LEFT JOIN fbenc b ON c.BSEQ=b.BSEQ '+

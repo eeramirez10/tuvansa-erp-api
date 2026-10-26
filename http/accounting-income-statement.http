@@ -48,5 +48,14 @@ GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&b
 ### Sucursal no disponible (400)
 GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2026&month=8&branch=08
 
-### Ejercicio sin correspondencia de saldos verificada (400 en el respaldo actual)
+### Ejercicio archivado: usa la base tuvansa2025, sin reconstruir pólizas de tuvansa
 GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2025&month=8&branch=01
+
+### Archivo 2025: siete sucursales y consolidado
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2025&month=8&branch=all
+
+### Archivo 2024: se admite si está publicado en options.years
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2024&month=8&branch=all
+
+### No se acepta el nombre de base de datos desde HTTP (400)
+GET {{baseUrl}}/accounting/reports/income-statement/branches?year=2025&month=8&database=tuvansa

@@ -1,5 +1,7 @@
 # Estado de resultados: siete sucursales y consolidado
 
+Estado actual 2026-10-26: los ejercicios anteriores se leen de sus bases anuales del mismo servidor. La conexión principal tuvansa conserva 2026; tuvansa2025 y tuvansa2024 proporcionan 2025 y 2024. Esto sustituye la limitación inicial al ejercicio vigente descrita en las etapas anteriores. No se reconstruyen saldos históricos desde pólizas desaplicadas de la base 2026.
+
 Implementación 2026-10-22. Amplía el reporte de [México](income-statement-mexico.md) aprobado por el usuario: siete reportes con la misma estructura, un consolidado final y descarga Excel. Se conservan las modalidades México y PROSCAI.
 
 Actualización 2026-10-23: la entrada gerencial permite elegir una sucursal o Todas en la misma ventana de filtros, vista previa y salida Excel/PDF. El menú Reportes usa Dropdown Menu de shadcn en la parte superior de Contabilidad. Las secciones siguientes conservan la evidencia del reporte completo; el contrato ampliado se describe al final.
@@ -110,3 +112,44 @@ Verificación: 142 pruebas backend; lint/build/test y lint/typecheck/build front
 Evidencia privada en captures/ui/new-version/income-statement-filters/. No hay captura SQL literal nueva de OMNIS, ni escrituras o migraciones. Las consultas nuevas o ampliadas mantienen procedencia derivada.
 
 La misma prueba de navegador pasó sobre la compilación de producción, incluyendo descarga diferida de ExcelJS, las modalidades anteriores y navegación desde Pólizas. production-result.json registra la verificación; year-availability.json conserva el calendario y los años de pólizas observados. Verificación final: general_log=OFF en la conexión configurada y en MySQL local; servicio MySQL80 Running. No se reinició MySQL ni se modificó su configuración.
+
+
+## Bases anuales verificadas (2026-10-26)
+
+El usuario identificó que TUVANSA es producción 2026 y TUVANSA2025 es el archivo del ejercicio anterior. La misma conexión de lectura confirmó nombres reales tuvansa/tuvansa2025, con CIAPERIODO 2026/2025 respectivamente. Se encontró además tuvansa2024 con CIAPERIODO 2024 y estructura compatible. CIAFI/CIAFF no se usan para inventar la correspondencia del año; la comprobación emplea CIAPERIODO del propio archivo.
+
+| Vista / botón | Endpoint | Origen | Procedencia |
+| --- | --- | --- | --- |
+| Año / opciones | GET /api/accounting/reports/income-statement/branches/options | metadata de esquemas, FCIA y FALMCAT del ejercicio | derivada; sin captura nueva |
+| Vista previa / 2025 | GET /api/accounting/reports/income-statement/branches?year=2025&month=8&branch=all | tuvansa2025.FCIA/FALMCAT/FCCBENC/FBENC | derivada: misma proyección y reglas, origen anual explícito |
+| Vista previa / 2026 | GET /api/accounting/reports/income-statement/branches?year=2026&month=8&branch=all | conexión principal tuvansa | conserva cálculo aprobado |
+| Excel / PDF | Sin consulta adicional | misma respuesta seleccionada | presentación existente |
+
+Se conserva el contrato HTTP. years devuelve [2026,2025,2024] en el servidor verificado y defaultYear sigue en 2026. Los ejercicios reales dependen de los esquemas accesibles de cada despliegue. El frontend ya consume years y envía el ejercicio en su query key; no necesita un datasource ni credenciales nuevas.
+
+El datasource descubre sólo esquemas con el nombre de la base principal seguido de cuatro dígitos, entre 2000 y 2100. Para ofrecer un archivo exige coincidencia entre sufijo y CIAPERIODO, siete sucursales únicas con compañías distintas y acceso a las columnas mensuales 1..12 necesarias. Archivos incompatibles o inaccesibles no se ofrecen. Catálogo con caché de 60 segundos y descubrimiento concurrente compartido. El ejercicio actual utiliza siempre el origen principal; un archivo con ese mismo año no lo sustituye.
+
+La selección de año se resuelve en infraestructura y se entrega al caso de uso mediante un contrato de repository, sin nombres MySQL en dominio/application. Repositorio sólo delega/envuelve el datasource seleccionado. Toda la ficha contable del reporte —empresa, sucursales, cuentas y saldos— se obtiene del mismo origen anual. El SQL histórico califica sus tablas con identificadores escapados procedentes de metadata verificada. No se concatena un nombre de base enviado desde HTTP. Se rechaza un parámetro database y no hay fallback hacia saldos de 2026 si se pide un ejercicio ausente.
+
+No se ejecuta USE ni se cambia el database del pool compartido. Las solicitudes concurrentes 2025 y 2026 permanecen aisladas mediante nombres de tablas calificados. No se cambia .env, no se crean usuarios/bases y no se alteran permisos, pólizas, cierres o configuración MySQL. Se utilizan las credenciales existentes exclusivamente para lectura.
+
+Ejemplo del SQL derivado de saldos para agosto 2025:
+
+~~~sql
+SELECT c.BCCCIA AS companyId,c.BCCSEQ AS id,
+       b.BCOD AS code,b.BNOMBRE AS name,b.BNATUR AS nature,
+       c.BCCS108 AS balance,c.BCCSC108 AS debit,c.BCCSA108 AS credit
+FROM `tuvansa2025`.fccbenc c
+LEFT JOIN `tuvansa2025`.fbenc b ON c.BSEQ=b.BSEQ
+WHERE b.BCOD>=? AND b.BCOD<CONCAT(?,?)
+  AND CHAR_LENGTH(b.BCOD)<=? AND c.BCCCENCOS=?
+  AND c.BCCCIA IN (?,?,?,?,?,?,?)
+ORDER BY c.BCCCIA,b.BCOD,c.BCCSEQ;
+-- ['4',8,'Z',4,-1,1,2,3,4,5,6,7]
+~~~
+
+Validación: 149 pruebas backend en 19 archivos; lint/build/test. Pruebas nuevas de origen anual, catálogos distintos por ejercicio, concurrencia, ausencia de USE/escrituras, caché y rechazo de archivos inaccesibles/incompatibles y nombres manipulados. Agosto 2025 consultado con todas las sucursales y con México; agosto/diciembre 2024 disponibles. Agosto 2026 conserva exactamente mes 8,718,024.89 y acumulado 76,258,261.87.
+
+La lectura 2025 produjo para el consolidado mes 4,713,145.44 y acumulado 38,811,669.47; México mes -3,763,715.20 y acumulado -23,024,007.25. Son datos observados del archivo anual, no constantes ni una certificación contable externa. Se preservan las reglas de provisiones cero de la plantilla aprobada. La conciliación interna verifica las mismas sumas del origen, sin afirmar una comparación con un nuevo reporte impreso de OMNIS.
+
+Navegador: cambio 2025/2026, bloqueo de exportación obsoleta, siete documentos/consolidado y sucursal individual, descarga Excel/PDF 2025, fechas y nombres correctos, rechazo de año ausente y parámetro database. Excel nativo recalculó los libros de nueve/una hojas sin diferencias; PDF ocho/una páginas carta. Evidencia privada excluida de Git: captures/ui/new-version/income-statement-year-databases/, con options, respuestas 2025/2026, browser-result, native-excel-validation, PDF y XLSX. Se conserva como diagnóstico previo la investigación de pólizas 2025 dentro de tuvansa, pero no se usa como fuente del reporte histórico.

@@ -2,4 +2,6 @@ import type { IncomeStatementRepository } from '../repositories/income-statement
 
 import type { BranchIncomeStatementsRepository } from '../repositories/branch-income-statements-repository.js';
 
-export type IncomeStatementDataSource = IncomeStatementRepository & BranchIncomeStatementsRepository;
+export interface IncomeStatementDataSource extends IncomeStatementRepository, BranchIncomeStatementsRepository {
+  forYear(year: number): Promise<IncomeStatementDataSource>;
+}

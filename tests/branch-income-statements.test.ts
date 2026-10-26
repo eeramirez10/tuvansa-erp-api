@@ -14,7 +14,10 @@ import { LegacyMysqlIncomeStatementDataSource } from '../src/modules/accounting/
 const settings:IncomeStatementSettings={companyName:'EMPRESA',companyLegalName:'EMPRESA',currentYear:2026,fiscalStart:'2025-01-01',fiscalEnd:'2026-12-31',levelLengths:[1,2,4]};
 const branches=Array.from({length:7},(_,i)=>({warehouseCode:String(i+1).padStart(2,'0'),companyId:i+1,costCenter:-1,name:'Sucursal '+(i+1)}));
 const accounts=(i:number):IncomeStatementAccount[]=>([['4',-100*i],['40',-100*i],['4001',-100*i],['5',40],['5001',40],['6',20],['6002',20],['7',1],['7001',1]] as const).map(([code,value])=>({id:Number(code),code,name:'Cuenta '+code,nature:code.startsWith('4')?1:0,balance:value*10,debit:Math.max(value,0),credit:Math.max(-value,0)}));
-const repo=():BranchIncomeStatementsRepository=>({settings:vi.fn().mockResolvedValue(settings),branches:vi.fn().mockResolvedValue(branches),accountsByCompanies:vi.fn().mockImplementation(async (_criteria,_length,ids:number[])=>branches.filter(b=>ids.includes(b.companyId)).map(b=>({companyId:b.companyId,accounts:accounts(b.companyId)})))});
+const repo=():BranchIncomeStatementsRepository=>{
+ const repository:BranchIncomeStatementsRepository={years:vi.fn().mockResolvedValue([2026]),forYear:vi.fn().mockImplementation(async()=>repository),settings:vi.fn().mockResolvedValue(settings),branches:vi.fn().mockResolvedValue(branches),accountsByCompanies:vi.fn().mockImplementation(async (_criteria,_length,ids:number[])=>branches.filter(b=>ids.includes(b.companyId)).map(b=>({companyId:b.companyId,accounts:accounts(b.companyId)})))};
+ return repository;
+};
 afterEach(()=>vi.clearAllMocks());
 
 describe('Siete sucursales y consolidado',()=>{

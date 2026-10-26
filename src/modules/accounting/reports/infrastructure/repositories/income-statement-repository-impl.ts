@@ -6,6 +6,10 @@ import type { BranchIncomeStatementsRepository } from '../../domain/repositories
 
 export class IncomeStatementRepositoryImpl implements IncomeStatementRepository, BranchIncomeStatementsRepository {
   constructor(private readonly source: IncomeStatementDataSource) {}
+  years() { return this.source.years(); }
+  async forYear(year: number): Promise<BranchIncomeStatementsRepository> {
+    return new IncomeStatementRepositoryImpl(await this.source.forYear(year));
+  }
   branches() { return this.source.branches(); }
   accountsByCompanies(criteria: IncomeStatementCriteria, codeLength: number, companyIds: number[]) { return this.source.accountsByCompanies(criteria,codeLength,companyIds); }
   settings() { return this.source.settings(); }

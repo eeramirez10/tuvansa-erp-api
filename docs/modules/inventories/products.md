@@ -16,6 +16,10 @@ La correspondencia completa esta en `product-buttons.md`.
 
 ## Endpoints
 
+Reporte independiente: [Inventario por familia a una fecha](inventory-by-family.md),
+agrupado por **IFAMB** y calculado desde los movimientos fechados del Auxiliar.
+Sus consultas son derivadas; no modifican los endpoints del catálogo.
+
 ```text
 GET    /api/inventories/products
 POST   /api/inventories/products

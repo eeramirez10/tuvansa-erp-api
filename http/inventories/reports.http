@@ -1,0 +1,19 @@
+@baseUrl = http://localhost:3000/api
+
+### Catálogos reales de almacenes y familias IFAMB
+GET {{baseUrl}}/inventories/reports/by-family/options
+
+### México al 30 de septiembre 2026, desde el inicio del Auxiliar
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&family=all
+
+### Familia B008 TSC en México
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&family=B008
+
+### Todos los almacenes; unidades separadas
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=all&family=all
+
+### Familia no asignada (valor vacío)
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&family=
+
+### Fecha imposible: 400
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-02-30&warehouse=01

@@ -23,11 +23,57 @@ afterEach(() => vi.clearAllMocks());
 describe('Inventario por familia a una fecha', () => {
   it('separa familias, productos, almacenes y unidades sin sumar piezas con metros', () => {
     const result = buildInventoryByFamily(options, { ...criteria, warehouse: 'all' }, [balance(), balance({ productId: 2, code: '002', unitId: 1, unit: 'PZ', quantity: 4 }), balance({ warehouse: '02', quantity: -1 }), balance({ productId: 3, family: '', familyName: 'Sin familia', quantity: 2 })], '');
-    expect(result.groups.map(g => g.code)).toEqual(['', 'B008']);
-    expect(result.groups[1]?.products).toHaveLength(3);
+    expect(result.groups.map(g => g.code)).toEqual(['B008', '']);
+    expect(result.groups[0]?.products).toHaveLength(3);
     expect(result.totals.map(t => [t.unit, t.quantity])).toEqual([['M', 9], ['PZ', 4]]);
     expect(result.provisional).toBe(false);
     expect(result.warehouseName).toBe('Todos los almacenes');
+  });
+  it('convierte PZ y TR a 6.40 metros y reúne una sola cantidad por familia, conservando UM originales', () => {
+    const result = buildInventoryByFamily(options, criteria, [
+      balance({ incoming: 10, outgoing: 2, quantity: 8 }),
+      balance({ productId: 2, unitId: 1, unit: 'PZ', incoming: 3, outgoing: 1, quantity: 2 }),
+      balance({ productId: 3, unitId: 5, unit: 'TR', incoming: 2, outgoing: 1, quantity: 1 }),
+    ], '');
+    expect(result.groups[0]?.meters).toEqual({ incoming: 42, outgoing: 14.8, quantity: 27.2, undatedQuantity: 0 });
+    expect(result.groups[0]?.products[1]).toMatchObject({ quantity: 2, unit: 'PZ', metersPerUnit: 6.4, meters: { quantity: 12.8 } });
+    expect(result.totals).toHaveLength(3);
+    expect(result.meters.quantity).toBe(27.2);
+    expect(result.groups[0]?.percentage).toBe(100);
+  });
+  it('no mezcla kilos, litros ni servicios como metros y conserva los saldos no convertibles', () => {
+    const result = buildInventoryByFamily(options, criteria, [balance({ quantity: 8 }),
+      balance({ productId: 2, unitId: 2, unit: 'K', quantity: 50 }),
+      balance({ productId: 3, unitId: 4, unit: 'L', quantity: 20 }),
+    ], '');
+    expect(result.meters.quantity).toBe(8);
+    expect(result.unconverted.map(total => total.unit)).toEqual(['K', 'L']);
+    expect(result.groups[0]?.products.find(row => row.unit === 'K')?.meters).toBeNull();
+    expect(result.notes.some(note => note.includes('K, L'))).toBe(true);
+  });
+  it('mantiene precisión de conversiones fraccionarias y pies sin redondear cada producto', () => {
+    const result = buildInventoryByFamily(options, criteria, [
+      balance({ quantity: 0.001, unit: 'TR' }), balance({ productId: 2, quantity: 0.001, unit: 'PZ' }),
+      balance({ productId: 3, quantity: 0.001, unit: 'FT' }),
+    ], '');
+    expect(result.meters.quantity).toBe(0.0131048);
+    expect(result.groups[0]?.products.find(p => p.unit === 'FT')?.metersPerUnit).toBe(0.3048);
+  });
+  it('calcula porcentajes con el total propio de cada almacén y conserva negativos y divisores cero', () => {
+    const result = buildInventoryByFamily(options, { ...criteria, warehouse: 'all' }, [
+      balance({ quantity: 30 }), balance({ productId: 2, family: 'B007', familyName: 'TCC', quantity: 70 }),
+      balance({ productId: 3, quantity: 5, warehouse: '02' }), balance({ productId: 4, family: 'B007', quantity: -5, warehouse: '02' }),
+    ], '');
+    const tsc = result.groups.find(g => g.code === 'B008')!;
+    expect(tsc.byWarehouse.map(cell => cell.percentage)).toEqual([30, null]);
+    expect(result.meterTotals.map(cell => cell.quantity)).toEqual([100, 0]);
+    expect(result.meters.quantity).toBe(100);
+    expect(tsc.percentage).toBe(35);
+  });
+  it('convierte la cantidad sin fecha por separado, sin incorporarla al corte', () => {
+    const result = buildInventoryByFamily(options, criteria, [balance({ unit: 'TR', quantity: 1, undatedMovements: 2, undatedQuantity: -2 })], '');
+    expect(result.meters).toMatchObject({ quantity: 6.4, undatedQuantity: -12.8 });
+    expect(result.provisional).toBe(true);
   });
   it('no redondea las existencias a enteros ni introduce artefactos binarios', () => {
     const report = buildInventoryByFamily(options, criteria, [balance({ quantity: 0.1 }), balance({ productId: 2, quantity: 0.2 })], '');

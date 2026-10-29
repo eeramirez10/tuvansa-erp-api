@@ -35,10 +35,11 @@ La evidencia anterior de Auxiliar se describe en `product-buttons.md` y
 - La clasificación, unidad y estado de cancelación son los disponibles en el
   catálogo/documentos actuales. No se presume un historial de reclasificaciones
   o del instante en que se canceló un documento.
-- Cantidades con tres decimales. Los acumulados se suman en milésimas y se separan
-  por `USEQ`; no se presenta un gran total que mezcle metros, piezas u otras UM.
-- Primera versión **sin valuación monetaria**: no se eligió un costo sin indicación
-  del usuario. Tampoco se convierten unidades.
+- Cantidades originales con tres decimales y totales por `USEQ` para auditoría.
+  El resumen reúne **metros estimados**: M/MT/MTR × 1; TR/PZ × 6.40 según la
+  equivalencia aproximada indicada por el usuario; FT × 0.3048.
+- Sin valuación monetaria. Las unidades sin equivalencia (kilos, litros,
+  servicios, etc.) se conservan aparte y no se mezclan con metros.
 
 ## Historia y documentos faltantes
 
@@ -122,12 +123,14 @@ Cada grupo contiene `code`, `name`, `products`, `totals` por unidad. Cada produc
 incluye ISEQ/código/descripción/almacén/UM, entradas/salidas/existencia fechada,
 primer/último movimiento y conteo/cantidad sin fecha.
 
-Resumen: Familia, Descripción, UM, Entradas, Salidas, Existencia fechada,
-Sin fecha (±), seguido de totales por unidad. Detalle: Familia, Código,
-Descripción, Alm., UM, Entradas, Salidas, Existencia fechada, Sin fecha (±),
-Primer mov., Último mov. Excel agrega conteo sin fecha e ISEQ para conciliación.
-El libro tiene hojas Familias, Totales por unidad, Productos y Criterios.
-PDF imprime el resumen o el detalle completo según la casilla seleccionada.
+Resumen actual: N.º, Producto / Familia, metros estimados y porcentaje por cada
+almacén, total de inventario del año del corte y porcentaje general. Una sola
+fila por IFAMB, siguiendo el orden de familias del ejemplo del usuario.
+El detalle conserva las columnas originales y agrega m/UM y Metros estimados.
+Excel agrega conteo sin fecha, metros sin fecha e ISEQ para conciliar; contiene
+Familias, Unidades originales, Totales por unidad, Productos y Criterios.
+PDF imprime el resumen o el detalle completo según la casilla; las matrices
+anchas se dividen en bloques de tres almacenes con total general explícito.
 
 La UI usa shadcn/Base UI y ventanas ERP compartidas, filtros RHF/Zod y TanStack
 Query. No exporta resultados anteriores después de modificar filtros, ni durante
@@ -154,3 +157,40 @@ sus códigos como texto; se abrió además en Excel de Windows, de sólo lectura
 sin alterar su SHA-256. PDF de resumen México: 3 páginas; detalle TSC de todos
 los almacenes: 45 páginas. Se revisaron glifos, columnas finales y notas después
 de la tabla. MySQL80 permaneció Running.
+
+## Actualización: ejemplo y metros estimados
+
+Referencia privada del 2026-10-29: `Inventarios por familia.xlsx` del escritorio
+del usuario, leído sin modificarlo. Contiene familias en filas, columnas por
+sucursal/año, porcentajes y total final. Sus rótulos de ventas y cifras no son
+una fuente de existencias: se reutiliza la estructura visual, no sus importes.
+La matriz implementada conserva **una fecha de corte seleccionada**; el comparativo
+simultáneo 2025/2024 del archivo quedó pendiente de definir con el usuario.
+
+TR y PZ = 6.40 m es la equivalencia aproximada solicitada para ambas unidades,
+sin inferir la longitud medida de cada artículo. FT = 0.3048 m (pie internacional).
+No se adivinan equivalencias para otras unidades. El resultado se etiqueta como
+estimado en pantalla, Excel y PDF, y los saldos no convertibles permanecen aparte.
+
+Se acumulan enteros con escala 10^7: cantidades originales en milésimas por el
+factor, evitando redondear cada producto antes de sumarlo. API con siete decimales,
+presentación con tres. Entradas, salidas y cantidad sin fecha usan el mismo factor;
+la cantidad sin fecha conserva su signo y nunca se añade al saldo al corte.
+
+Campos aditivos: `meters`, `meterColumns`, `meterTotals`, `unconverted`; por familia
+`meters`, `byWarehouse`, `percentage`, `unconverted`; por producto `metersPerUnit`
+y `meters` (null sin equivalencia). Se conservan cantidades y totales originales.
+No cambia el SQL ni los parámetros: conversión y agrupación **derivadas** en dominio.
+
+Porcentaje = metros de familia / metros de su columna × 100. Divisor cero produce
+null y se muestra vacío. Se conservan negativos. El total general reúne todos los
+almacenes elegidos, incluyendo resguardos y tránsito, sin reasignarlos a sucursales.
+Excel conserva fórmulas de porcentajes y sumas con resultados iniciales y recálculo,
+encabezados verdes y total en rojo. Códigos, unidades y factores quedan en detalle.
+
+Actualización validada con 162 pruebas backend y lint/build/test; frontend con
+lint/typecheck/build. Conversiones contrastadas con Decimal y fórmulas recalculadas
+en Excel nativo para México y todos los almacenes. PDF revisado visualmente con
+columnas finales completas. Datos de validación reutilizados de las lecturas reales
+anteriores, sin capturar nuevo SQL OMNIS ni modificar MySQL. Evidencia privada:
+`captures/ui/new-version/inventory-family-meters/`.

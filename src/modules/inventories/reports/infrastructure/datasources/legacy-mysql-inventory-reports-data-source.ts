@@ -29,7 +29,7 @@ export class LegacyMysqlInventoryReportsDataSource implements InventoryReportsDa
   async balances(criteria: InventoryCriteria): Promise<InventoryProductBalance[]> {
     const next = new Date(criteria.asOf + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1);
     const until = next.toISOString().slice(0, 10);
-    const conditions = ['a.AIMES=1', 'a.AICANT<>0', '(d.DEST=0 OR d.DSEQ IS NULL)', '(d.DFECHA<? OR d.DFECHA IS NULL)'];
+    const conditions = ['a.AIMES=1', '(a.AICANT<>0 OR a.AIREVAL<>0)', '(d.DEST=0 OR d.DSEQ IS NULL)', '(d.DFECHA<? OR d.DFECHA IS NULL)'];
     const parameters: Array<string> = [until];
     if (criteria.warehouse !== 'all') {
       if ((criteria.scope ?? 'branch') === 'branch') {
@@ -42,6 +42,8 @@ export class LegacyMysqlInventoryReportsDataSource implements InventoryReportsDa
     // DERIVADA: reconstruct all dated movements in one aggregation, not one query per product.
     // Missing documents/sentinel dates cannot be placed on the timeline. Keep their quantities separately.
     const dated = "d.DFECHA>'1900-12-31'";
+    const undated = "(d.DFECHA IS NULL OR d.DFECHA<='1900-12-31')";
+    const historicalAmount = 'a.AICANT*COALESCE(a.AICOSTO,0)';
     const [rows] = await this.db.execute<RowDataPacket[]>(`SELECT /*+ MAX_EXECUTION_TIME(30000) */
       i.ISEQ AS productId,i.ICOD AS code,i.IDESCR AS description,TRIM(i.IFAMB) AS family,
       COALESCE(NULLIF(f.name,''),'Sin familia') AS familyName,
@@ -55,7 +57,15 @@ export class LegacyMysqlInventoryReportsDataSource implements InventoryReportsDa
       SUM(CASE WHEN d.DFECHA IS NULL OR d.DFECHA<='1900-12-31' THEN 1 ELSE 0 END) AS undatedMovements,
       SUM(CASE WHEN d.DFECHA IS NULL OR d.DFECHA<='1900-12-31' THEN a.AICANT ELSE 0 END) AS undatedQuantity,
       SUM(CASE WHEN (d.DFECHA IS NULL OR d.DFECHA<='1900-12-31') AND a.AICANT>0 THEN a.AICANT ELSE 0 END) AS undatedIncoming,
-      SUM(CASE WHEN (d.DFECHA IS NULL OR d.DFECHA<='1900-12-31') AND a.AICANT<0 THEN -a.AICANT ELSE 0 END) AS undatedOutgoing
+      SUM(CASE WHEN (d.DFECHA IS NULL OR d.DFECHA<='1900-12-31') AND a.AICANT<0 THEN -a.AICANT ELSE 0 END) AS undatedOutgoing,
+      CAST(SUM(CASE WHEN ${dated} AND a.AICANT>0 THEN ${historicalAmount} ELSE 0 END) AS CHAR) AS historicalIncoming,
+      CAST(SUM(CASE WHEN ${dated} AND a.AICANT<0 THEN -(${historicalAmount}) ELSE 0 END) AS CHAR) AS historicalOutgoing,
+      CAST(SUM(CASE WHEN ${dated} THEN ${historicalAmount} ELSE 0 END) AS CHAR) AS historicalDated,
+      CAST(SUM(CASE WHEN ${undated} THEN ${historicalAmount} ELSE 0 END) AS CHAR) AS historicalUnlinked,
+      CAST(SUM(CASE WHEN ${dated} THEN COALESCE(a.AIREVAL,0) ELSE 0 END) AS CHAR) AS historicalRevaluation,
+      CAST(SUM(CASE WHEN ${undated} THEN COALESCE(a.AIREVAL,0) ELSE 0 END) AS CHAR) AS historicalUndatedRevaluation,
+      SUM(CASE WHEN ${dated} AND a.AICANT<>0 AND (a.AICOSTO IS NULL OR a.AICOSTO=0) THEN 1 ELSE 0 END) AS zeroCostMovements,
+      SUM(CASE WHEN ${undated} AND a.AICANT<>0 AND (a.AICOSTO IS NULL OR a.AICOSTO=0) THEN 1 ELSE 0 END) AS undatedZeroCostMovements
       FROM faxinv a JOIN finv i ON i.ISEQ=a.ISEQ LEFT JOIN fdoc d ON d.DSEQ=a.DSEQ
       LEFT JOIN funidad u ON u.USEQ=i.USEQ
       LEFT JOIN (SELECT FAMTNUM,MAX(TRIM(FAMDESCR)) AS name FROM ffam WHERE FAMT='B' GROUP BY FAMTNUM) f ON f.FAMTNUM=i.IFAMB
@@ -67,6 +77,10 @@ export class LegacyMysqlInventoryReportsDataSource implements InventoryReportsDa
       unitId: Number(row.unitId), unit: String(row.unit).trim(), incoming: Number(row.incoming), outgoing: Number(row.outgoing), quantity: Number(row.quantity),
       firstDate: row.firstDate === null ? null : String(row.firstDate).slice(0, 10), lastDate: row.lastDate === null ? null : String(row.lastDate).slice(0, 10),
       movements: Number(row.movements), undatedMovements: Number(row.undatedMovements), undatedQuantity: Number(row.undatedQuantity),
-      undatedIncoming: Number(row.undatedIncoming ?? 0), undatedOutgoing: Number(row.undatedOutgoing ?? 0), averageCost: Number(row.averageCost ?? 0) }));
+      undatedIncoming: Number(row.undatedIncoming ?? 0), undatedOutgoing: Number(row.undatedOutgoing ?? 0), averageCost: Number(row.averageCost ?? 0),
+      historicalCosts: { incoming: String(row.historicalIncoming ?? '0'), outgoing: String(row.historicalOutgoing ?? '0'),
+        dated: String(row.historicalDated ?? '0'), unlinked: String(row.historicalUnlinked ?? '0'),
+        revaluation: String(row.historicalRevaluation ?? '0'), undatedRevaluation: String(row.historicalUndatedRevaluation ?? '0'),
+        zeroCostMovements: Number(row.zeroCostMovements ?? 0), undatedZeroCostMovements: Number(row.undatedZeroCostMovements ?? 0) } }));
   }
 }

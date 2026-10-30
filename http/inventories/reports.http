@@ -19,6 +19,8 @@ GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&famil
 GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-02-30&warehouse=01
 
 ### México con resguardos, TCC; incluye todos los pendientes sin fecha como escenario estimado
+# La misma respuesta entrega historical (AICOSTO por movimiento) y valuation (ILISTA4 actual).
+# historical.revaluation se conserva aparte de historical.reported.
 GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-08-31&warehouse=01&family=B007&scope=branch&includeUndated=true
 
 ### Sólo almacén físico 01, sin resguardos

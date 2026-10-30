@@ -6,6 +6,7 @@ import { buildInventoryByFamily, type InventoryOptions, type InventoryProductBal
 import type { InventoryReportsRepository } from '../src/modules/inventories/reports/domain/repositories/inventory-reports-repository.js';
 import { createInventoryReportsRouter } from '../src/modules/inventories/reports/presentation/http/inventory-reports-routes.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
+import { historicalInventoryValue } from '../src/modules/inventories/reports/domain/entities/historical-inventory-value.js';
 
 const pool = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({ legacyMysqlPool: pool }));
@@ -15,7 +16,8 @@ const options: InventoryOptions = { company: 'TEST', defaultDate: '', defaultWar
 const criteria = { asOf: '2026-09-30', warehouse: '01', family: 'all' };
 const balance = (overrides: Partial<InventoryProductBalance> = {}): InventoryProductBalance => ({
   productId: 1, code: '001', description: 'PRODUCTO', family: 'B008', familyName: 'TSC', warehouse: '01', unitId: 3, unit: 'M',
-  incoming: 10, outgoing: 2, quantity: 8, averageCost: 10, firstDate: '2018-01-22', lastDate: '2026-09-30', movements: 4, undatedMovements: 0, undatedQuantity: 0, ...overrides,
+  incoming: 10, outgoing: 2, quantity: 8, averageCost: 10, firstDate: '2018-01-22', lastDate: '2026-09-30', movements: 4, undatedMovements: 0, undatedQuantity: 0,
+  historicalCosts: { incoming: '100', outgoing: '20', dated: '80', unlinked: '0', revaluation: '0', undatedRevaluation: '0', zeroCostMovements: 0, undatedZeroCostMovements: 0 }, ...overrides,
 });
 const repository = (): InventoryReportsRepository => ({ options: vi.fn().mockResolvedValue(options), balances: vi.fn().mockResolvedValue([balance()]) });
 afterEach(() => vi.clearAllMocks());
@@ -125,6 +127,9 @@ describe('Inventario por familia a una fecha', () => {
     expect(sql).not.toContain('ISTKACT'); expect(sql).not.toContain('ISTKANT');
     expect(sql).not.toContain('DMULTICIA=1'); expect(sql).not.toContain('IBAJA');
     expect(sql).toContain('GROUP BY FAMTNUM');
+    expect(sql).toContain('a.AICANT*COALESCE(a.AICOSTO,0)');
+    expect(sql).toContain('(a.AICANT<>0 OR a.AIREVAL<>0)');
+    expect(sql).toContain('AS CHAR) AS historicalDated');
     expect(rows[0]?.quantity).toBe(2.125);
   });
   it('incluye todos los almacenes sin copiar la restricción México del Auxiliar antiguo', async () => {
@@ -147,6 +152,49 @@ describe('Inventario por familia a una fecha', () => {
     expect(result.meters.quantity).toBe(12.8);
     expect(result.valuation.reported).toBe(200);
     expect(result.groups[0]?.products[0]?.valuation.reported).toBe(200);
+  });
+  it('usa el costo propio de cada movimiento, aunque el stock sea cero y el costo actual sea otro', () => {
+    // Two units enter at 10, then two leave at 12. This is not 0 × current cost.
+    const result = buildInventoryByFamily(options, criteria, [balance({ quantity: 0, incoming: 2, outgoing: 2, averageCost: 999,
+      historicalCosts: { incoming: '20', outgoing: '24', dated: '-4', unlinked: '0', revaluation: '4', undatedRevaluation: '0', zeroCostMovements: 0, undatedZeroCostMovements: 0 } })], '');
+    expect(result.historical).toMatchObject({ incoming: 20, outgoing: 24, dated: -4, reported: -4, revaluation: 4 });
+    expect(result.valuation.reported).toBe(0);
+    expect(result.groups[0]?.historicalByWarehouse[0]?.amount).toBe(-4);
+    expect(result.historicalTotals[0]?.amount).toBe(-4);
+    expect(result.groups[0]?.historicalPercentage).toBe(100);
+  });
+  it('mantiene revaluaciones sin cantidad separadas y nunca las suma dos veces al valor de movimientos', () => {
+    const result = buildInventoryByFamily(options, criteria, [balance({ quantity: 0, incoming: 0, outgoing: 0,
+      historicalCosts: { incoming: '0', outgoing: '0', dated: '0', unlinked: '0', revaluation: '123.45', undatedRevaluation: '-5', zeroCostMovements: 0, undatedZeroCostMovements: 0 } })], '');
+    expect(result.empty).toBe(false);
+    expect(result.historical).toMatchObject({ reported: 0, revaluation: 123.45, undatedRevaluation: -5 });
+  });
+  it('respeta los cinco decimales de AICOSTO, acumula ocho y redondea el escenario después de sumar', () => {
+    // Preserve the precision actually present in FAXINV, including half-cent boundaries.
+    const costs = { incoming: '0.00499999', outgoing: '0', dated: '0.00499999', unlinked: '0.00000001', revaluation: '0', undatedRevaluation: '0', zeroCostMovements: 1, undatedZeroCostMovements: 2 };
+    expect(historicalInventoryValue(costs, false)).toMatchObject({ dated: 0, unlinked: 0, reported: 0, zeroCostMovements: 1, undatedZeroCostMovements: 2 });
+    expect(historicalInventoryValue(costs, true).reported).toBe(0.01);
+    expect(historicalInventoryValue({ ...costs, dated: '-0.005', unlinked: '0' }, false).reported).toBe(-0.01);
+    expect(() => historicalInventoryValue({ ...costs, dated: 'NaN' }, false)).toThrow();
+  });
+  it('compensa el valor de traslados internos al mismo costo y conserva el importe de cada almacén', () => {
+    const catalog = { ...options, warehouses: [{ code: '01', name: 'MEXICO', branchCode: '01' }, { code: '15', name: 'RESGUARDO', branchCode: '01' }] };
+    const original = balance().historicalCosts;
+    const rows = [balance({ quantity: -2, historicalCosts: { ...original, incoming: '0', outgoing: '1900.12345', dated: '-1900.12345' } }),
+      balance({ warehouse: '15', quantity: 2, historicalCosts: { ...original, incoming: '1900.12345', outgoing: '0', dated: '1900.12345' } })];
+    const result = buildInventoryByFamily(catalog, criteria, rows, '');
+    expect(result.historical.reported).toBe(0);
+    expect(result.groups[0]?.historicalByWarehouse).toEqual([{ warehouse: '01', amount: 0, percentage: null }]);
+    expect(result.groups[0]?.products.map(p => p.historical.reported)).toEqual([-1900.12, 1900.12]);
+  });
+  it('incorpora sólo los importes pendientes solicitados sin sustituir costos cero por ILISTA4', () => {
+    const rows = [balance({ averageCost: 999, undatedMovements: 2, undatedQuantity: -1,
+      historicalCosts: { incoming: '10', outgoing: '4', dated: '6', unlinked: '-2.25', revaluation: '30', undatedRevaluation: '1', zeroCostMovements: 3, undatedZeroCostMovements: 1 } })];
+    expect(buildInventoryByFamily(options, criteria, rows, '').historical.reported).toBe(6);
+    const result = buildInventoryByFamily(options, { ...criteria, includeUndated: true }, rows, '');
+    expect(result.historical).toMatchObject({ dated: 6, unlinked: -2.25, reported: 3.75, zeroCostMovements: 3, undatedZeroCostMovements: 1 });
+    expect(result.notes.join(' ')).toContain('COSTOS HISTÓRICOS POR REVISAR');
+    expect(rows[0]?.historicalCosts.dated).toBe('6');
   });
   it('incluye pendientes sólo al elegir el escenario, con entradas y salidas separadas aunque se compensen', () => {
     const rows = [balance({ quantity: 5, incoming: 10, outgoing: 5, undatedMovements: 2, undatedQuantity: 0, undatedIncoming: 7, undatedOutgoing: 7 }),

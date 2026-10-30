@@ -34,8 +34,8 @@ La evidencia anterior de Auxiliar se describe en `product-buttons.md` y
   añadido. `DFECHA < día siguiente` incluye todo el día de corte. `AIMES=1` es un
   filtro del Auxiliar, no el mes seleccionado. Sólo documentos vigentes `DEST=0`.
 - No se excluyen productos dados de baja ni familias con existencia neta cero.
-  Se conservan todos los productos con movimientos físicos no nulos para que las
-  entradas y salidas históricas también concilien con sus familias.
+  Se conservan productos con movimientos físicos o revaluaciones no nulos,
+  incluidas las revaluaciones cuya cantidad sea cero.
 - Traslados y devoluciones conservan sus signos. No se decide el signo por
   prefijos de documento, no se aplica ABS a la existencia y no se toma ISTKACT.
 - La clasificación, unidad y estado de cancelación son los disponibles en el
@@ -48,6 +48,10 @@ La evidencia anterior de Auxiliar se describe en `product-buttons.md` y
   original. No se presenta como costo histórico confirmado del corte. Las unidades
   sin equivalencia a metros sí pueden aportar valor si tienen un costo válido;
   permanecen fuera del total de metros.
+- La presentación predeterminada ahora es **Costo histórico de movimientos**:
+  suma AICANT × AICOSTO por movimiento, sin sustituirlo por la lista actual.
+  Revaluaciones AIREVAL separadas, pendientes sin fecha según escenario y costos
+  cero/ausentes señalados. El modo ILISTA4 se conserva como comparación explícita.
 
 ## Historia y documentos faltantes
 
@@ -79,8 +83,8 @@ eliminados junto con su documento y ya no existen en FAXINV.
 
 ## SQL derivado
 
-La siguiente consulta muestra el núcleo para México, familia B008 y corte
-30/09/2026. Los tres valores se enlazan con `?` en el datasource. `all` elimina el
+La siguiente consulta muestra el núcleo para México y sus resguardos, familia
+B008 y corte 30/09/2026. Los valores se enlazan con `?` en el datasource. `all` elimina el
 predicado correspondiente; nunca se interpolan valores del cliente.
 
 ```sql
@@ -94,6 +98,16 @@ SELECT
       THEN -a.AICANT ELSE 0 END) AS salidas,
   SUM(CASE WHEN d.DFECHA > '1900-12-31'
       THEN a.AICANT ELSE 0 END) AS existencia_fechada,
+  CAST(SUM(CASE WHEN d.DFECHA > '1900-12-31' AND a.AICANT > 0
+      THEN a.AICANT * COALESCE(a.AICOSTO,0) ELSE 0 END) AS CHAR) AS entradas_costo,
+  CAST(SUM(CASE WHEN d.DFECHA > '1900-12-31' AND a.AICANT < 0
+      THEN -a.AICANT * COALESCE(a.AICOSTO,0) ELSE 0 END) AS CHAR) AS salidas_costo,
+  CAST(SUM(CASE WHEN d.DFECHA > '1900-12-31'
+      THEN a.AICANT * COALESCE(a.AICOSTO,0) ELSE 0 END) AS CHAR) AS valor_historico_fechado,
+  CAST(SUM(CASE WHEN d.DFECHA IS NULL OR d.DFECHA <= '1900-12-31'
+      THEN a.AICANT * COALESCE(a.AICOSTO,0) ELSE 0 END) AS CHAR) AS valor_historico_sin_fecha,
+  CAST(SUM(CASE WHEN d.DFECHA > '1900-12-31'
+      THEN COALESCE(a.AIREVAL,0) ELSE 0 END) AS CHAR) AS revaluacion_fechada_aparte,
   MIN(CASE WHEN d.DFECHA > '1900-12-31' THEN d.DFECHA END) AS primer_movimiento,
   MAX(CASE WHEN d.DFECHA > '1900-12-31' THEN d.DFECHA END) AS ultimo_movimiento,
   SUM(CASE WHEN d.DFECHA > '1900-12-31' THEN 1 ELSE 0 END) AS movimientos,
@@ -109,10 +123,10 @@ LEFT JOIN (
   SELECT FAMTNUM, MAX(TRIM(FAMDESCR)) AS nombre
   FROM ffam WHERE FAMT = 'B' GROUP BY FAMTNUM
 ) f ON f.FAMTNUM = i.IFAMB
-WHERE a.AIMES = 1 AND a.AICANT <> 0
+WHERE a.AIMES = 1 AND (a.AICANT <> 0 OR a.AIREVAL <> 0)
   AND (d.DEST = 0 OR d.DSEQ IS NULL)
   AND (d.DFECHA < '2026-10-01' OR d.DFECHA IS NULL)
-  AND a.AIALMACEN = '01'
+  AND a.AIALMACEN IN ('01','11','12','13','15')
   AND TRIM(i.IFAMB) = 'B008'
 GROUP BY i.ISEQ, i.ICOD, i.IDESCR, i.IFAMB, f.nombre,
   a.AIALMACEN, i.USEQ, u.UCOD
@@ -133,14 +147,14 @@ Cada grupo contiene `code`, `name`, `products`, `totals` por unidad. Cada produc
 incluye ISEQ/código/descripción/almacén/UM, entradas/salidas/existencia fechada,
 primer/último movimiento y conteo/cantidad sin fecha.
 
-Resumen actual: N.º, Producto / Familia, metros estimados y porcentaje por cada
+Resumen actual: N.º, Producto / Familia, importe histórico o actual o metros y porcentaje por cada
 almacén, total de inventario del año del corte y porcentaje general. Una sola
 fila por IFAMB, siguiendo el orden de familias del ejemplo del usuario.
 El detalle conserva las cantidades originales, costo promedio actual y valoración;
 en modo metros conserva también m/UM y Metros estimados.
 Excel agrega conteo sin fecha, metros sin fecha e ISEQ para conciliar; contiene
-Familias, Unidades originales, Totales por unidad, Productos, Pendientes de conciliar
-y Criterios.
+Familias, Unidades originales, Totales por unidad, Productos, Pendientes de conciliar,
+Costos históricos y Criterios.
 PDF imprime el resumen o el detalle completo según la casilla; las matrices
 anchas se dividen en bloques de tres almacenes con total general explícito.
 
@@ -268,3 +282,56 @@ recalcularon los tres libros de México en Excel nativo, sin errores de fórmula
 Se revisaron PDF de resumen y detalle de pendientes, preservando columnas finales,
 escenarios y advertencias. La consulta real sólo hizo lecturas. general_log=OFF
 y MySQL80 Running verificados al terminar; sin reinicios ni cambios de configuración.
+
+## Costo de cada movimiento del Auxiliar (2026-10-30)
+
+Corrección solicitada por el usuario: entradas por su costo y salidas por su
+costo registrado, no existencia neta multiplicada por el costo actual. Se confirmó
+que la consulta literal de Auxiliar proyecta AICOSTO y AIREVAL: marcador capturado
+INV_QUERY_AUXILIAR en product-buttons-capture.md. La nueva agregación sigue siendo
+**derivada**, no se declara una nueva captura OMNIS. No se activó general_log.
+
+La respuesta agrega historical, historicalTotals e historicalByWarehouse por
+familia, con historicalPercentage. Cada producto conserva historicalCosts con
+sumas decimales exactas y historical con importes de presentación. historical:
+incoming/outgoing son entradas/salidas fechadas a su costo propio; dated es su
+neto exacto, unlinked el neto sin fecha y reported el escenario elegido.
+revaluation/undatedRevaluation conservan AIREVAL **aparte**, sin modificar reported.
+zeroCostMovements/undatedZeroCostMovements cuentan movimientos físicos con costo
+cero o ausente. No se reemplazan esos costos por ILISTA4, AIPRECIO ni otro producto.
+Un costo negativo registrado conserva su signo; no se aplica ABS al costo.
+
+AICANT es DECIMAL(18,3), AICOSTO DECIMAL(18,5) y AIREVAL DECIMAL(18,2). SUM de
+cantidad × costo conserva ocho decimales y se transporta como texto decimal para
+evitar conversión binaria. Dominio suma con enteros y redondea a centavos por
+producto/almacén, después agrega familias y sucursales. Se redondea el neto, no
+se resta el total de dos columnas ya redondeadas; puede existir diferencia de
+centavos entre entradas menos salidas visibles y el neto de precisión completa.
+El escenario con pendientes también se redondea después de sumar sus netos exactos.
+
+Validación TCC/B007, México 01/11/12/13/15 al 31/08/2026: 11,823 movimientos con
+cantidad o revaluación no nula, en 325 productos/almacenes. Importe de movimientos
+fechados: 34,420,029.46; pendientes sin fecha: −171,083.45; escenario que los incluye:
+34,248,946.02. Se identificaron 62 movimientos fechados con costo cero; las
+revaluaciones fechadas suman 55,412,589.72 y NO se añadieron al neto. La diferencia
+de un producto respecto de la lectura anterior se debe a incluir revaluaciones
+sin cantidad. Las cifras se contrastaron con cada movimiento usando Decimal.
+
+Estos valores reflejan el costo registrado del auxiliar; aún no certifican un
+inventario contable conciliado ni la referencia 12,281,029.00. Falta confirmar el
+tratamiento de AIREVAL en PROSCAI y conciliar los costos cero. No se elige un signo
+de revaluación para forzar aquella cifra. No se suman respaldos ni saldos actuales.
+
+Vista previa, Excel y PDF inician en Costo histórico de movimientos. El usuario
+puede alternar a costo actual o metros sin HTTP adicional. Excel agrega Costos
+históricos con entradas/salidas, ambos escenarios, revaluaciones y conteos de
+costos cero por producto/almacén; Pendientes de conciliar incluye también el valor
+histórico pendiente. Evidencia privada: captures/ui/new-version/inventory-historical-costs/.
+
+Validación final: backend lint/build/test con 174 pruebas aprobadas; frontend
+lint/typecheck/build aprobados. Navegador con API real: México/todas las familias,
+TCC/todas las sucursales, tres medidas sin HTTP adicional, pendientes, exportación
+obsoleta bloqueada y escenarios. Cuatro libros contrastados con la API y
+recalculados en Excel nativo sin errores ni cambios de SHA-256. PDF de resumen,
+pendientes y bloques por sucursal revisados visualmente. general_log=OFF verificado;
+MySQL80 Running, sin reinicios ni escrituras.

@@ -3,8 +3,8 @@
 ### Catálogos reales de almacenes y familias IFAMB
 GET {{baseUrl}}/inventories/reports/by-family/options
 
-### México al 30 de septiembre 2026, desde el inicio del Auxiliar
-GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&family=all
+### México con resguardos al 31 de agosto 2026, desde el inicio del Auxiliar
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-08-31&warehouse=01&family=all&scope=branch&includeUndated=false
 
 ### Familia B008 TSC en México
 GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&family=B008
@@ -17,3 +17,15 @@ GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-09-30&warehouse=01&famil
 
 ### Fecha imposible: 400
 GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-02-30&warehouse=01
+
+### México con resguardos, TCC; incluye todos los pendientes sin fecha como escenario estimado
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-08-31&warehouse=01&family=B007&scope=branch&includeUndated=true
+
+### Sólo almacén físico 01, sin resguardos
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-08-31&warehouse=01&family=B007&scope=warehouse&includeUndated=false
+
+### Resguardo 15 individual
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-08-31&warehouse=15&family=B007&scope=warehouse&includeUndated=false
+
+### Booleano ambiguo: 400, no se convierte la cadena false a true
+GET {{baseUrl}}/inventories/reports/by-family?asOf=2026-08-31&includeUndated=1

@@ -15,7 +15,7 @@ const options: InventoryOptions = { company: 'TEST', defaultDate: '', defaultWar
 const criteria = { asOf: '2026-09-30', warehouse: '01', family: 'all' };
 const balance = (overrides: Partial<InventoryProductBalance> = {}): InventoryProductBalance => ({
   productId: 1, code: '001', description: 'PRODUCTO', family: 'B008', familyName: 'TSC', warehouse: '01', unitId: 3, unit: 'M',
-  incoming: 10, outgoing: 2, quantity: 8, firstDate: '2018-01-22', lastDate: '2026-09-30', movements: 4, undatedMovements: 0, undatedQuantity: 0, ...overrides,
+  incoming: 10, outgoing: 2, quantity: 8, averageCost: 10, firstDate: '2018-01-22', lastDate: '2026-09-30', movements: 4, undatedMovements: 0, undatedQuantity: 0, ...overrides,
 });
 const repository = (): InventoryReportsRepository => ({ options: vi.fn().mockResolvedValue(options), balances: vi.fn().mockResolvedValue([balance()]) });
 afterEach(() => vi.clearAllMocks());
@@ -27,7 +27,7 @@ describe('Inventario por familia a una fecha', () => {
     expect(result.groups[0]?.products).toHaveLength(3);
     expect(result.totals.map(t => [t.unit, t.quantity])).toEqual([['M', 9], ['PZ', 4]]);
     expect(result.provisional).toBe(false);
-    expect(result.warehouseName).toBe('Todos los almacenes');
+    expect(result.warehouseName).toBe('Todas las sucursales y sus resguardos');
   });
   it('convierte PZ y TR a 6.40 metros y reúne una sola cantidad por familia, conservando UM originales', () => {
     const result = buildInventoryByFamily(options, criteria, [
@@ -99,7 +99,7 @@ describe('Inventario por familia a una fecha', () => {
       await expect(report.execute(input)).rejects.toMatchObject({ statusCode: 400 });
     }
     expect(repo.balances).not.toHaveBeenCalled();
-    expect((await report.execute(criteria)).criteria).toEqual(criteria);
+    expect((await report.execute(criteria)).criteria).toEqual({ ...criteria, scope: 'branch', includeUndated: false });
   });
   it('rechaza fechas imposibles, listas, claves desconocidas y filtros extra en HTTP', async () => {
     const repo = repository(); const app = express().use(createInventoryReportsRouter(new GetInventoryByFamily(repo))).use(errorHandler);
@@ -109,13 +109,13 @@ describe('Inventario por familia a una fecha', () => {
     expect(repo.balances).not.toHaveBeenCalled();
     await request(app).get('/by-family/options').expect(200).expect('Cache-Control', 'no-store');
     const result = await request(app).get('/by-family?asOf=2026-09-30').expect(200).expect('Cache-Control', 'no-store');
-    expect(result.body.data.criteria).toEqual(criteria);
+    expect(result.body.data.criteria).toEqual({ ...criteria, scope: 'branch', includeUndated: false });
     await request(app).post('/by-family').expect(404);
   });
   it('acumula AICANT firmado desde el inicio, limita el corte al día siguiente y conserva huérfanos', async () => {
     pool.execute.mockResolvedValueOnce([[{ ...balance(), incoming: '12.250', outgoing: '10.125', quantity: '2.125' }], []]);
     const source = new LegacyMysqlInventoryReportsDataSource(pool as never);
-    const rows = await source.balances({ ...criteria, family: 'B008' });
+    const rows = await source.balances({ ...criteria, family: 'B008', scope: 'warehouse' });
     const [sql, parameters] = pool.execute.mock.calls[0]!;
     expect(parameters).toEqual(['2026-10-01', '01', 'B008']);
     expect(sql).toContain('a.AICANT>0'); expect(sql).toContain('THEN -a.AICANT');
@@ -132,5 +132,64 @@ describe('Inventario por familia a una fecha', () => {
     await new LegacyMysqlInventoryReportsDataSource(pool as never).balances({ ...criteria, asOf: '2024-02-29', warehouse: 'all' });
     const [sql, parameters] = pool.execute.mock.calls[0]!;
     expect(parameters).toEqual(['2024-03-01']); expect(sql).not.toContain('a.AIALMACEN=?');
+  });
+  it('agrupa resguardos por propietario y compensa traslados internos sin perder el almacén original', () => {
+    const catalog = { ...options, warehouses: [...options.warehouses.map(w => ({ ...w, branchCode: w.code })), { code: '15', name: 'RESGUARDO QRO', branchCode: '01' }] };
+    const result = buildInventoryByFamily(catalog, criteria, [balance({ warehouse: '01', quantity: -10 }), balance({ warehouse: '15', quantity: 10 })], '');
+    expect(result.meterColumns).toEqual([{ warehouse: '01', name: 'MEXICO' }]);
+    expect(result.groups[0]?.byWarehouse[0]?.quantity).toBe(0);
+    expect(result.groups[0]?.valueByWarehouse[0]?.amount).toBe(0);
+    expect(result.groups[0]?.products.map(row => row.warehouse)).toEqual(['01', '15']);
+    expect(result.includedWarehouses.map(w => w.code)).toEqual(['01', '15']);
+  });
+  it('valúa en UM original: dos tramos a 100 suman 200, sin multiplicar el importe por 6.40', () => {
+    const result = buildInventoryByFamily(options, criteria, [balance({ unit: 'TR', quantity: 2, averageCost: 100 })], '');
+    expect(result.meters.quantity).toBe(12.8);
+    expect(result.valuation.reported).toBe(200);
+    expect(result.groups[0]?.products[0]?.valuation.reported).toBe(200);
+  });
+  it('incluye pendientes sólo al elegir el escenario, con entradas y salidas separadas aunque se compensen', () => {
+    const rows = [balance({ quantity: 5, incoming: 10, outgoing: 5, undatedMovements: 2, undatedQuantity: 0, undatedIncoming: 7, undatedOutgoing: 7 }),
+      balance({ productId: 2, quantity: 3, undatedMovements: 1, undatedQuantity: -2, undatedOutgoing: 2 })];
+    const dated = buildInventoryByFamily(options, criteria, rows, '');
+    const estimated = buildInventoryByFamily(options, { ...criteria, includeUndated: true }, rows, '');
+    expect(dated.valuation.reported).toBe(80);
+    expect(estimated.valuation).toMatchObject({ dated: 80, unlinked: -20, reported: 60 });
+    expect(estimated.groups[0]?.products[0]).toMatchObject({ incoming: 17, outgoing: 12, quantity: 5, datedQuantity: 5 });
+    expect(estimated.groups[0]?.products[1]).toMatchObject({ quantity: 1, datedQuantity: 3 });
+    expect(estimated.notes[0]).toContain('ESCENARIO ESTIMADO'); expect(estimated.provisional).toBe(true);
+    expect(rows[1]?.quantity).toBe(3);
+  });
+  it('no inventa costos ausentes y redondea importes positivos/negativos a centavos', () => {
+    const result = buildInventoryByFamily(options, criteria, [balance({ quantity: 1, averageCost: 0 }), balance({ productId: 2, quantity: 0.001, averageCost: 5 }), balance({ productId: 3, quantity: -0.001, averageCost: 5 })], '');
+    expect(result.valuation.unpricedProducts).toBe(1);
+    expect(result.valuation.reported).toBe(0);
+    expect(result.groups[0]?.products[1]?.valuation.reported).toBe(0.01);
+    expect(result.groups[0]?.products[2]?.valuation.reported).toBe(-0.01);
+  });
+  it('resguardo individual requiere scope warehouse; parámetros de escenario son booleanos estrictos', async () => {
+    const repo = repository();
+    vi.mocked(repo.options).mockResolvedValue({ ...options, warehouses: [...options.warehouses, { code: '15', name: 'RESGUARDO', branchCode: '01' }] });
+    const app = express().use(createInventoryReportsRouter(new GetInventoryByFamily(repo))).use(errorHandler);
+    await request(app).get('/by-family?asOf=2026-08-31&warehouse=15').expect(400);
+    await request(app).get('/by-family?asOf=2026-08-31&warehouse=15&scope=warehouse&includeUndated=true').expect(200);
+    expect(repo.balances).toHaveBeenLastCalledWith({ asOf: '2026-08-31', warehouse: '15', family: 'all', scope: 'warehouse', includeUndated: true });
+    for (const value of ['1', 'yes', 'FALSE', 'false&includeUndated=true']) await request(app).get('/by-family?asOf=2026-08-31&includeUndated=' + value).expect(400);
+  });
+  it('asigna resguardos por compañía aunque el nombre sugiera otra sucursal, sin adivinar los no asignados', async () => {
+    pool.execute.mockResolvedValueOnce([[
+      { code: '01', name: 'MEXICO', companyId: 1 }, { code: '02', name: 'MTY', companyId: 2 },
+      { code: '12', name: 'RESGUARDO MTY DE MEXICO', companyId: 1 },
+      { code: '22', name: 'NO CALIDAD MTY', companyId: 2 }, { code: '99', name: 'TRANSITO', companyId: 0 },
+    ], []]).mockResolvedValueOnce([[{ code: 'B007', name: 'TCC' }], []]).mockResolvedValueOnce([[{ name: 'TEST' }], []]);
+    const result = await new LegacyMysqlInventoryReportsDataSource(pool as never).options();
+    expect(result.warehouses.map(w => w.branchCode)).toEqual(['01', '02', '01', '02', null]);
+  });
+  it('la consulta de sucursal enlaza todos los códigos de resguardo obtenidos del catálogo', async () => {
+    const source = new LegacyMysqlInventoryReportsDataSource(pool as never);
+    vi.spyOn(source, 'options').mockResolvedValue({ ...options, warehouses: [{ code: '01', name: 'MEXICO', branchCode: '01' }, { code: '15', name: 'RESGUARDO', branchCode: '01' }, { code: '02', name: 'MTY', branchCode: '02' }] });
+    pool.execute.mockResolvedValueOnce([[], []]);
+    await source.balances({ ...criteria, scope: 'branch' });
+    expect(pool.execute.mock.calls[0]?.[1]).toEqual(['2026-10-01', '01', '15']);
   });
 });

@@ -14,11 +14,17 @@ La evidencia anterior de Auxiliar se describe en `product-buttons.md` y
 ## Parámetros y reglas
 
 - `asOf`: fecha ISO válida, entre 1901 y 2100. Ejemplo: `2026-09-30`.
-- `warehouse`: código real de `FALMCAT.CATALM`, o `all`; inicia en `01` México.
-  Se filtra **FAXINV.AIALMACEN**, no el código de compañía. Los almacenes de
-  resguardo, tránsito y central se pueden seleccionar por separado; `all` incluye
-  todos, también movimientos con almacén vacío. No equivale a consolidar sólo las
-  siete sucursales comerciales. No se copia `DMULTICIA=1` del Auxiliar antiguo.
+- `warehouse`: código de sucursal o almacén, o `all`; inicia en `01` México.
+- `scope=branch` (nuevo predeterminado): incluye los resguardos de la sucursal.
+  El catálogo relaciona cada CATALM con la compañía CATMULTICIA de los almacenes
+  principales 01..07. México incluye actualmente 01, 11, 12, 13 y 15.
+  `scope=warehouse` conserva la consulta de un almacén individual. El filtro físico
+  continúa siendo FAXINV.AIALMACEN con parámetros; no se copia DMULTICIA=1.
+  `all` incluye todos; almacenes sin propietario inequívoco forman una columna
+  Sin sucursal asignada, sin adjudicarlos arbitrariamente a México.
+- `includeUndated=false` (predeterminado): conserva los pendientes separados.
+  `true`: suma sus entradas y salidas como **escenario estimado**, sin afirmar que
+  ocurrieron antes del corte. Sólo se aceptan los literales HTTP true/false.
 - `family`: valor de `FINV.IFAMB`, o `all`; inicia en todas. La descripción se
   relaciona con `FFAM.FAMTNUM`, `FAMT='B'`, agrupando la llave del catálogo para
   impedir duplicaciones. La familia vacía conserva su propio grupo.
@@ -38,8 +44,10 @@ La evidencia anterior de Auxiliar se describe en `product-buttons.md` y
 - Cantidades originales con tres decimales y totales por `USEQ` para auditoría.
   El resumen reúne **metros estimados**: M/MT/MTR × 1; TR/PZ × 6.40 según la
   equivalencia aproximada indicada por el usuario; FT × 0.3048.
-- Sin valuación monetaria. Las unidades sin equivalencia (kilos, litros,
-  servicios, etc.) se conservan aparte y no se mezclan con metros.
+- Valuación con **costo promedio actual FINV.ILISTA4**, usando la cantidad en UM
+  original. No se presenta como costo histórico confirmado del corte. Las unidades
+  sin equivalencia a metros sí pueden aportar valor si tienen un costo válido;
+  permanecen fuera del total de metros.
 
 ## Historia y documentos faltantes
 
@@ -55,12 +63,14 @@ de `01300938` tiene cantidad -1314.010, almacén 01 y documento ausente. La mism
 ausencia se comprobó en `tuvansa2025`; no se puede recuperar su fecha de ahí.
 
 Estos movimientos se conservan como `undatedMovements` y `undatedQuantity` por
-producto, familia/unidad y total/unidad; **no se suman a la existencia fechada**.
+producto, familia/unidad y total/unidad; **no se suman al corte predeterminado**.
+El escenario explícito includeUndated=true los incorpora sin inventar su fecha.
 La respuesta queda `provisional=true` y la advertencia aparece en vista, Excel y
 PDF. Se señalan también fechas nulas o sentinelas anteriores a 1901. No se les
 asigna la fecha del documento vecino, de la captura ni del año del respaldo.
-La cantidad sin fecha tiene signo, puede compensarse en el agregado y no es
-existencia adicional al corte. Su conteo permanece visible aunque sume cero.
+La cantidad sin fecha tiene signo y puede compensarse en el agregado. Se conservan
+también undatedIncoming/undatedOutgoing: una entrada y salida iguales no desaparecen
+del conteo ni del detalle. Su pertenencia temporal al corte sigue sin confirmarse.
 
 Por eso el resultado no garantiza una existencia histórica completa cuando hay
 documentos faltantes. Debe reconciliarse/restaurarse esa historia antes de usarlo
@@ -126,9 +136,11 @@ primer/último movimiento y conteo/cantidad sin fecha.
 Resumen actual: N.º, Producto / Familia, metros estimados y porcentaje por cada
 almacén, total de inventario del año del corte y porcentaje general. Una sola
 fila por IFAMB, siguiendo el orden de familias del ejemplo del usuario.
-El detalle conserva las columnas originales y agrega m/UM y Metros estimados.
+El detalle conserva las cantidades originales, costo promedio actual y valoración;
+en modo metros conserva también m/UM y Metros estimados.
 Excel agrega conteo sin fecha, metros sin fecha e ISEQ para conciliar; contiene
-Familias, Unidades originales, Totales por unidad, Productos y Criterios.
+Familias, Unidades originales, Totales por unidad, Productos, Pendientes de conciliar
+y Criterios.
 PDF imprime el resumen o el detalle completo según la casilla; las matrices
 anchas se dividen en bloques de tres almacenes con total general explícito.
 
@@ -194,3 +206,65 @@ en Excel nativo para México y todos los almacenes. PDF revisado visualmente con
 columnas finales completas. Datos de validación reutilizados de las lecturas reales
 anteriores, sin capturar nuevo SQL OMNIS ni modificar MySQL. Evidencia privada:
 `captures/ui/new-version/inventory-family-meters/`.
+
+## Corrección: resguardos, valuación y pendientes (2026-10-30)
+
+El usuario confirmó incluir resguardos y conservar las entradas/salidas sin
+documento. El alcance de sucursal reemplaza el antiguo filtro exclusivo por 01.
+El modo almacén sigue disponible para inspección individual. includedWarehouses
+publica los códigos realmente incluidos; el producto conserva su almacén original.
+Al agrupar por sucursal los traslados internos de un mismo producto se compensan
+sin eliminar las dos filas físicas. La pertenencia procede del catálogo actual.
+
+FINV.ILISTA4 se lee por producto junto con las cantidades. Se verificó IMONEDA4=0
+en el catálogo disponible; el reporte se rotula moneda base y no aplica tipos de
+cambio inferidos de IMONEDA de compras. No se calcula dinero sobre metros
+convertidos: dos TR a 100 por TR valen 200, aunque equivalgan a 12.8 m estimados.
+Se redondea a centavos por producto/almacén y luego se suma. Cantidades con costo
+ausente, cero o negativo se marcan como partidas sin costo y no reciben un valor
+inventado. Cantidades y costos se multiplican en enteros, no mediante acumulación
+monetaria de punto flotante.
+
+La respuesta agrega valuation:{dated,unlinked,reported,unpricedProducts},
+valuationTotals y valueByWarehouse/valuationPercentage por familia. El producto
+conserva datedQuantity/datedIncoming/datedOutgoing, su saldo reportado según escenario,
+averageCost y valuation. Los metros continúan disponibles como presentación alterna.
+La valuación de cada escenario se calcula sobre su cantidad original resultante;
+redondear componentes separados puede generar diferencias de un centavo frente
+a valorar su suma. No se mezclan métodos para forzar una referencia externa.
+
+Para TCC, B007, al 31/08/2026: México con 01/11/12/13/15 devuelve 324 productos/
+almacenes y nueve salidas sin documento. Con los costos actuales de la lectura:
+14,963,893.55 en escenario fechado y 14,833,411.84 incluyendo pendientes. Son
+valores provisionales, no se certifica el importe de referencia 12,281,029.00.
+La revisión anterior sin redondear por partida daba 14,963,893.52301; la diferencia
+de centavos obedece a la política explícita de redondeo, no a otros movimientos.
+
+Se buscaron los nueve documentos faltantes de TCC en las copias 2024 y 2025:
+ambas conservan esos movimientos, pero no sus documentos/fechas. No se reconstruye
+DFECHA desde AISEQ, documentos vecinos ni la fecha actual. Para conciliarlos se
+necesita una fuente verificable (otro respaldo, XML/PDF/documento y correspondencia
+de movimiento) o una fecha validada por el responsable. Cualquier corrección debe
+conservar trazabilidad y hacerse en un flujo específico; este reporte no restaura,
+elimina ni modifica registros del MySQL productivo.
+
+La UI ofrece Sucursal y resguardos / Almacén individual, Importe a costo promedio
+actual / Metros estimados, y una casilla explícita Incluir movimientos sin fecha
+(escenario estimado). Ver pendientes de fecha filtra productos/almacenes con esos
+movimientos sin efectuar nuevas lecturas. No es una lista de un renglón por documento:
+el conteo indica cuántos movimientos pendientes tiene cada partida. Excel contiene
+la hoja Pendientes de conciliar con cantidades con signo, entradas/salidas, costo,
+valor y estado Sin fecha verificable. PDF conserva modo y advertencias del escenario.
+
+No hay migración ni escritura de datos. El SQL sigue siendo derivado; cambia la
+proyección de ILISTA4 y los dos signos pendientes, y enlaza con IN todos los códigos
+de resguardo que resolvió FALMCAT. Se mantiene la historia de una sola base, sin
+duplicar movimientos de las copias anuales. Caché de catálogo: 60 segundos.
+Evidencia privada: `captures/ui/new-version/inventory-branch-reconciliation/`.
+
+Validación: 169 pruebas backend y lint/build/test aprobados; frontend con
+lint/typecheck/build aprobados. Se contrastaron los importes con Decimal y se
+recalcularon los tres libros de México en Excel nativo, sin errores de fórmula.
+Se revisaron PDF de resumen y detalle de pendientes, preservando columnas finales,
+escenarios y advertencias. La consulta real sólo hizo lecturas. general_log=OFF
+y MySQL80 Running verificados al terminar; sin reinicios ni cambios de configuración.

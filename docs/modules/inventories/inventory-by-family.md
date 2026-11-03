@@ -1,5 +1,10 @@
 # Inventario por familia a una fecha
 
+Revisión de discrepancias del 2026-11-03: [conciliación de AICOSTO × AICANT](inventory-cost-reconciliation-20261103.md).
+SQL directo, API activa y Excel coinciden; se identificaron cinco movimientos
+con cantidad y costo negativos que aportan +23.1 millones. No se alteraron datos
+ni se ajustó la fórmula para forzar el valor del reporte de referencia.
+
 Implementación del 2026-10-29 solicitada por el usuario. Es un reporte nuevo,
 **derivado** del modelo del Auxiliar; no es una nueva captura de un reporte OMNIS.
 La evidencia anterior de Auxiliar se describe en `product-buttons.md` y

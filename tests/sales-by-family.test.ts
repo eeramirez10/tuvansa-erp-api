@@ -12,35 +12,37 @@ vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({ l
 import { LegacyMysqlSalesReportsDataSource } from '../src/modules/sales/reports/infrastructure/datasources/legacy-mysql-sales-reports-data-source.js';
 const options: SalesOptions = { company: 'TEST', defaultFrom: '', defaultTo: '', defaultBranch: '01', branches: [{ code: '01', name: 'MEXICO', companyId: 1 }, { code: '02', name: 'MTY', companyId: 2 }], families: [{ code: 'B007', name: 'TCC' }, { code: '', name: 'Sin familia' }] };
 const criteria = { from: '2026-08-01', to: '2026-08-31', branch: '01', family: 'all' };
-const balance = (overrides: Partial<SalesBalance> = {}): SalesBalance => ({ productId: 1, code: '001', description: 'PRODUCTO', family: 'B007', familyName: 'TCC', companyId: 1, unit: 'M', quantity: '8.000', sales: '100.00000000', returns: '20.00000000', net: '80.00000000', movements: 3, firstDate: '2026-08-01', lastDate: '2026-08-31', movementTypes: 'DA,FA', missingPrices: 0, ...overrides });
+const balance = (overrides: Partial<SalesBalance> = {}): SalesBalance => ({ productId: 1, code: '001', description: 'PRODUCTO', family: 'B007', familyName: 'TCC', companyId: 1, unit: 'M', quantity: '8.000', gross: '100.00000000', movements: 3, firstDate: '2026-08-01', lastDate: '2026-08-31', movementTypes: 'FA,FB', missingPrices: 0, ...overrides });
 const repository = (): SalesReportsRepository => ({ options: vi.fn().mockResolvedValue(options), balances: vi.fn().mockResolvedValue([balance()]) });
 afterEach(() => vi.clearAllMocks());
 describe('Ventas por familia', () => {
-  it('conserva ventas menos créditos, agrupando familias y sucursales sin cambiar signos', () => {
-    const report = buildSalesByFamily(options, { ...criteria, branch: 'all' }, [balance(), balance({ productId: 2, companyId: 2, net: '-15', sales: '0', returns: '15', quantity: '-1' }), balance({ productId: 3, family: '', familyName: 'Sin familia', net: '5' })], '');
-    expect(report.productType).toBe(1); expect(report.source).toBe('derivada'); expect(report.amount).toBe(70);
-    expect(report.groups[0]?.cells.map(c => c.amount)).toEqual([80, -15]);
-    expect(report.totals.map(c => c.amount)).toEqual([85, -15]); expect(report.groups[0]?.amount).toBe(65);
+  it('identifica ventas brutas, agrupando el importe antes de descuentos por familia y sucursal', () => {
+    const report = buildSalesByFamily(options, { ...criteria, branch: 'all' }, [balance(), balance({ productId: 2, companyId: 2, gross: '15', quantity: '1' }), balance({ productId: 3, family: '', familyName: 'Sin familia', gross: '5' })], '');
+    expect(report.productType).toBe(1); expect(report.basis).toBe('gross'); expect(report.source).toBe('derivada'); expect(report.amount).toBe(120);
+    expect(report.groups[0]?.cells.map(c => c.amount)).toEqual([100, 15]);
+    expect(report.totals.map(c => c.amount)).toEqual([105, 15]); expect(report.groups[0]?.amount).toBe(115);
+    expect(report.groups[0]?.products[0]?.gross).toBe('100.00000000');
   });
   it('usa importes decimales exactos, incluyendo valores negativos en el límite de medio centavo', () => {
-    const report = buildSalesByFamily(options, criteria, [balance({ net: '0.00500000' }), balance({ productId: 2, net: '-0.00500000' })], '');
+    const report = buildSalesByFamily(options, criteria, [balance({ gross: '0.00500000' }), balance({ productId: 2, gross: '-0.00500000' })], '');
     expect(report.amount).toBe(0); expect(report.groups[0]?.products.map(p => p.amount)).toEqual([0.01, -0.01]);
     expect(report.groups[0]?.percentage).toBeNull();
-    expect(() => buildSalesByFamily(options, criteria, [balance({ net: 'NaN' })], '')).toThrow();
+    expect(() => buildSalesByFamily(options, criteria, [balance({ gross: 'NaN' })], '')).toThrow();
   });
   it('convierte sólo las cantidades, conserva la UM y no multiplica el importe por 6.40', () => {
-    const report = buildSalesByFamily(options, criteria, [balance({ unit: 'TR', quantity: '2', net: '100' }), balance({ productId: 2, unit: 'K', quantity: '5', net: '50' }), balance({ productId: 3, unit: 'FT', quantity: '-1', net: '-1' })], '');
-    expect(report.amount).toBe(149); expect(report.meters).toBe(12.4952); expect(report.unconvertedProducts).toBe(1);
+    const report = buildSalesByFamily(options, criteria, [balance({ unit: 'TR', quantity: '2', gross: '100' }), balance({ productId: 2, unit: 'K', quantity: '5', gross: '50' }), balance({ productId: 3, unit: 'FT', quantity: '1', gross: '1' })], '');
+    expect(report.amount).toBe(151); expect(report.meters).toBe(13.1048); expect(report.unconvertedProducts).toBe(1);
     expect(report.groups[0]?.products[0]?.meters).toBe(12.8); expect(report.groups[0]?.products[1]?.meters).toBeNull();
     expect(salesMetersPerUnit('M.TR')).toBe(1); expect(salesMetersPerUnit('PZ')).toBe(6.4);
   });
   it('no asigna una compañía desconocida a México y muestra porcentajes por sucursal', () => {
-    const report = buildSalesByFamily(options, { ...criteria, branch: 'all' }, [balance(), balance({ companyId: 99, productId: 2, net: '20' })], '');
+    const report = buildSalesByFamily(options, { ...criteria, branch: 'all' }, [balance(), balance({ companyId: 99, productId: 2, gross: '20' })], '');
     expect(report.columns.map(c => c.code)).toEqual(['01', '02', 'unassigned']); expect(report.groups[0]?.products[1]?.branch).toBe('unassigned');
     expect(report.groups[0]?.cells.map(c => c.percentage)).toEqual([100, null, 100]);
   });
-  it('conserva productos de neto cero que tengan ventas y devoluciones, y distingue vacío', () => {
-    expect(buildSalesByFamily(options, criteria, [balance({ net: '0', quantity: '0' })], '').empty).toBe(false);
+  it('conserva ventas de precio cero y señala importes incompletos sin inventar un precio neto', () => {
+    const report = buildSalesByFamily(options, criteria, [balance({ gross: '0', missingPrices: 2 })], '');
+    expect(report.empty).toBe(false); expect(report.amount).toBe(0); expect(report.missingPrices).toBe(2); expect(report.meters).toBe(8);
     expect(buildSalesByFamily(options, criteria, [], '').empty).toBe(true);
   });
   it('inicia el periodo en enero usando la fecha de México y traduce la sucursal a compañía', async () => {
@@ -62,14 +64,14 @@ describe('Ventas por familia', () => {
     for (const query of ['from=2026-08-01&to=2026-08-31&type=2', 'from=2026-08-01&to=2026-08-31&branch=01&branch=02', 'from=2026-08-01&to=2026-08-31&family=XXXX', 'from=2026-08-01&to=2026-08-31&database=other', 'from=2026-09-01&to=2026-08-31']) await request(app).get('/by-family?' + query).expect(400);
     await request(app).post('/by-family').expect(404);
   });
-  it('parametriza el tipo 1, las fechas inclusivas, compañía y familia; usa la fórmula capturada de ventas', async () => {
+  it('parametriza filtros y deriva ventas brutas con AIPREBR, excluyendo cantidades negativas y cero', async () => {
     pool.execute.mockResolvedValueOnce([[{ ...balance(), companyId: '1', quantity: '8.000', missingPrices: '0' }], []]);
     const rows = await new LegacyMysqlSalesReportsDataSource(pool as never).balances({ ...criteria, family: 'B007' }, 1);
     const [sql, params] = pool.execute.mock.calls[0]!;
     expect(params).toEqual([1, '2026-08-01', '2026-09-01', 1, 'B007']);
-    for (const part of ['i.ITIPO=?', 'd.DESFACT=1', 'd.DEST=0', 'a.AIMES=1', "d.DOTROSTXT<>'POS'", 'd.DCONTROLPOS=0', 'a.AICANTF*a.AIPRECIO', 'c.CLISEQ<>0', 'GROUP BY FAMTNUM', 'AS CHAR) net']) expect(sql).toContain(part);
-    expect(sql).not.toContain('AICOSTO'); expect(sql).not.toContain("AITIPMV='FA'"); expect(sql).not.toContain('AIALMACEN=?');
-    expect(rows[0]?.net).toBe('80.00000000');
+    for (const part of ['i.ITIPO=?', 'd.DESFACT=1', 'd.DEST=0', 'a.AIMES=1', "d.DOTROSTXT<>'POS'", 'd.DCONTROLPOS=0', 'a.AICANTF*a.AIPREBR', 'a.AICANTF>0', 'c.CLISEQ<>0', 'GROUP BY FAMTNUM', 'AS CHAR) gross', 'a.AIPREBR IS NULL OR (a.AIPREBR=0 AND a.AIPRECIO<>0)']) expect(sql).toContain(part);
+    for (const excluded of ['AICOSTO', "AITIPMV='FA'", 'AIALMACEN=?', 'a.AICANTF*a.AIPRECIO', 'a.AICANTF<>0', 'ABS(']) expect(sql).not.toContain(excluded);
+    expect(rows[0]?.gross).toBe('100.00000000');
   });
   it('soporta año bisiesto y todas las sucursales sin fijar compañía 1', async () => {
     pool.execute.mockResolvedValueOnce([[], []]); await new LegacyMysqlSalesReportsDataSource(pool as never).balances({ ...criteria, from: '2024-02-01', to: '2024-02-29', branch: 'all' });

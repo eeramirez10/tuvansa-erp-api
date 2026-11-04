@@ -19,23 +19,23 @@ export class LegacyMysqlSalesReportsDataSource implements SalesReportsDataSource
     let filter = '';
     if (companyId !== undefined) { filter += ' AND d.DMULTICIA=?'; parameters.push(companyId); }
     if (criteria.family !== 'all') { filter += ' AND TRIM(i.IFAMB)=?'; parameters.push(criteria.family); }
-    // DERIVADA: batch family report based on the captured Ventas por cliente filters and amount.
-    const amount = 'a.AICANTF*a.AIPRECIO';
+    // DERIVADA: captured sales eligibility, gross price observed in invoice queries.
+    // Positive billed quantities only: gross sales precede discounts and returns.
+    const amount = 'a.AICANTF*a.AIPREBR';
     const [rows] = await this.db.execute<RowDataPacket[]>(`SELECT /*+ MAX_EXECUTION_TIME(30000) */ i.ISEQ productId,i.ICOD code,i.IDESCR description,
       TRIM(i.IFAMB) family,COALESCE(NULLIF(f.name,''),'Sin familia') familyName,d.DMULTICIA companyId,
       COALESCE(NULLIF(TRIM(u.UCOD),''),'Sin UM') unit,CAST(SUM(a.AICANTF) AS CHAR) quantity,
-      CAST(SUM(CASE WHEN ${amount}>0 THEN ${amount} ELSE 0 END) AS CHAR) sales,
-      CAST(SUM(CASE WHEN ${amount}<0 THEN -(${amount}) ELSE 0 END) AS CHAR) returns,
-      CAST(SUM(COALESCE(${amount},0)) AS CHAR) net,COUNT(*) movements,MIN(d.DFECHA) firstDate,MAX(d.DFECHA) lastDate,
-      GROUP_CONCAT(DISTINCT a.AITIPMV ORDER BY a.AITIPMV SEPARATOR ',') movementTypes,SUM(a.AIPRECIO IS NULL) missingPrices
+      CAST(SUM(COALESCE(${amount},0)) AS CHAR) gross,COUNT(*) movements,MIN(d.DFECHA) firstDate,MAX(d.DFECHA) lastDate,
+      GROUP_CONCAT(DISTINCT a.AITIPMV ORDER BY a.AITIPMV SEPARATOR ',') movementTypes,
+      SUM(a.AIPREBR IS NULL OR (a.AIPREBR=0 AND a.AIPRECIO<>0)) missingPrices
       FROM faxinv a JOIN fdoc d ON d.DSEQ=a.DSEQ JOIN finv i ON i.ISEQ=a.ISEQ JOIN fcli c ON c.CLISEQ=a.CLISEQ AND c.CLISEQ<>0
       LEFT JOIN funidad u ON u.USEQ=i.USEQ
       LEFT JOIN (SELECT FAMTNUM,MAX(TRIM(FAMDESCR)) name FROM ffam WHERE FAMT='B' GROUP BY FAMTNUM) f ON f.FAMTNUM=i.IFAMB
       WHERE i.ITIPO=? AND d.DFECHA>=? AND d.DFECHA<? AND a.AIMES=1 AND d.DEST=0 AND d.DESFACT=1
-      AND d.DOTROSTXT<>'POS' AND d.DCONTROLPOS=0 AND a.AICANTF<>0${filter}
+      AND d.DOTROSTXT<>'POS' AND d.DCONTROLPOS=0 AND a.AICANTF>0${filter}
       GROUP BY i.ISEQ,i.ICOD,i.IDESCR,i.IFAMB,f.name,d.DMULTICIA,u.UCOD ORDER BY family,code,companyId,productId`, parameters);
     return rows.map(r => ({ productId: Number(r.productId), code: String(r.code).trim(), description: String(r.description).trim(), family: String(r.family).trim(),
-      familyName: String(r.familyName).trim(), companyId: Number(r.companyId), unit: String(r.unit).trim(), quantity: String(r.quantity), sales: String(r.sales), returns: String(r.returns), net: String(r.net),
+      familyName: String(r.familyName).trim(), companyId: Number(r.companyId), unit: String(r.unit).trim(), quantity: String(r.quantity), gross: String(r.gross),
       movements: Number(r.movements), firstDate: String(r.firstDate).slice(0, 10), lastDate: String(r.lastDate).slice(0, 10), movementTypes: String(r.movementTypes), missingPrices: Number(r.missingPrices) }));
   }
 }

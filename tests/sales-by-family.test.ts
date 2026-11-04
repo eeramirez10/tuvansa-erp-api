@@ -16,7 +16,7 @@ const balance = (overrides: Partial<SalesBalance> = {}): SalesBalance => ({ prod
 const repository = (): SalesReportsRepository => ({ options: vi.fn().mockResolvedValue(options), balances: vi.fn().mockResolvedValue([balance()]) });
 afterEach(() => vi.clearAllMocks());
 describe('Ventas por familia', () => {
-  it('identifica ventas brutas, agrupando el importe antes de descuentos por familia y sucursal', () => {
+  it('identifica ventas brutas de facturas, agrupando el importe registrado por familia y sucursal', () => {
     const report = buildSalesByFamily(options, { ...criteria, branch: 'all' }, [balance(), balance({ productId: 2, companyId: 2, gross: '15', quantity: '1' }), balance({ productId: 3, family: '', familyName: 'Sin familia', gross: '5' })], '');
     expect(report.productType).toBe(1); expect(report.basis).toBe('gross'); expect(report.source).toBe('derivada'); expect(report.amount).toBe(120);
     expect(report.groups[0]?.cells.map(c => c.amount)).toEqual([100, 15]);
@@ -64,13 +64,13 @@ describe('Ventas por familia', () => {
     for (const query of ['from=2026-08-01&to=2026-08-31&type=2', 'from=2026-08-01&to=2026-08-31&branch=01&branch=02', 'from=2026-08-01&to=2026-08-31&family=XXXX', 'from=2026-08-01&to=2026-08-31&database=other', 'from=2026-09-01&to=2026-08-31']) await request(app).get('/by-family?' + query).expect(400);
     await request(app).post('/by-family').expect(404);
   });
-  it('parametriza filtros y deriva ventas brutas con AIPREBR, excluyendo cantidades negativas y cero', async () => {
+  it('usa AIPRECIO y sólo folios de factura fiscal, incluso si DITIPMV conserva la remisión', async () => {
     pool.execute.mockResolvedValueOnce([[{ ...balance(), companyId: '1', quantity: '8.000', missingPrices: '0' }], []]);
     const rows = await new LegacyMysqlSalesReportsDataSource(pool as never).balances({ ...criteria, family: 'B007' }, 1);
     const [sql, params] = pool.execute.mock.calls[0]!;
     expect(params).toEqual([1, '2026-08-01', '2026-09-01', 1, 'B007']);
-    for (const part of ['i.ITIPO=?', 'd.DESFACT=1', 'd.DEST=0', 'a.AIMES=1', "d.DOTROSTXT<>'POS'", 'd.DCONTROLPOS=0', 'a.AICANTF*a.AIPREBR', 'a.AICANTF>0', 'c.CLISEQ<>0', 'GROUP BY FAMTNUM', 'AS CHAR) gross', 'a.AIPREBR IS NULL OR (a.AIPREBR=0 AND a.AIPRECIO<>0)']) expect(sql).toContain(part);
-    for (const excluded of ['AICOSTO', "AITIPMV='FA'", 'AIALMACEN=?', 'a.AICANTF*a.AIPRECIO', 'a.AICANTF<>0', 'ABS(']) expect(sql).not.toContain(excluded);
+    for (const part of ['i.ITIPO=?', 'd.DESFACT=1', 'd.DEST=0', 'a.AIMES=1', "d.DOTROSTXT<>'POS'", 'd.DCONTROLPOS=0', 'a.AICANTF*a.AIPRECIO', 'a.AICANTF>0', 'c.CLISEQ<>0', 'GROUP BY FAMTNUM', 'AS CHAR) gross', 'SUM(a.AIPRECIO IS NULL)', 'EXISTS (SELECT 1 FROM ftipmv t', 't.TICLA=LEFT(d.DNUM,2)', 't.TIFISCAL=1', 't.TIAFVTS=1', 't.TIMODULO=4']) expect(sql).toContain(part);
+    for (const excluded of ['AICOSTO', 'AIPREBR', "AITIPMV='FA'", 'AIALMACEN=?', 't.TICLA=d.DITIPMV', 'a.AICANTF<>0', 'ABS(']) expect(sql).not.toContain(excluded);
     expect(rows[0]?.gross).toBe('100.00000000');
   });
   it('soporta año bisiesto y todas las sucursales sin fijar compañía 1', async () => {

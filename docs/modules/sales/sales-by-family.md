@@ -3,17 +3,22 @@
 Reporte solicitado el 2026-11-04. Entrada existente **Reportes → Reportes Financieros
 → Ventas por familia**, ahora habilitada. Conserva la matriz visual del reporte
 de inventario por familia y sus equivalencias aproximadas de cantidades; el
-cálculo monetario corresponde a **ventas brutas**, antes de descuentos, sin
-restar devoluciones ni notas de crédito y sin IVA, por precisión del usuario
-el mismo día. Sustituye el criterio neto de la implementación inicial.
+cálculo monetario corresponde a **ventas brutas: sólo facturas al precio
+registrado AIPRECIO**, sin restar devoluciones ni notas de crédito y sin IVA.
+Aclaración del usuario el 2026-11-04: no usar AIPREBR ni revertir descuentos.
+Sustituye tanto el criterio neto inicial como la interpretación posterior de
+ventas antes de descuentos con AIPREBR.
 
 | Vista | Etiqueta visible | Marcador / referencia | Procedencia | Endpoint | Tablas |
 | --- | --- | --- | --- | --- | --- |
 | Ventas por familia | Abrir / catálogos | No aplica: reporte nuevo | Derivada | GET /api/sales/reports/by-family/options | FALMCAT, FCIA, FINV, FFAM |
-| Ventas por familia | Vista previa | Filtros INV_QUERY_VENTAS_CLIENTE / INV_QUERY_VENTAS_DESGLOSADAS; AIPREBR observado en facturas | Derivada | GET /api/sales/reports/by-family | FAXINV, FDOC, FINV, FCLI, FUNIDAD, FFAM |
+| Ventas por familia | Vista previa | Filtros INV_QUERY_VENTAS_CLIENTE / INV_QUERY_VENTAS_DESGLOSADAS; tipo fiscal del folio verificado por SELECT | Derivada | GET /api/sales/reports/by-family | FAXINV, FDOC, FINV, FCLI, FUNIDAD, FFAM, FTIPMV |
 | Ventas por familia | Mostrar / Detalle / Excel / PDF | Sin SQL adicional | Presentación | Respuesta vigente | Sin tablas adicionales |
 
 ## Evidencia y reglas
+
+**Criterio vigente:** sólo facturas con AIPRECIO. Las validaciones históricas
+al final conservan los criterios anteriores, que ya no alimentan el reporte.
 
 Las capturas literales anteriores de `product-buttons-capture.md`, marcadores
 INV_QUERY_VENTAS_CLIENTE, INV_QUERY_VENTAS_DESGLOSADAS e INV_QUERY_VENTAS_ANUALES,
@@ -22,24 +27,27 @@ DOTROSTXT<>'POS' y DCONTROLPOS=0. Ventas por cliente exige cliente existente y
 distinto de cero y limita la compañía con DMULTICIA=1. La agregación por familia,
 periodo y todas las sucursales es nueva y se etiqueta **derivada**: no se afirma
 una nueva captura literal del reporte OMNIS ni se activó general_log.
-`invoices-capture.md` incluye AIPREBR y el datasource de facturas lo expone como
-grossPrice. Se verificaron partidas históricas donde AIPREBR difiere de AIPRECIO
-por el descuento: por ejemplo AISEQ=473144, cantidad 1, AIPREBR=157.89299,
-AIPRECIO=146.84048, AIDESCTO=7. Es evidencia de lectura de datos, no una nueva
-captura de OMNIS. La sustitución por AIPREBR y AICANTF>0 es **derivada** para
-atender la definición de ventas brutas solicitada.
+La selección adicional de facturas usa el tipo del **folio DNUM**, no DITIPMV
+ni AITIPMV: ambos pueden conservar FA/FB/etc. después de facturar. Se verificó
+FDOC.DSEQ=413070: DNUM=FE0064637, DITIPMV=FA. FTIPMV identifica FE como factura
+electrónica (TIFISCAL=1, TIAFVTS=1, TIMODULO=4), mientras FA es remisión
+(TIFISCAL=0). DESCXC tampoco identifica la factura: las hay en 0 (pagadas) y 1.
+Esta lectura de datos y la regla adicional son **derivadas**, no una captura nueva.
 
 - **FINV.ITIPO=1 es fijo** por solicitud del usuario. No se ofrece un parámetro
   HTTP para omitirlo. La consulta de familias también limita ITIPO=1.
 - Familia: FINV.IFAMB → FFAM.FAMTNUM con FAMT='B'. El catálogo de FFAM se agrupa
   antes del join para no multiplicar las partidas. Se conserva Sin familia.
-- Importe bruto: **SUM(AICANTF × AIPREBR)** para **AICANTF>0**. No usa AICOSTO, AICANT físico
+- Importe del reporte: **SUM(AICANTF × AIPRECIO)** para **AICANTF>0**, sólo facturas.
+  No usa AIPREBR, AICOSTO, AICANT físico
   ni ILISTA4. Una venta puede tener AICANT físico negativo y AICANTF positivo.
-- No se limita AITIPMV a FA. DESFACT=1 selecciona ventas y sus movimientos
-  relacionados; AICANTF>0 conserva las ventas y excluye las devoluciones y créditos
-  negativos. No se transforma su importe a positivo con ABS.
-  En agosto de 2026 se observaron FA/FB/FC/FD/FV/FX/FZ y negativos CA/CB/CE/DB/DD/DH
-  después de aplicar todos los filtros. No se codifica esa lista como exhaustiva.
+- DESFACT=1 y cantidad positiva no bastan: también incluyen remisiones.
+  Se exige `EXISTS` en FTIPMV con TICLA=LEFT(DNUM,2), TIFISCAL=1, TIAFVTS=1 y
+  TIMODULO=4. EXISTS evita multiplicar partidas si el catálogo tuviera duplicados.
+  En agosto 2026 los folios aceptados son FE/FF/FG/FH/FI/FK/FL; no se codifica
+  esa lista como exhaustiva. Los tipos de dos caracteres se verificaron en el
+  catálogo actual. No se infiere el tipo por la descripción ni por DITIPMV.
+  Se excluyen remisiones, créditos, devoluciones, pagos y documentos de proveedor.
 - Cantidades originales y metros también usan únicamente ventas positivas;
   no se presentan cantidades netas junto al importe bruto.
 - Se mantienen los filtros POS capturados para evitar la duplicación correspondiente.
@@ -51,17 +59,15 @@ atender la definición de ventas brutas solicitada.
   configurado; no se suman archivos anuales ni se cambia de base según el año.
   Documentos sin fecha verificable no se asignan al periodo. No existe escenario
   de movimientos sin fecha en este reporte de ventas.
-- El importe usa precio bruto antes de descuentos, sin IVA ni cargos del encabezado.
-  No aplica AIDESCTO ni descuentos generales, ni prorratea DDESC, DFLETE o DIVA.
-  No se aplica una conversión de moneda adicional a AIPREBR.
+- El importe usa AIPRECIO tal como está registrado, sin IVA ni cargos del encabezado.
+  No revierte ni reaplica AIDESCTO o descuentos generales, ni prorratea DDESC,
+  DFLETE o DIVA. No se aplica una conversión de moneda adicional a AIPRECIO.
   La presentación se titula Ventas brutas, sin
   declarar que es un estado contable de ingresos ni asignarle un ISO de moneda.
 - Se preservan ocho decimales como texto SQL; el dominio usa enteros y redondea
-  el bruto a centavos por producto/sucursal antes de sumar. No se sustituye un
-  AIPREBR ausente por AIPRECIO ni se aplica descuento inverso. AIPREBR nulo o
-  cero con AIPRECIO distinto de cero queda señalado en missingPrices como
-  importe incompleto; conserva su cantidad. Un cero bruto y neto se conserva
-  como venta de valor cero sin inventar un precio.
+  el importe a centavos por producto/sucursal antes de sumar. AIPRECIO nulo queda
+  señalado en missingPrices como importe incompleto; conserva su cantidad.
+  AIPRECIO=0 es un precio válido y no se reemplaza por AIPREBR.
 - Las cantidades permanecen en la UM actual. Resumen alterno de metros estimados:
   TR/PZ × 6.40, M/MT/MTR × 1, FT × 0.3048. No convierte dinero. Unidades distintas
   permanecen en detalle y en Excel, sin mezclar su cantidad con los metros.
@@ -99,7 +105,7 @@ ventas; una compañía no configurada se identifica sin atribuirla a México.
 ```sql
 SELECT i.ISEQ,i.ICOD,TRIM(i.IFAMB) familia,d.DMULTICIA,
        CAST(SUM(a.AICANTF) AS CHAR) cantidad,
-       CAST(SUM(COALESCE(a.AICANTF*a.AIPREBR,0)) AS CHAR) importe_bruto
+       CAST(SUM(COALESCE(a.AICANTF*a.AIPRECIO,0)) AS CHAR) importe_bruto
 FROM faxinv a
 JOIN fdoc d ON d.DSEQ=a.DSEQ
 JOIN finv i ON i.ISEQ=a.ISEQ
@@ -109,13 +115,17 @@ WHERE i.ITIPO=?
   AND a.AIMES=1 AND d.DEST=0 AND d.DESFACT=1
   AND d.DOTROSTXT<>'POS' AND d.DCONTROLPOS=0
   AND a.AICANTF>0
+  AND EXISTS (SELECT 1 FROM ftipmv t WHERE t.TICLA=LEFT(d.DNUM,2)
+              AND t.TIFISCAL=1 AND t.TIAFVTS=1 AND t.TIMODULO=4)
   AND d.DMULTICIA=?
 GROUP BY i.ISEQ,i.ICOD,i.IFAMB,d.DMULTICIA;
 ```
 
 Ejemplo de parámetros: `[1,'2026-08-01','2026-09-01',1]`. all elimina el predicado
 de compañía; family agrega TRIM(i.IFAMB)=? enlazado. El datasource agrega las
-proyecciones de descripción, UM, precios brutos ausentes, fechas y tipos del movimiento.
+proyecciones de descripción, UM, precios ausentes, fechas y tipos del movimiento.
+`movementTypes` conserva AITIPMV para trazabilidad: puede mostrar FA aunque el
+folio fiscal aceptado sea FE. No es el campo utilizado para decidir si es factura.
 
 ## Frontend y exportaciones
 
@@ -166,7 +176,7 @@ activación de general_log, reinicios ni escrituras productivas.
 - general_log **OFF** y MySQL80 **Running** al terminar. No se ejecutaron escrituras,
   migraciones ni reinicios, y no se cambió configuración de Firebase.
 
-## Validación del ajuste a ventas brutas (2026-11-04)
+## Validación anterior con AIPREBR (sustituida por la aclaración de sólo facturas)
 
 - Agosto 2026, México: **9,505,873.55**, 203 movimientos, 148 productos/sucursales,
   15 familias. TCC México: **1,557,716.52**, 21 movimientos y 11 productos.
@@ -189,3 +199,26 @@ activación de general_log, reinicios ni escrituras productivas.
   y `captures/ui/new-version/sales-by-family-gross/`; no sustituye los artefactos
   anteriores. Lecturas SELECT/SHOW únicamente. general_log **OFF** y MySQL80
   **Running**, sin reinicios ni cambios de configuración.
+
+## Validación vigente: sólo facturas con AIPRECIO (2026-11-04)
+
+- Agosto 2026, México: **9,493,745.19**, 178 partidas, 146 productos/sucursales,
+  15 familias. Todas las sucursales: **87,926,769.31**, 3,112 partidas, 1,862
+  productos/sucursales, 22 familias. TCC México conserva **1,557,716.52**.
+  Se excluyen 25 partidas de remisiones FA por 12,128.34833840 sin redondear.
+  No se cambia el precio ni se revierte un descuento: sólo AICANTF × AIPRECIO.
+- Conciliación independiente con Decimal sobre partidas individuales, separando
+  folios fiscales del conjunto completo de ventas positivas. También se comparan
+  los productos esperados para detectar tanto omisiones como inclusiones indebidas.
+- Regresión del 06/07/2023: **4,229,232.61**, 88 partidas de facturas. AISEQ=473144
+  pertenece a FE0057528: utiliza AIPRECIO=146.84048, no AIPREBR=157.89299.
+  El cálculo anterior con AIPREBR daría 4,229,243.66 y ya no se utiliza.
+- Backend lint/build/test aprobados, 185 pruebas. Frontend lint/typecheck/build
+  aprobados. Navegador y API reales verifican menú/ruta directa, cifras, tipos,
+  paginación 100/46, scroll, filtros, metros, error/reintento, vacío, Escape y
+  bloqueo de exportaciones obsoletas. Cuatro Excel conciliados y recalculados
+  en Excel nativo sin errores de fórmula ni cambios de SHA-256. PDF revisado:
+  resumen México una página, detalle cinco; siete sucursales tres páginas.
+- Evidencia privada en `captures/sql/new-version/sales/invoice-only-by-family-20261104/`
+  y `captures/ui/new-version/sales-by-family-invoices/`. Procedencia derivada,
+  sólo SELECT/SHOW; general_log **OFF**, MySQL80 **Running**. Sin escrituras ni reinicios.

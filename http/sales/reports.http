@@ -1,0 +1,19 @@
+@baseUrl = http://localhost:3000/api
+
+### Catálogos: sólo familias de productos tipo 1; sucursales y periodo inicial
+GET {{baseUrl}}/sales/reports/by-family/options
+
+### México, agosto 2026: ventas y créditos, familia IFAMB
+GET {{baseUrl}}/sales/reports/by-family?from=2026-08-01&to=2026-08-31&branch=01&family=all
+
+### Todas las sucursales, TCC
+GET {{baseUrl}}/sales/reports/by-family?from=2026-08-01&to=2026-08-31&branch=all&family=B007
+
+### Periodo anual completo disponible en la base configurada
+GET {{baseUrl}}/sales/reports/by-family?from=2026-01-01&to=2026-12-31&branch=all&family=all
+
+### Rango invertido: 400
+GET {{baseUrl}}/sales/reports/by-family?from=2026-09-01&to=2026-08-31
+
+### El tipo 1 no se puede omitir ni cambiar: 400
+GET {{baseUrl}}/sales/reports/by-family?from=2026-08-01&to=2026-08-31&type=2

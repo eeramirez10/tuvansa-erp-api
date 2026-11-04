@@ -13,6 +13,7 @@ import { createPurchaseOrdersModule } from './modules/purchasing/purchase-orders
 import { createPurchaseReceptionsModule } from './modules/purchasing/purchase-receptions/purchase-receptions-module.js';
 import { createInvoicingModule } from './modules/sales/invoicing/invoicing-module.js';
 import { createOrdersModule } from './modules/sales/orders/orders-module.js';
+import { createSalesReportsModule } from './modules/sales/reports/sales-reports-module.js';
 import { createBankingModule } from './modules/treasury/banking/banking-module.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
@@ -42,6 +43,7 @@ export const createApp = (): Express => {
   app.use(`${env.API_PREFIX}/purchasing/purchase-receptions`, createPurchaseReceptionsModule());
   app.use(`${env.API_PREFIX}/sales/orders`, createOrdersModule());
   app.use(`${env.API_PREFIX}/sales/invoices`, createInvoicingModule());
+  app.use(`${env.API_PREFIX}/sales/reports`, createSalesReportsModule());
   app.use(`${env.API_PREFIX}/treasury/bank-accounts`, createBankingModule());
 
   app.use(notFoundHandler);

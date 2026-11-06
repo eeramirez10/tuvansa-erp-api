@@ -1,0 +1,22 @@
+@baseUrl = http://localhost:3000/api
+
+### Sucursales, agentes y periodo inicial de pagos (mes actual)
+GET {{baseUrl}}/sales/reports/collection-commissions/options
+
+### México: pagos PA de agosto, no fecha de factura. Preliminar sin método 214.
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-08-01&to=2026-08-31&branch=01&agent=all
+
+### Todas las sucursales
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-08-01&to=2026-08-31&branch=all&agent=all
+
+### Agente existente en el catálogo verificado
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-08-01&to=2026-08-31&branch=05&agent=1501
+
+### Periodo vacío verificable
+GET {{baseUrl}}/sales/reports/collection-commissions?from=1901-01-01&to=1901-01-31&branch=01&agent=all
+
+### 400: rango invertido
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-09-01&to=2026-08-31
+
+### 400: no se admite filtrar por fecha de factura
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-08-01&to=2026-08-31&invoiceFrom=2026-08-01

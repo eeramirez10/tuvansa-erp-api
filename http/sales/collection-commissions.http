@@ -3,7 +3,7 @@
 ### Sucursales, agentes y periodo inicial de pagos (mes actual)
 GET {{baseUrl}}/sales/reports/collection-commissions/options
 
-### México: pagos PA de agosto, no fecha de factura. Preliminar sin método 214.
+### México: pagos PA por AFECHA, costos según método 214. Sin facturas de servicios (incluidas mixtas); pago visual positivo.
 GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-08-01&to=2026-08-31&branch=01&agent=all
 
 ### Todas las sucursales

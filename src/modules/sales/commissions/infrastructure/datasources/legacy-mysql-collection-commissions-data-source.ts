@@ -20,17 +20,20 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
 
   async read(criteria: CollectionCriteria, warehouses?: string[]): Promise<CollectionInputs> {
     const next = new Date(criteria.to + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1);
-    const params: Array<string | number> = [criteria.from, next.toISOString().slice(0, 10)];
+    const params: Array<string | number> = [criteria.from, next.toISOString().slice(0, 10), 4];
     let filter = '';
     if (warehouses) { filter += ` AND d.DALMACEN IN (${warehouses.map(() => '?').join(',')})`; params.push(...warehouses); }
     if (criteria.agent !== 'all') { filter += ' AND TRIM(d.DPAR1)=?'; params.push(criteria.agent); }
     // DERIVADA from supplied methods 211/213. PA qualifies the invoice; D movements
-    // only contribute returns within the same payment-date interval. No product join here.
+    // only contribute returns within the same payment-date interval. NOT EXISTS
+    // excludes entire service/mixed invoices without multiplying collection rows.
     const sql = `WITH period AS (
       SELECT a.DSEQ,a.AFECHA,a.ATIPMV,a.ACANT,d.DPORCIVA
       FROM fax a JOIN fdoc d ON d.DSEQ=a.DSEQ
       WHERE a.AFECHA>=? AND a.AFECHA<? AND (a.ATIPMV='PA' OR LEFT(a.ATIPMV,1)='D')
-        AND d.DCANCELADA=0 AND LEFT(d.DNUM,2)<>'AF' AND LEFT(d.DNUM,1)='F' AND d.DESFACT=1${filter}
+        AND d.DCANCELADA=0 AND LEFT(d.DNUM,2)<>'AF' AND LEFT(d.DNUM,1)='F' AND d.DESFACT=1
+        AND NOT EXISTS (SELECT 1 FROM faxinv serviceLine JOIN finv serviceProduct ON serviceProduct.ISEQ=serviceLine.ISEQ
+          WHERE serviceLine.DSEQ=d.DSEQ AND serviceProduct.ITIPO=?)${filter}
     ), collected AS (
       SELECT DSEQ,MIN(CASE WHEN ATIPMV='PA' THEN AFECHA END) firstPaymentDate,
         MAX(CASE WHEN ATIPMV='PA' THEN AFECHA END) lastPaymentDate,SUM(ATIPMV='PA') paymentCount,
@@ -69,14 +72,15 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
         const [productRows] = await connection.execute<RowDataPacket[]>(`SELECT /*+ MAX_EXECUTION_TIME(30000) */ a.AISEQ id,a.DSEQ invoiceId,a.ISEQ productId,
           COALESCE(i.ICOD,'') code,COALESCE(i.IDESCR,'Producto no disponible') description,COALESCE(i.IFAMB,'') family,
           CAST(a.AICANT AS CHAR) quantity,CAST(a.AICANTF AS CHAR) billedQuantity,CAST(a.AIPRECIO AS CHAR) price,
-          CAST(a.AICOSTO AS CHAR) unitCost,a.AIMES applied,a.AITIPMV movementType,COALESCE(i.ILUGAR,'') location FROM faxinv a LEFT JOIN finv i ON i.ISEQ=a.ISEQ
+          CAST(a.AICOSTO AS CHAR) unitCost,a.AIMES applied,a.AITIPMV movementType,COALESCE(i.ILUGAR,'') location,i.ITIPO typeId FROM faxinv a LEFT JOIN finv i ON i.ISEQ=a.ISEQ
           WHERE a.DSEQ IN (${placeholders}) ORDER BY a.DSEQ,a.AISEQ LIMIT 100001`, ids);
         if (movementsRows.length > 100000 || productRows.length > 100000) throw new ApplicationError('El detalle excede 100,000 filas. Reduce los filtros.', 'COLLECTION_COMMISSIONS_TOO_LARGE', 413);
         movements = movementsRows.map(r => ({ id: Number(r.id), invoiceId: Number(r.invoiceId), date: String(r.date), type: String(r.type), amount: String(r.amount),
           vatRate: String(r.vatRate), withoutVat: r.withoutVat === null ? null : String(r.withoutVat), reference: String(r.reference).trim() }));
         products = productRows.map(r => ({ id: Number(r.id), invoiceId: Number(r.invoiceId), productId: Number(r.productId), code: String(r.code).trim(),
           description: String(r.description).trim(), family: String(r.family).trim(), quantity: String(r.quantity), billedQuantity: String(r.billedQuantity),
-          price: String(r.price), unitCost: String(r.unitCost), applied: Number(r.applied), movementType: String(r.movementType).trim(), location: String(r.location).trim() }));
+          price: String(r.price), unitCost: String(r.unitCost), applied: Number(r.applied), movementType: String(r.movementType).trim(), location: String(r.location).trim(),
+          typeId: r.typeId === null ? null : Number(r.typeId) }));
       }
       await connection.commit();
       return { invoices, movements, products };

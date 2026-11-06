@@ -9,10 +9,10 @@ export type CollectionInvoiceInput = { id: number; number: string; date: string;
 export type CollectionMovement = { id: number; invoiceId: number; date: string; type: string; amount: string; vatRate: string;
   withoutVat: string | null; reference: string };
 export type CollectionProduct = { id: number; invoiceId: number; productId: number; code: string; description: string;
-  family: string; quantity: string; billedQuantity: string; price: string; unitCost: string; applied: number; movementType: string; location: string };
+  family: string; quantity: string; billedQuantity: string; price: string; unitCost: string; applied: number; movementType: string; location: string; typeId: number | null };
 export type CollectionInputs = { invoices: CollectionInvoiceInput[]; movements: CollectionMovement[]; products: CollectionProduct[] };
 export type CollectionInvoice = CollectionInvoiceInput & { branch: string; days: number; subtotalAmount: number; paymentAmount: number | null;
-  returnAmount: number | null; totalAmount: number | null; freightAmount: number; paymentCapped: boolean;
+  returnAmount: number | null; totalAmount: number | null; freightAmount: number; paymentCapped: boolean; displayPaymentAmount: number | null;
   cost: number | null; realCost: number | null; profit: number | null; signedProfit: number | null; margin: number | null;
   lm: number | null; lmAmount: number | null; costMovementType: string | null; costStatus: 'complete' | 'unavailable'; commissionAmount: null };
 
@@ -43,7 +43,9 @@ const saleMovementTypes: Record<number, string> = { 1: 'FA', 2: 'FB', 3: 'FC', 4
 export function buildCollectionCommissions(options: CollectionOptions, criteria: CollectionCriteria, input: CollectionInputs, generatedAt: string) {
   const products = new Map<number, CollectionProduct[]>();
   for (const product of input.products) { const rows = products.get(product.invoiceId) ?? []; rows.push(product); products.set(product.invoiceId, rows); }
-  const invoices = input.invoices.map<CollectionInvoice>(row => {
+  // Any service line excludes the whole document, including mixed invoices.
+  const serviceInvoices = new Set(input.products.filter(p => p.typeId === 4).map(p => p.invoiceId));
+  const invoices = input.invoices.filter(row => !serviceInvoices.has(row.id)).map<CollectionInvoice>(row => {
     const subtotal = collectionCents(row.subtotal), returns = row.returns === null ? null : collectionCents(row.returns);
     const payment = row.payments === null ? null : collectionCents(row.payments);
     const capped = payment !== null && Math.abs(payment) > subtotal;
@@ -59,6 +61,7 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
     return { ...row, branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
       days: Math.round((Date.parse(row.lastPaymentDate) - Date.parse(row.date)) / 86_400_000),
       subtotalAmount: subtotal / 100, paymentAmount: payment === null ? null : (capped ? -subtotal : payment) / 100,
+      displayPaymentAmount: presented === null ? null : Math.abs(presented) / 100,
       returnAmount: returns === null ? null : returns / 100, totalAmount: returns === null ? null : (subtotal + returns) / 100,
       freightAmount: collectionCents(row.freight) / 100, paymentCapped: capped,
       cost: cost === null ? null : cost / 100, realCost: proportional === null ? null : Math.abs(proportional) / 100,
@@ -71,6 +74,7 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
   const summarize = (rows: CollectionInvoice[]) => ({ invoices: rows.length, payments: rows.reduce((sum, r) => sum + r.paymentCount, 0),
     subtotal: rows.reduce((sum, r) => sum + Math.round(r.subtotalAmount * 100), 0) / 100,
     payment: rows.some(r => r.paymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.paymentAmount! * 100), 0) / 100,
+    displayPayment: rows.some(r => r.displayPaymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.displayPaymentAmount! * 100), 0) / 100,
     returns: rows.some(r => r.returnAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.returnAmount! * 100), 0) / 100,
     total: rows.some(r => r.totalAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.totalAmount! * 100), 0) / 100,
     freight: rows.reduce((sum, r) => sum + Math.round(r.freightAmount * 100), 0) / 100,
@@ -83,15 +87,17 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
   });
   return { title: 'Comisiones por cobranza', company: options.company, criteria, generatedAt, source: 'derivada' as const,
     status: invoices.some(r => r.costStatus === 'unavailable') ? 'incomplete' as const : 'complete' as const,
-    calculationReady: invoices.every(r => r.costStatus === 'complete'), invoices, movements: input.movements, products: input.products,
+    calculationReady: invoices.every(r => r.costStatus === 'complete'), invoices,
+    movements: input.movements.filter(row => !serviceInvoices.has(row.invoiceId)), products: input.products.filter(row => !serviceInvoices.has(row.invoiceId)),
     agents, totals: summarize(invoices), empty: invoices.length === 0,
     notes: [
       'Costo según el método 214 de CUATRO.pdf: SUM(AICOSTO*AICANTF), sin incremento del 3% (código comentado). Costo real=ABS(costo*pago PA sin IVA original/DBRUTO). El prorrateo usa el pago original, no el pago limitado presentado.',
-      'Utilidad=ABS(pago presentado-costo prorrateado con signo). %=utilidad con signo/pago presentado*100. LM cuenta partidas con FINV.ILUGAR=XXX; LM_VALOR suma AICANTF*AIPRECIO*0.01 de esas partidas. Redondeo monetario a dos decimales; divisores cero o partidas ausentes se indican como no disponibles.',
+      'Utilidad=ABS(pago firmado limitado-costo prorrateado con signo). %=utilidad con signo/pago firmado limitado*100. LM cuenta partidas con FINV.ILUGAR=XXX; LM_VALOR suma AICANTF*AIPRECIO*0.01 de esas partidas. Redondeo monetario a dos decimales; divisores cero o partidas ausentes se indican como no disponibles.',
       'Movimiento de costo por compañía FDOC.DMULTICIA: 1=FA, 2=FB, 3=FC, 4=FD, 5=FZ, 6=FV, 7=FX. No se filtra AIMES. 1/5/7 están explícitos en el método 214; los demás se verificaron en las partidas de las facturas cobradas.',
       'Periodo inclusivo aplicado a FAX.AFECHA, no a FDOC.DFECHA. Incluye facturas con uno o más pagos PA en el periodo, aunque sean parciales o de facturas de otros meses.',
       'Referencia: métodos 211 y 213 de los PDF proporcionados. Pagos PA y devoluciones de tipo D se suman por separado sin IVA: ACANT/(1+DPORCIVA/100). Conserva los signos originales.',
-      'Pago presentado limitado al negativo del subtotal DBRUTO cuando su valor absoluto supera ese subtotal, según el método 211. Los movimientos conservan los importes sin limitar.',
+      'Pago de cálculo limitado al negativo del subtotal DBRUTO cuando su valor absoluto supera ese subtotal, según el método 211. Para presentación se muestra su valor absoluto; subtotales y total suman esos valores positivos por documento. El cálculo y los movimientos conservan sus signos originales.',
+      'Por solicitud del usuario se excluye completa cualquier factura con una partida de servicio (FINV.ITIPO=4), también las mixtas. No aporta pagos, costos, documentos ni partidas a los totales o al Excel. Se utiliza la clasificación actual del catálogo.',
       'Una fila por DSEQ. Fecha pago y días usan el último PA del periodo; también se conserva la primera fecha y cada movimiento. No se usa una fecha arbitraria de GROUP BY DNUM.',
       'Facturas DESFACT=1 con folio F, DCANCELADA=0; excluye AF. No se hereda DSTATUSCFD=3 del reporte de ventas por familia. Devoluciones sin PA del periodo no generan una fila.',
       'México usa los almacenes 01 y 15 del método 213. Las demás sucursales se amplían con el catálogo FALMCAT; sin atribuir movimientos por el nombre del almacén.',

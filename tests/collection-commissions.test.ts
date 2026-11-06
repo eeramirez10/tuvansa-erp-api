@@ -20,7 +20,7 @@ afterEach(() => vi.clearAllMocks());
 describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
   it('incluye una factura anterior al periodo y calcula días a su último pago; aplica el límite documentado', () => {
     const report = buildCollectionCommissions(options, criteria, input, '');
-    expect(report.invoices[0]).toMatchObject({ days: 41, branch: '01', subtotalAmount: 100, paymentAmount: -100, returnAmount: -10, totalAmount: 90, freightAmount: 3.5, paymentCapped: true });
+    expect(report.invoices[0]).toMatchObject({ days: 41, branch: '01', subtotalAmount: 100, paymentAmount: -100, displayPaymentAmount: 100, returnAmount: -10, totalAmount: 90, freightAmount: 3.5, paymentCapped: true });
     expect(report.totals).toMatchObject({ invoices: 1, payments: 2, subtotal: 100, payment: -100, returns: -10, total: 90 });
   });
   it('no inventa costo, utilidad ni LM cuando faltan partidas, ni una tasa de comisión no proporcionada', () => {
@@ -31,39 +31,42 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
   });
   it('reproduce el método 214 con pago original sin limitar, costo histórico y LM por partida, sin incremento del 3%', () => {
     const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: 'TEST', description: '', family: '',
-      quantity: '99.000', billedQuantity: '2.000', price: '50.00000', unitCost: '30.00000', applied: 0, movementType: 'FA', location: 'XXX' };
+      quantity: '99.000', billedQuantity: '2.000', price: '50.00000', unitCost: '30.00000', typeId: 1, applied: 0, movementType: 'FA', location: 'XXX' };
     const report = buildCollectionCommissions(options, criteria, { ...input, products: [product, { ...product, id: 2, movementType: 'FE', unitCost: '9999' }] }, '');
     expect(report).toMatchObject({ status: 'complete', calculationReady: true });
-    expect(report.invoices[0]).toMatchObject({ paymentAmount: -100, cost: 60, realCost: 90, profit: 10, signedProfit: -10, margin: 10, lm: 1, lmAmount: 1, commissionAmount: null });
+    expect(report.invoices[0]).toMatchObject({ paymentAmount: -100, displayPaymentAmount: 100, cost: 60, realCost: 90, profit: 10, signedProfit: -10, margin: 10, lm: 1, lmAmount: 1, commissionAmount: null });
     expect(report.agents[0]).toMatchObject({ cost: 60, realCost: 90, profit: 10, lm: 1, lmAmount: 1, unavailableCosts: 0 });
   });
   it('calcula pagos parciales, redondea centavos y no divide por cero ni arrastra costos de otras facturas', () => {
     const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', quantity: '1',
-      billedQuantity: '1.000', price: '1.50000', unitCost: '33.33500', applied: 1, movementType: 'FZ', location: 'XXX' };
+      billedQuantity: '1.000', price: '1.50000', unitCost: '33.33500', typeId: 1, applied: 1, movementType: 'FZ', location: 'XXX' };
     const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [{ ...invoice, companyId: 5, payments: '-25' }, { ...invoice, id: 11, subtotal: '0' }], products: [product, { ...product, id: 2, invoiceId: 11, movementType: 'FA' }] }, '');
     expect(report.invoices[0]).toMatchObject({ cost: 33.34, realCost: 8.34, profit: 16.66, margin: 66.64, lmAmount: 0.02, costMovementType: 'FZ' });
     expect(report.invoices[1]).toMatchObject({ cost: 33.34, realCost: null, margin: null, costStatus: 'unavailable' });
     expect(report.totals.realCost).toBeNull();
   });
   it('conserva margen indefinido con pago neto cero y no reutiliza costos entre documentos', () => {
-    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', quantity: '1', billedQuantity: '1', price: '1', unitCost: '10', applied: 1, movementType: 'FA', location: '' };
+    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', quantity: '1', billedQuantity: '1', price: '1', unitCost: '10', typeId: 1, applied: 1, movementType: 'FA', location: '' };
     const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [{ ...invoice, payments: '0' }, { ...invoice, id: 11 }], products: [product] }, '');
     expect(report.invoices[0]).toMatchObject({ cost: 10, realCost: 0, profit: 0, margin: null, costStatus: 'complete' });
     expect(report.invoices[1]).toMatchObject({ cost: null, realCost: null, profit: null, costStatus: 'unavailable' });
   });
   it.each([[1,'FA'],[2,'FB'],[3,'FC'],[4,'FD'],[5,'FZ'],[6,'FV'],[7,'FX']])('selecciona el movimiento de costo de compañía %s', (companyId, movementType) => {
-    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', quantity: '1', billedQuantity: '1', price: '1', unitCost: '0', applied: 0, movementType, location: '' };
+    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', quantity: '1', billedQuantity: '1', price: '1', unitCost: '0', typeId: 1, applied: 0, movementType, location: '' };
     const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [{ ...invoice, companyId }], products: [product] }, '');
     expect(report.invoices[0]).toMatchObject({ costMovementType: movementType, cost: 0, realCost: 0, lm: 0, lmAmount: 0, costStatus: 'complete' });
   });
   it('conserva signos, pagos parciales y centavos exactos sin aplicar ABS al total', () => {
     const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [{ ...invoice, payments: '-25.00500000' }, { ...invoice, id: 11, payments: '10.00000000' }] }, '');
     expect(report.totals.payment).toBe(-15.01); expect(report.invoices.map(r => r.paymentCapped)).toEqual([false,false]);
+    expect(report.invoices.map(r => r.displayPaymentAmount)).toEqual([25.01,10]);
+    expect(report.totals.displayPayment).toBe(35.01); expect(report.agents[0]?.displayPayment).toBe(35.01);
     expect(collectionCents('-0.005')).toBe(-1); expect(collectionCents('0.005')).toBe(1); expect(() => collectionCents('NaN')).toThrow();
   });
   it('señala IVA inválido sin convertir un pago desconocido en cero; vacío explícito', () => {
     const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [{ ...invoice, payments: null, returns: null, invalidVatCount: 2 }] }, '');
     expect(report.invoices[0]?.paymentAmount).toBeNull(); expect(report.totals.payment).toBeNull(); expect(report.totals.total).toBeNull();
+    expect(report.invoices[0]?.displayPaymentAmount).toBeNull(); expect(report.totals.displayPayment).toBeNull();
     expect(buildCollectionCommissions(options, criteria, { invoices: [], movements: [], products: [] }, '').empty).toBe(true);
   });
   it('resuelve sucursal a almacenes y permite todas, usando fecha local para el periodo inicial', async () => {
@@ -71,6 +74,25 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     expect(await useCase.options()).toMatchObject({ defaultFrom: '2025-12-01', defaultTo: '2025-12-31' });
     await useCase.execute(criteria); expect(repository.read).toHaveBeenCalledWith(criteria, ['01','15']);
     await useCase.execute({ ...criteria, branch: 'all' }); expect(repository.read).toHaveBeenLastCalledWith({ ...criteria, branch: 'all' }, undefined);
+  });
+  it('excluye facturas de servicios y mixtas completas, incluidos pagos, partidas, agentes y totales', () => {
+    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: 'TEST', description: '', family: '', typeId: 1,
+      quantity: '2', billedQuantity: '2', price: '50', unitCost: '30', applied: 1, movementType: 'FA', location: '' };
+    const movement: CollectionInputs['movements'][number] = { id: 1, invoiceId: 10, date: '2026-08-25', type: 'PA', amount: '-174', vatRate: '16', withoutVat: '-150', reference: '' };
+    const report = buildCollectionCommissions(options, criteria, { invoices: [invoice, { ...invoice, id: 11, agentCode: 'SERVICE' }, { ...invoice, id: 12, agentCode: 'MIXED' }],
+      products: [product, { ...product, id: 2, invoiceId: 11, typeId: 4 }, { ...product, id: 3, invoiceId: 12 }, { ...product, id: 4, invoiceId: 12, typeId: 4, movementType: 'FE' }],
+      movements: [movement, { ...movement, id: 2, invoiceId: 11 }, { ...movement, id: 3, invoiceId: 12 }] }, '');
+    expect(report.invoices.map(r => r.id)).toEqual([10]); expect(report.products.map(r => r.id)).toEqual([1]); expect(report.movements.map(r => r.id)).toEqual([1]);
+    expect(report.agents.map(r => r.code)).toEqual(['A01']); expect(report.totals).toMatchObject({ invoices: 1, payments: 2, payment: -100, displayPayment: 100, cost: 60, realCost: 90 });
+    const onlyService = buildCollectionCommissions(options, criteria, { invoices: [invoice], products: [{ ...product, typeId: 4 }], movements: [movement] }, '');
+    expect(onlyService.empty).toBe(true); expect(onlyService.totals).toMatchObject({ invoices: 0, displayPayment: 0, payment: 0, cost: 0 });
+    expect(onlyService.products).toEqual([]); expect(onlyService.movements).toEqual([]);
+  });
+  it('no confunde clasificaciones distintas de servicio o desconocidas con ITIPO=4', () => {
+    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', typeId: 2,
+      quantity: '1', billedQuantity: '1', price: '100', unitCost: '20', applied: 1, movementType: 'FA', location: '' };
+    const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [invoice, { ...invoice, id: 11 }], products: [product, { ...product, id: 2, invoiceId: 11, typeId: null }] }, '');
+    expect(report.invoices).toHaveLength(2); expect(report.totals.displayPayment).toBe(200);
   });
   it('rechaza fechas, periodos excesivos, agentes y sucursales no disponibles antes de consultar', async () => {
     const repository = repo(), useCase = new GetCollectionCommissions(repository);
@@ -90,9 +112,10 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
     await source.read({ ...criteria, agent: 'A01' }, ['01','15']);
     const [sql, params] = conn.execute.mock.calls[0]!;
-    expect(params).toEqual(['2026-08-01','2026-09-01','01','15','A01']);
+    expect(params).toEqual(['2026-08-01','2026-09-01',4,'01','15','A01']);
     for (const text of ['a.AFECHA>=?', 'a.AFECHA<?', "a.ATIPMV='PA'", "LEFT(a.ATIPMV,1)='D'", 'ACANT/NULLIF(1+DPORCIVA/100,0)', "HAVING SUM(ATIPMV='PA')>0", 'd.DCANCELADA=0', "LEFT(d.DNUM,2)<>'AF'"]) expect(sql).toContain(text);
-    for (const text of ['d.DFECHA>=','faxinv','JOIN fpenc','DSTATUSCFD=3','SUM(ABS(']) expect(sql).not.toContain(text);
+    for (const text of ['d.DFECHA>=','JOIN faxinv a','JOIN fpenc','DSTATUSCFD=3','SUM(ABS(']) expect(sql).not.toContain(text);
+    for (const text of ['AND NOT EXISTS (SELECT 1 FROM faxinv serviceLine', 'serviceProduct.ISEQ=serviceLine.ISEQ', 'serviceLine.DSEQ=d.DSEQ AND serviceProduct.ITIPO=?']) expect(sql).toContain(text);
     for (const text of ['LEFT JOIN finv', 'a.AITIPMV movementType', "COALESCE(i.ILUGAR,'') location"]) expect(conn.execute.mock.calls[2]?.[0]).toContain(text);
     expect(conn.execute.mock.calls[2]?.[0]).not.toContain('AIMES=1'); expect(sql).toContain('d.DMULTICIA companyId');
     expect(conn.query).toHaveBeenCalledWith('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');

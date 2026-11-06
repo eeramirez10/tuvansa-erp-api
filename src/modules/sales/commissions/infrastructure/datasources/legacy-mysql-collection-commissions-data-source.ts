@@ -41,7 +41,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
     )
     SELECT /*+ MAX_EXECUTION_TIME(30000) */ d.DSEQ id,d.DNUM number,d.DFECHA date,c.firstPaymentDate,c.lastPaymentDate,
       COALESCE(f.CLICOD,'') customerCode,COALESCE(f.CLINOM,d.DCLINOM) customerName,
-      TRIM(d.DPAR1) agentCode,COALESCE(NULLIF(g.name,''),'Sin agente identificado') agentName,d.DALMACEN warehouse,d.DMONEDA currency,
+      TRIM(d.DPAR1) agentCode,COALESCE(NULLIF(g.name,''),'Sin agente identificado') agentName,d.DALMACEN warehouse,d.DMONEDA currency,d.DMULTICIA companyId,
       CAST(d.DBRUTO AS CHAR) subtotal,c.payments,c.returns,CAST(d.DCOSTOFLETE AS CHAR) freight,
       IF(f.CLITARJETA='Nuevo','Nuevo','') newCustomer,c.paymentCount,c.invalidVatCount
     FROM collected c JOIN fdoc d ON d.DSEQ=c.DSEQ LEFT JOIN fcli f ON f.CLISEQ=d.CLISEQ
@@ -55,7 +55,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
       const invoices: CollectionInputs['invoices'] = rows.map(r => ({ id: Number(r.id), number: String(r.number).trim(), date: String(r.date),
         firstPaymentDate: String(r.firstPaymentDate), lastPaymentDate: String(r.lastPaymentDate), customerCode: String(r.customerCode).trim(),
         customerName: String(r.customerName).trim(), agentCode: String(r.agentCode).trim(), agentName: String(r.agentName).trim(), warehouse: String(r.warehouse).trim(),
-        currency: Number(r.currency), subtotal: String(r.subtotal), payments: Number(r.invalidVatCount) ? null : r.payments === null ? null : String(r.payments),
+        currency: Number(r.currency), companyId: Number(r.companyId), subtotal: String(r.subtotal), payments: Number(r.invalidVatCount) ? null : r.payments === null ? null : String(r.payments),
         returns: Number(r.invalidVatCount) ? null : r.returns === null ? null : String(r.returns), freight: String(r.freight), newCustomer: String(r.newCustomer),
         paymentCount: Number(r.paymentCount), invalidVatCount: Number(r.invalidVatCount) }));
       let movements: CollectionInputs['movements'] = [], products: CollectionInputs['products'] = [];
@@ -69,14 +69,14 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
         const [productRows] = await connection.execute<RowDataPacket[]>(`SELECT /*+ MAX_EXECUTION_TIME(30000) */ a.AISEQ id,a.DSEQ invoiceId,a.ISEQ productId,
           COALESCE(i.ICOD,'') code,COALESCE(i.IDESCR,'Producto no disponible') description,COALESCE(i.IFAMB,'') family,
           CAST(a.AICANT AS CHAR) quantity,CAST(a.AICANTF AS CHAR) billedQuantity,CAST(a.AIPRECIO AS CHAR) price,
-          CAST(a.AICOSTO AS CHAR) unitCost,a.AIMES applied FROM faxinv a LEFT JOIN finv i ON i.ISEQ=a.ISEQ
+          CAST(a.AICOSTO AS CHAR) unitCost,a.AIMES applied,a.AITIPMV movementType,COALESCE(i.ILUGAR,'') location FROM faxinv a LEFT JOIN finv i ON i.ISEQ=a.ISEQ
           WHERE a.DSEQ IN (${placeholders}) ORDER BY a.DSEQ,a.AISEQ LIMIT 100001`, ids);
         if (movementsRows.length > 100000 || productRows.length > 100000) throw new ApplicationError('El detalle excede 100,000 filas. Reduce los filtros.', 'COLLECTION_COMMISSIONS_TOO_LARGE', 413);
         movements = movementsRows.map(r => ({ id: Number(r.id), invoiceId: Number(r.invoiceId), date: String(r.date), type: String(r.type), amount: String(r.amount),
           vatRate: String(r.vatRate), withoutVat: r.withoutVat === null ? null : String(r.withoutVat), reference: String(r.reference).trim() }));
         products = productRows.map(r => ({ id: Number(r.id), invoiceId: Number(r.invoiceId), productId: Number(r.productId), code: String(r.code).trim(),
           description: String(r.description).trim(), family: String(r.family).trim(), quantity: String(r.quantity), billedQuantity: String(r.billedQuantity),
-          price: String(r.price), unitCost: String(r.unitCost), applied: Number(r.applied) }));
+          price: String(r.price), unitCost: String(r.unitCost), applied: Number(r.applied), movementType: String(r.movementType).trim(), location: String(r.location).trim() }));
       }
       await connection.commit();
       return { invoices, movements, products };

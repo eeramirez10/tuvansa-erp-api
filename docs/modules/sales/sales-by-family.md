@@ -4,21 +4,22 @@ Reporte solicitado el 2026-11-04. Entrada existente **Reportes → Reportes Fina
 → Ventas por familia**, ahora habilitada. Conserva la matriz visual del reporte
 de inventario por familia y sus equivalencias aproximadas de cantidades; el
 cálculo monetario corresponde a **ventas brutas: sólo facturas al precio
-registrado AIPRECIO**, sin restar devoluciones ni notas de crédito y sin IVA.
-Aclaración del usuario el 2026-11-04: no usar AIPREBR ni revertir descuentos.
-Sustituye tanto el criterio neto inicial como la interpretación posterior de
-ventas antes de descuentos con AIPREBR.
+registrado AIPRECIO**, sin IVA. Criterio vigente indicado por el usuario el
+2026-11-06: **MID(DNUM,1,1)='F' AND DSTATUSCFD=3 AND DESFACT=1**.
+Sustituye la selección anterior por catálogo fiscal FTIPMV. No usa AIPREBR
+ni revierte descuentos; las partidas elegibles conservan sus signos.
 
 | Vista | Etiqueta visible | Marcador / referencia | Procedencia | Endpoint | Tablas |
 | --- | --- | --- | --- | --- | --- |
 | Ventas por familia | Abrir / catálogos | No aplica: reporte nuevo | Derivada | GET /api/sales/reports/by-family/options | FALMCAT, FCIA, FINV, FFAM |
-| Ventas por familia | Vista previa | Filtros INV_QUERY_VENTAS_CLIENTE / INV_QUERY_VENTAS_DESGLOSADAS; tipo fiscal del folio verificado por SELECT | Derivada | GET /api/sales/reports/by-family | FAXINV, FDOC, FINV, FCLI, FUNIDAD, FFAM, FTIPMV |
+| Ventas por familia | Vista previa | Filtros capturados de ventas; condición F/estado CFD 3 indicada por el usuario el 2026-11-06 | Derivada | GET /api/sales/reports/by-family | FAXINV, FDOC, FINV, FCLI, FUNIDAD, FFAM |
 | Ventas por familia | Mostrar / Detalle / Excel / PDF | Sin SQL adicional | Presentación | Respuesta vigente | Sin tablas adicionales |
 
 ## Evidencia y reglas
 
-**Criterio vigente:** sólo facturas con AIPRECIO. Las validaciones históricas
-al final conservan los criterios anteriores, que ya no alimentan el reporte.
+**Criterio vigente:** folio que empieza por F, DSTATUSCFD=3, DESFACT=1 y precio
+AIPRECIO. Las validaciones históricas al final conservan los criterios anteriores,
+que ya no alimentan el reporte.
 
 Las capturas literales anteriores de `product-buttons-capture.md`, marcadores
 INV_QUERY_VENTAS_CLIENTE, INV_QUERY_VENTAS_DESGLOSADAS e INV_QUERY_VENTAS_ANUALES,
@@ -27,31 +28,26 @@ DOTROSTXT<>'POS' y DCONTROLPOS=0. Ventas por cliente exige cliente existente y
 distinto de cero y limita la compañía con DMULTICIA=1. La agregación por familia,
 periodo y todas las sucursales es nueva y se etiqueta **derivada**: no se afirma
 una nueva captura literal del reporte OMNIS ni se activó general_log.
-La selección adicional de facturas usa el tipo del **folio DNUM**, no DITIPMV
-ni AITIPMV: ambos pueden conservar FA/FB/etc. después de facturar. Se verificó
-FDOC.DSEQ=413070: DNUM=FE0064637, DITIPMV=FA. FTIPMV identifica FE como factura
-electrónica (TIFISCAL=1, TIAFVTS=1, TIMODULO=4), mientras FA es remisión
-(TIFISCAL=0). DESCXC tampoco identifica la factura: las hay en 0 (pagadas) y 1.
-Esta lectura de datos y la regla adicional son **derivadas**, no una captura nueva.
+La selección adicional aplica literalmente la condición indicada por el usuario.
+No consulta FTIPMV ni limita a una serie de dos caracteres, DITIPMV o DESCXC.
+El primer carácter F junto con DSTATUSCFD=3 determina la selección documental,
+además de DESFACT=1. Esta regla es **derivada**, no una nueva captura de OMNIS.
 
 - **FINV.ITIPO=1 es fijo** por solicitud del usuario. No se ofrece un parámetro
   HTTP para omitirlo. La consulta de familias también limita ITIPO=1.
 - Familia: FINV.IFAMB → FFAM.FAMTNUM con FAMT='B'. El catálogo de FFAM se agrupa
   antes del join para no multiplicar las partidas. Se conserva Sin familia.
-- Importe del reporte: **SUM(AICANTF × AIPRECIO)** para **AICANTF>0**, sólo facturas.
+- Importe del reporte: **SUM(AICANTF × AIPRECIO)** en las facturas elegibles.
   No usa AIPREBR, AICOSTO, AICANT físico
   ni ILISTA4. Una venta puede tener AICANT físico negativo y AICANTF positivo.
-- DESFACT=1 y cantidad positiva no bastan: también incluyen remisiones.
-  Se exige `EXISTS` en FTIPMV con TICLA=LEFT(DNUM,2), TIFISCAL=1, TIAFVTS=1 y
-  TIMODULO=4. EXISTS evita multiplicar partidas si el catálogo tuviera duplicados.
-  En agosto 2026 los folios aceptados son FE/FF/FG/FH/FI/FK/FL; no se codifica
-  esa lista como exhaustiva. Los tipos de dos caracteres se verificaron en el
-  catálogo actual. No se infiere el tipo por la descripción ni por DITIPMV.
-  Se excluyen remisiones, créditos, devoluciones, pagos y documentos de proveedor.
-- Cantidades originales y metros también usan únicamente ventas positivas;
-  no se presentan cantidades netas junto al importe bruto.
+- Selección documental exacta: `MID(d.DNUM,1,1)='F' AND d.DSTATUSCFD=3 AND d.DESFACT=1`.
+  Se elimina la selección anterior por FTIPMV; no se agrega una lista de series.
+- Se elimina AICANTF>0: cantidades negativas o cero de documentos elegibles
+  se conservan, sin ABS ni asignación de signos por tipo de movimiento.
+  Cantidades originales, metros, importes y conteos usan las mismas partidas.
 - Se mantienen los filtros POS capturados para evitar la duplicación correspondiente.
-  Se excluyen AICANTF<=0: no aportan al reporte de ventas brutas.
+  También se conservan AIMES=1, DEST=0 y cliente existente distinto de cero.
+  Estos filtros heredados no son sustitutos de la condición documental nueva.
 - Sucursal: FDOC.DMULTICIA, traducida al CATALM principal 01..07 con CATMULTICIA.
   Se incluyen ventas despachadas desde resguardos de esa compañía. No se filtra
   exclusivamente AIALMACEN=01 ni se usa AISUCURSAL como compañía del documento.
@@ -114,9 +110,7 @@ WHERE i.ITIPO=?
   AND d.DFECHA>=? AND d.DFECHA<?
   AND a.AIMES=1 AND d.DEST=0 AND d.DESFACT=1
   AND d.DOTROSTXT<>'POS' AND d.DCONTROLPOS=0
-  AND a.AICANTF>0
-  AND EXISTS (SELECT 1 FROM ftipmv t WHERE t.TICLA=LEFT(d.DNUM,2)
-              AND t.TIFISCAL=1 AND t.TIAFVTS=1 AND t.TIMODULO=4)
+  AND MID(d.DNUM,1,1)='F' AND d.DSTATUSCFD=3
   AND d.DMULTICIA=?
 GROUP BY i.ISEQ,i.ICOD,i.IFAMB,d.DMULTICIA;
 ```
@@ -200,7 +194,7 @@ activación de general_log, reinicios ni escrituras productivas.
   anteriores. Lecturas SELECT/SHOW únicamente. general_log **OFF** y MySQL80
   **Running**, sin reinicios ni cambios de configuración.
 
-## Validación vigente: sólo facturas con AIPRECIO (2026-11-04)
+## Validación anterior por catálogo fiscal (2026-11-04; sustituida)
 
 - Agosto 2026, México: **9,493,745.19**, 178 partidas, 146 productos/sucursales,
   15 familias. Todas las sucursales: **87,926,769.31**, 3,112 partidas, 1,862
@@ -222,3 +216,31 @@ activación de general_log, reinicios ni escrituras productivas.
 - Evidencia privada en `captures/sql/new-version/sales/invoice-only-by-family-20261104/`
   y `captures/ui/new-version/sales-by-family-invoices/`. Procedencia derivada,
   sólo SELECT/SHOW; general_log **OFF**, MySQL80 **Running**. Sin escrituras ni reinicios.
+
+## Validación vigente: folio F, DSTATUSCFD=3 y DESFACT=1 (2026-11-06)
+
+- Se aplica exactamente la condición documental indicada por el usuario,
+  conservando ITIPO=1, fechas/sucursal/familia y los filtros heredados documentados.
+  Se retiran tanto EXISTS/FTIPMV como AICANTF>0. El importe sigue siendo
+  AICANTF × AIPRECIO, con signos y ceros; no AIPREBR ni ABS.
+- Agosto 2026: México **9,493,745.19**, 194 partidas, 147 productos/sucursales,
+  15 familias. Todas las sucursales **87,884,874.27**, 3,166 partidas, 1,872
+  productos/sucursales, 22 familias. TCC México **1,557,716.52**, 21 partidas.
+  El conjunto incluye 56 partidas con cantidad cero y ninguna negativa en ese
+  mes; no se presupone que otros periodos carezcan de ajustes negativos.
+- Se conciliaron partidas, cantidades, importes exactos, redondeo, productos
+  esperados y totales con Decimal. La selección independiente comprueba el primer
+  carácter F, DSTATUSCFD=3 y DESFACT=1; no reutiliza el catálogo fiscal anterior.
+- Backend lint/build/test aprobados, **186 pruebas**. Frontend lint/typecheck/build
+  aprobados. Navegador y API reales: menú/ruta directa, condición visible, totales,
+  paginación 100/47, scroll, filtros, metros sin HTTP, errores/reintento, vacío,
+  Escape y bloqueo de exportaciones obsoletas.
+- Cuatro Excel contrastados con la API (matrices, resultados de fórmulas guardados,
+  productos e importes exactos); PDF revisados, México una página de resumen y
+  cinco de detalle, todas las sucursales tres de resumen. El recálculo adicional
+  en Excel nativo no se completó: COM HRESULT 0x800AC472 en este entorno. No se
+  presenta como validado el recálculo nativo de esta revisión.
+- Evidencia privada en `captures/sql/new-version/sales/f-status3-by-family-20261106/`
+  y `captures/ui/new-version/sales-by-family-status3-20261106/`. Procedencia derivada
+  a partir del criterio indicado, sin nueva captura de OMNIS. Sólo SELECT/SHOW;
+  general_log **OFF**, MySQL80 **Running**; sin escrituras ni reinicios.

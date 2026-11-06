@@ -3,7 +3,7 @@
 ### Catálogos: sólo familias de productos tipo 1; sucursales y periodo inicial
 GET {{baseUrl}}/sales/reports/by-family/options
 
-### México, agosto 2026: sólo facturas (tipo fiscal del folio), AICANTF>0 x AIPRECIO, sin IVA ni deducir notas de crédito
+### México, agosto 2026: MID(DNUM,1,1)='F' AND DSTATUSCFD=3 AND DESFACT=1; importe AICANTF*AIPRECIO
 GET {{baseUrl}}/sales/reports/by-family?from=2026-08-01&to=2026-08-31&branch=01&family=all
 
 ### Todas las sucursales, TCC

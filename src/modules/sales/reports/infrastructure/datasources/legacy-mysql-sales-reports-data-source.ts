@@ -20,7 +20,7 @@ export class LegacyMysqlSalesReportsDataSource implements SalesReportsDataSource
     if (companyId !== undefined) { filter += ' AND d.DMULTICIA=?'; parameters.push(companyId); }
     if (criteria.family !== 'all') { filter += ' AND TRIM(i.IFAMB)=?'; parameters.push(criteria.family); }
     // DERIVADA: invoice-only sales at the recorded AIPRECIO requested by the user.
-    // DITIPMV can retain FA after invoicing; classify the actual DNUM folio.
+    // Document eligibility follows the explicit DNUM/CFD status rule, not FTIPMV.
     const amount = 'a.AICANTF*a.AIPRECIO';
     const [rows] = await this.db.execute<RowDataPacket[]>(`SELECT /*+ MAX_EXECUTION_TIME(30000) */ i.ISEQ productId,i.ICOD code,i.IDESCR description,
       TRIM(i.IFAMB) family,COALESCE(NULLIF(f.name,''),'Sin familia') familyName,d.DMULTICIA companyId,
@@ -32,9 +32,8 @@ export class LegacyMysqlSalesReportsDataSource implements SalesReportsDataSource
       LEFT JOIN funidad u ON u.USEQ=i.USEQ
       LEFT JOIN (SELECT FAMTNUM,MAX(TRIM(FAMDESCR)) name FROM ffam WHERE FAMT='B' GROUP BY FAMTNUM) f ON f.FAMTNUM=i.IFAMB
       WHERE i.ITIPO=? AND d.DFECHA>=? AND d.DFECHA<? AND a.AIMES=1 AND d.DEST=0 AND d.DESFACT=1
-      AND d.DOTROSTXT<>'POS' AND d.DCONTROLPOS=0 AND a.AICANTF>0${filter}
-      AND EXISTS (SELECT 1 FROM ftipmv t WHERE t.TICLA=LEFT(d.DNUM,2)
-        AND t.TIFISCAL=1 AND t.TIAFVTS=1 AND t.TIMODULO=4)
+      AND MID(d.DNUM,1,1)='F' AND d.DSTATUSCFD=3
+      AND d.DOTROSTXT<>'POS' AND d.DCONTROLPOS=0${filter}
       GROUP BY i.ISEQ,i.ICOD,i.IDESCR,i.IFAMB,f.name,d.DMULTICIA,u.UCOD ORDER BY family,code,companyId,productId`, parameters);
     return rows.map(r => ({ productId: Number(r.productId), code: String(r.code).trim(), description: String(r.description).trim(), family: String(r.family).trim(),
       familyName: String(r.familyName).trim(), companyId: Number(r.companyId), unit: String(r.unit).trim(), quantity: String(r.quantity), gross: String(r.gross),

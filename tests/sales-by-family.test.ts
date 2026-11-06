@@ -64,14 +64,19 @@ describe('Ventas por familia', () => {
     for (const query of ['from=2026-08-01&to=2026-08-31&type=2', 'from=2026-08-01&to=2026-08-31&branch=01&branch=02', 'from=2026-08-01&to=2026-08-31&family=XXXX', 'from=2026-08-01&to=2026-08-31&database=other', 'from=2026-09-01&to=2026-08-31']) await request(app).get('/by-family?' + query).expect(400);
     await request(app).post('/by-family').expect(404);
   });
-  it('usa AIPRECIO y sólo folios de factura fiscal, incluso si DITIPMV conserva la remisión', async () => {
+  it('usa AIPRECIO con la condición exacta de folio F, DSTATUSCFD=3 y DESFACT=1, sin catálogo fiscal', async () => {
     pool.execute.mockResolvedValueOnce([[{ ...balance(), companyId: '1', quantity: '8.000', missingPrices: '0' }], []]);
     const rows = await new LegacyMysqlSalesReportsDataSource(pool as never).balances({ ...criteria, family: 'B007' }, 1);
     const [sql, params] = pool.execute.mock.calls[0]!;
     expect(params).toEqual([1, '2026-08-01', '2026-09-01', 1, 'B007']);
-    for (const part of ['i.ITIPO=?', 'd.DESFACT=1', 'd.DEST=0', 'a.AIMES=1', "d.DOTROSTXT<>'POS'", 'd.DCONTROLPOS=0', 'a.AICANTF*a.AIPRECIO', 'a.AICANTF>0', 'c.CLISEQ<>0', 'GROUP BY FAMTNUM', 'AS CHAR) gross', 'SUM(a.AIPRECIO IS NULL)', 'EXISTS (SELECT 1 FROM ftipmv t', 't.TICLA=LEFT(d.DNUM,2)', 't.TIFISCAL=1', 't.TIAFVTS=1', 't.TIMODULO=4']) expect(sql).toContain(part);
-    for (const excluded of ['AICOSTO', 'AIPREBR', "AITIPMV='FA'", 'AIALMACEN=?', 't.TICLA=d.DITIPMV', 'a.AICANTF<>0', 'ABS(']) expect(sql).not.toContain(excluded);
+    for (const part of ['i.ITIPO=?', 'd.DESFACT=1', "MID(d.DNUM,1,1)='F'", 'd.DSTATUSCFD=3', 'd.DEST=0', 'a.AIMES=1', "d.DOTROSTXT<>'POS'", 'd.DCONTROLPOS=0', 'a.AICANTF*a.AIPRECIO', 'c.CLISEQ<>0', 'GROUP BY FAMTNUM', 'AS CHAR) gross', 'SUM(a.AIPRECIO IS NULL)']) expect(sql).toContain(part);
+    for (const excluded of ['AICOSTO', 'AIPREBR', "AITIPMV='FA'", 'AIALMACEN=?', 'ftipmv', 'TIFISCAL', 'TIAFVTS', 'a.AICANTF>0', 'a.AICANTF<>0', 'ABS(']) expect(sql).not.toContain(excluded);
     expect(rows[0]?.gross).toBe('100.00000000');
+  });
+  it('conserva ajustes negativos y partidas de cero dentro de facturas elegibles', () => {
+    const report = buildSalesByFamily(options, criteria, [balance(), balance({ productId: 2, quantity: '-2', gross: '-15.50', unit: 'TR' }), balance({ productId: 3, quantity: '0', gross: '0' })], '');
+    expect(report.amount).toBe(84.5); expect(report.meters).toBe(-4.8);
+    expect(report.groups[0]?.products).toHaveLength(3); expect(report.empty).toBe(false);
   });
   it('soporta año bisiesto y todas las sucursales sin fijar compañía 1', async () => {
     pool.execute.mockResolvedValueOnce([[], []]); await new LegacyMysqlSalesReportsDataSource(pool as never).balances({ ...criteria, from: '2024-02-01', to: '2024-02-29', branch: 'all' });

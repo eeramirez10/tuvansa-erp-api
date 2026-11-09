@@ -272,6 +272,14 @@ base/bono, customerBonusInvoices y unclassifiedInvoices; branchName identifica s
 
 `settlement` separa bruta=cobranza normal-costo aplicado; neta=bruta-flete-
 gratificaciones; comisión normal=neta*tasa; total=normal+clientes+PLM seleccionado.
+La comisión normal se calcula siempre que utilidad neta y tasa estén disponibles,
+incluso con modalidad del bono por confirmar. El ejemplo neta 509,982.76 y 9%
+produce 45,898.45, redondeado a centavos. Tasa cero produce cero; una tasa o
+utilidad desconocida deja el importe pendiente, sin inferir porcentajes.
+La modalidad pendiente mantiene `ready=false` y sus avisos de revisión, sin
+ocultar los importes calculables. La columna L del resumen Excel calcula
+`ROUND(Hfila*Kfila,2)`, es decir utilidad neta por % comisión, también en cada
+resumen individual. No cambia el SQL ni los valores de origen.
 Su bruta firmada no se confunde con la utilidad ABS del detalle heredado.
 Permite costo proporcional (predeterminado) o total, costo manual opcional (cero
 válido), flete, gratificaciones, tasa fija/plan e inclusión de PLM.
@@ -365,3 +373,9 @@ modos adicional/exclusivo, ajustes aplicados, fallo/reintento y descarga obsolet
 probados. Evidencia privada `captures/ui/new-version/commission-layout-20261109/`.
 Backend: **234 pruebas** aprobadas, incluida ordenación determinista por fecha.
 La evidencia no implica recálculo nativo de Excel.
+
+Corrección de comisión normal: **235 pruebas** aprobadas. Fixture de neta
+509,982.76 al 9% produce 45,898.45. Navegador con API real verifica ese importe
+antes de elegir modalidad del bono; cuatro descargas y sus 441 fórmulas
+contrastadas con API y evaluador independiente. Evidencia privada
+`captures/ui/new-version/commission-amounts-20261109/` y snapshot SQL asociado.

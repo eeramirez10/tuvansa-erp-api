@@ -22,9 +22,19 @@ describe('Liquidación configurable del ejemplo Excel',()=>{
     expect(buildCollectionSettlement(rows,period,{bonusMode:'additional',agents}).agents[0]).toMatchObject({payment:2000,cost:1400,regularCommission:60,customerBonus:10,lmBonus:5,totalCommission:75});
     expect(buildCollectionSettlement(rows,period,{bonusMode:'exclusive',agents}).agents[0]).toMatchObject({payment:1000,cost:800,normalInvoices:1,regularCommission:20,customerBonus:10,lmBonus:5,totalCommission:35});
   });
-  it('deja la liquidación pendiente hasta elegir tratamiento y no asigna perfiles a otras sucursales',()=>{
-    expect(buildCollectionSettlement([invoice],period).agents[0]).toMatchObject({regularCommission:null,totalCommission:null,ready:false});
+  it('calcula la comisión conocida aunque el tratamiento del bono siga pendiente y no asigna perfiles a otras sucursales',()=>{
+    expect(buildCollectionSettlement([invoice],period).agents[0]).toMatchObject({netProfit:100000,rate:4,regularCommission:4000,totalCommission:4000,ready:false});
     expect(buildCollectionSettlement([{...invoice,branch:'02'}],period,additional).agents[0]).toMatchObject({rate:null,ready:false});
+  });
+  it('muestra utilidad neta por porcentaje para todos los agentes con tasa, incluido el ejemplo del 9%',()=>{
+    const rows=buildCollectionSettlement([
+      {...invoice,displayPaymentAmount:2846786.88,paymentAmount:-2846786.88,realCost:2336804.12},
+      {...invoice,agentCode:'1235',displayPaymentAmount:1000,paymentAmount:-1000,realCost:600},
+      {...invoice,agentCode:'NO_PLAN',displayPaymentAmount:1000,paymentAmount:-1000,realCost:600},
+    ],period).agents;
+    expect(rows[0]).toMatchObject({netProfit:509982.76,rate:9,regularCommission:45898.45,ready:false});
+    expect(rows[1]).toMatchObject({netProfit:400,rate:0,regularCommission:0});
+    expect(rows[2]).toMatchObject({netProfit:400,rate:null,regularCommission:null});
   });
   it('no usa el tabulador mensual para acumular meses distintos',()=>{
     const row=buildCollectionSettlement([invoice],{...period,to:'2026-10-31'},{...additional,agents:[{code:'1231',plan:'salary'}]}).agents[0]!;

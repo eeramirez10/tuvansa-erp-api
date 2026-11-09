@@ -58,7 +58,9 @@ export function buildCollectionSettlement(invoices: Invoice[], period: { from: s
       if (period.from.slice(0,7) !== period.to.slice(0,7)) pending.push('El tabulador es mensual: selecciona un solo mes o una tasa fija.');
       else if (payment !== null && net !== null) rate = payment > 0 && net * 100 > payment * 16 ? [...collectionSalaryTiers].reverse().find(t => payment >= t.from * 100)!.rate : 0;
     }
-    const regular = settings.bonusMode === 'unconfirmed' || net === null || rate === null ? null : percentage(net, rate);
+    // A known net profit and rate are sufficient to show the normal commission.
+    // An unconfirmed customer-bonus mode still leaves the settlement under review.
+    const regular = net === null || rate === null ? null : percentage(net, rate);
     const bonusBase = sum(docs, 'customerBonusBase'), bonus = bonusBase === null ? null : percentage(bonusBase, 1), lm = config.includeLm ? sum(docs, 'lmAmount') : 0;
     if (payment === null || cost === null) pending.push('Hay importes de cobranza o costo no disponibles.');
     if (bonus === null) pending.push('Hay pagos o marcas de cliente pendientes.');

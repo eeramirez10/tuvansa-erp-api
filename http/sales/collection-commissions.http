@@ -20,3 +20,27 @@ GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-09-01&to=2026-08-
 
 ### 400: no se admite filtrar por fecha de factura
 GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-08-01&to=2026-08-31&invoiceFrom=2026-08-01
+
+### Septiembre: marca actual guardada en FCLI y base/bono 1%, sin ejecutar UPDATE
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-09-01&to=2026-09-30&branch=01&agent=all
+
+### Simulación en lectura: modalidad adicional elegida expresamente para este request
+POST {{baseUrl}}/sales/reports/collection-commissions/preview
+Content-Type: application/json
+
+{
+  "criteria": { "from": "2026-09-01", "to": "2026-09-30", "branch": "01", "agent": "1231" },
+  "settings": {
+    "bonusMode": "additional",
+    "agents": [ { "code": "1231", "plan": "salary", "costBasis": "proportional", "costOverride": null, "freight": 0, "gratuities": 0, "includeLm": true } ]
+  }
+}
+
+### Simulación: sustituir normal en facturas elegibles, sin persistir parámetros
+POST {{baseUrl}}/sales/reports/collection-commissions/preview
+Content-Type: application/json
+
+{
+  "criteria": { "from": "2026-09-01", "to": "2026-09-30", "branch": "01", "agent": "1231" },
+  "settings": { "bonusMode": "exclusive", "agents": [ { "code": "1231", "plan": "fixed", "fixedRate": 6 } ] }
+}

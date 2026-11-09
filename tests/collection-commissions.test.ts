@@ -6,13 +6,14 @@ import { buildCollectionCommissions, collectionCents, type CollectionInputs, typ
 import { createCollectionCommissionsRouter } from '../src/modules/sales/commissions/presentation/http/collection-commissions-routes.js';
 import { CollectionCommissionsRepositoryImpl } from '../src/modules/sales/commissions/infrastructure/repositories/collection-commissions-repository-impl.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
+import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgres-write-boundary.js';
 vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({ legacyMysqlPool: {} }));
 import { LegacyMysqlCollectionCommissionsDataSource } from '../src/modules/sales/commissions/infrastructure/datasources/legacy-mysql-collection-commissions-data-source.js';
 const options: CollectionOptions = { company: 'TEST', defaultFrom: '', defaultTo: '', branches: [{ code: '01', name: 'MEXICO', warehouses: ['01','15'] }], agents: [{ code: 'A01', name: 'AGENTE' }] };
 const criteria = { from: '2026-08-01', to: '2026-08-31', branch: '01', agent: 'all' };
 const invoice: CollectionInputs['invoices'][number] = { id: 10, number: 'FE001', date: '2026-07-15', firstPaymentDate: '2026-08-05', lastPaymentDate: '2026-08-25',
   customerCode: '000001', customerName: 'TEST', agentCode: 'A01', agentName: 'AGENTE', warehouse: '15', currency: 1,
-  subtotal: '100.00', payments: '-150.00000000', returns: '-10.00000000', freight: '3.50', newCustomer: 'Nuevo', paymentCount: 2, invalidVatCount: 0, companyId: 1 };
+  subtotal: '100.00', payments: '-150.00000000', returns: '-10.00000000', freight: '3.50', newCustomer: 'Nuevo', customerStatusRaw: 'Nuevo', paymentCount: 2, invalidVatCount: 0, companyId: 1 };
 const input: CollectionInputs = { invoices: [invoice], movements: [], products: [] };
 const repo = () => ({ options: vi.fn().mockResolvedValue(options), read: vi.fn().mockResolvedValue(input) });
 const connection = () => ({ query: vi.fn().mockResolvedValue([]), execute: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() });
@@ -35,7 +36,7 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     const report = buildCollectionCommissions(options, criteria, { ...input, products: [product, { ...product, id: 2, movementType: 'FE', unitCost: '9999' }] }, '');
     expect(report).toMatchObject({ status: 'complete', calculationReady: true });
     expect(report.invoices[0]).toMatchObject({ paymentAmount: -100, displayPaymentAmount: 100, cost: 60, realCost: 90, profit: 10, signedProfit: -10, margin: 10, lm: 1, lmAmount: 1, commissionAmount: null });
-    expect(report.agents[0]).toMatchObject({ cost: 60, realCost: 90, profit: 10, lm: 1, lmAmount: 1, unavailableCosts: 0 });
+    expect(report.agents[0]).toMatchObject({ cost: 60, realCost: 90, profit: 10, lm: 1, lmAmount: 1, unavailableCosts: 0, customerBonusBase: 100, customerBonus: 1 });
   });
   it('calcula pagos parciales, redondea centavos y no divide por cero ni arrastra costos de otras facturas', () => {
     const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: '', description: '', family: '', quantity: '1',
@@ -94,6 +95,13 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [invoice, { ...invoice, id: 11 }], products: [product, { ...product, id: 2, invoiceId: 11, typeId: null }] }, '');
     expect(report.invoices).toHaveLength(2); expect(report.totals.displayPayment).toBe(200);
   });
+  it('redondea el 1% en el subtotal del agente y suma esos subtotales, sin redondear antes cada documento', () => {
+    const one={...invoice,payments:'-0.50',subtotal:'100'};
+    const same=buildCollectionCommissions(options,criteria,{...input,invoices:[one,{...one,id:11}]},'');
+    expect(same.invoices.map(r=>r.customerBonus)).toEqual([0.005,0.005]);expect(same.agents[0]?.customerBonus).toBe(0.01);expect(same.totals.customerBonus).toBe(0.01);
+    const separate=buildCollectionCommissions(options,criteria,{...input,invoices:[one,{...one,id:11,agentCode:'A02'}]},'');
+    expect(separate.totals.customerBonus).toBe(0.02);expect(separate.settlement.totals.customerBonus).toBe(0.02);
+  });
   it('rechaza fechas, periodos excesivos, agentes y sucursales no disponibles antes de consultar', async () => {
     const repository = repo(), useCase = new GetCollectionCommissions(repository);
     for (const next of [{ to: '2026-02-30' }, { from: '2026-09-01' }, { from: '2024-01-01' }, { agent: 'unknown' }, { branch: '99' }]) await expect(useCase.execute({ ...criteria, ...next })).rejects.toMatchObject({ statusCode: 400 });
@@ -131,5 +139,24 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
   it('el repository delega los filtros sin SQL propio', async () => {
     const source = repo(), repository = new CollectionCommissionsRepositoryImpl(source);
     await repository.options(); await repository.read(criteria, ['01','15']); expect(source.read).toHaveBeenCalledWith(criteria, ['01','15']);
+  });
+  it('POST preview recalcula en lectura y valida parámetros de liquidación sin aceptar datos del ERP enviados por el cliente', async () => {
+    const repository=repo(),app=express().use(express.json()).use(createCollectionCommissionsRouter(new GetCollectionCommissions(repository))).use(errorHandler);
+    const settings={bonusMode:'additional',agents:[{code:'A01',plan:'fixed',fixedRate:6,freight:10,gratuities:0,costOverride:50}]};
+    const response=await request(app).post('/collection-commissions/preview').send({criteria,settings}).expect(200).expect('Cache-Control','no-store');
+    expect(response.body.data.settlement.agents[0]).toMatchObject({cost:50,rate:6,regularCommission:2.4,customerBonus:1});
+    expect(repository.read).toHaveBeenCalledTimes(1);
+    for(const next of [{...settings,agents:[{code:'A01',plan:'fixed'}]},{...settings,agents:[{code:'A01',fixedRate:101}]},{...settings,agents:[{code:'unknown'}]},{...settings,agents:[{code:'A01'},{code:'A01'}]},{...settings,payments:999},{...settings,agents:[{code:'A01',costOverride:-1}]}])
+      await request(app).post('/collection-commissions/preview').send({criteria,settings:next}).expect(400);
+    expect(repository.read).toHaveBeenCalledTimes(1);
+  });
+  it('permite sólo el POST exacto de cálculo en la frontera global y conserva el bloqueo de escrituras', async () => {
+    const repository=repo(),app=express().use(express.json()).use('/api',postgresWriteBoundary)
+      .use('/api/sales/reports',createCollectionCommissionsRouter(new GetCollectionCommissions(repository))).use(errorHandler);
+    await request(app).post('/api/sales/reports/collection-commissions/preview').send({criteria,settings:{bonusMode:'additional',agents:[]}}).expect(200);
+    for(const path of ['/api/sales/reports/collection-commissions','/api/sales/reports/collection-commissions/preview/extra','/api/accounts-receivable/clients'])
+      await request(app).post(path).send({}).expect(503);
+    await request(app).patch('/api/sales/reports/collection-commissions/preview').send({}).expect(503);
+    expect(repository.read).toHaveBeenCalledTimes(1);
   });
 });

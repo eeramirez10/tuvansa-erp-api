@@ -1,6 +1,6 @@
 # Reporte Comisiones x Cobranza
 
-Actualizado el 2026-11-06. Pertenece a **Ventas**, por indicación expresa del usuario:
+Actualizado el 2026-11-09. Pertenece a **Ventas**, por indicación expresa del usuario:
 **Reportes de Ventas → Comisiones → Reporte Comisiones x Cobranza**.
 Disponible desde Pedidos, Facturación y su ruta `/ventas/reportes/comisiones-por-cobranza`.
 El enlace anterior de Contabilidad redirige conservando query/hash; Contabilidad
@@ -17,14 +17,16 @@ UNO elige 211 desglosado / 212 totalizado. DOS contiene 211, TRES contiene 213
 y CUATRO contiene **214_Calcula_Costo_de__Facturas**. Este último completa costo,
 costo real, utilidad, margen y LM. El resumen por agente es una suma derivada
 de documentos; no se afirma reproducir el método 212 no proporcionado.
-No hay una tasa de comisión a pagar al agente en estos métodos: el reporte
-reproduce sus 18 columnas y no inventa una liquidación adicional.
+Esos cuatro métodos no contienen tasas de pago al agente. Desde el 2026-11-09,
+el Excel de referencia y CLIENTES NUEVO.pdf aportan la liquidación y el bono
+de clientes, documentados al final. El formato actual agrega resumen y hojas por agente.
 
 | Vista | Botón visible | Referencia / marcador | Procedencia | Endpoint | Tablas |
 | --- | --- | --- | --- | --- | --- |
 | Reportes de Ventas / Comisiones | Reporte Comisiones x Cobranza | Métodos 211/213/214; sin marcador MySQL | Derivada | GET /api/sales/reports/collection-commissions/options | FALMCAT, FAG, FCIA |
 | Reporte Comisiones x Cobranza | Vista previa | Código de los cuatro PDF; sin captura nueva | Derivada | GET /api/sales/reports/collection-commissions | FAX, FDOC, FCLI, FAG, FAXINV, FINV |
 | Reporte Comisiones x Cobranza | Resumen por agente / Descargar Excel | Presentación de respuesta vigente | Derivada/presentación | Sin HTTP adicional | Sin SQL adicional |
+| Liquidación y ajustes | Recalcular liquidación | Excel y CLIENTES NUEVO.pdf; sin marcador MySQL | Derivada | POST /api/sales/reports/collection-commissions/preview | Mismas tablas y snapshot de lectura; sin persistencia |
 
 ## Selección de documentos y pagos (211/213)
 
@@ -101,7 +103,8 @@ La API lee las partidas por lotes y realiza el mismo cálculo decimal en dominio
 `status=complete|incomplete` y `calculationReady` reflejan disponibilidad de costos.
 Los subtotales de agente y generales no presentan sumas parciales como completas:
 si falta un valor, su total es null. `unavailableCosts` cuenta documentos afectados.
-`commissionAmount` permanece null: no existe tasa de pago adicional en los PDF.
+`commissionAmount` de la factura permanece null por compatibilidad: la comisión
+normal se liquida por agente en `settlement`, sin repartirla arbitrariamente por factura.
 
 ## Contrato, arquitectura y límites
 
@@ -127,10 +130,12 @@ al cambiar de página y muestra el subtotal completo al terminar el grupo.
 Cambio de filtros bloquea exportación anterior hasta regenerar. Maneja carga,
 error/reintento, vacío y rango inválido.
 
-ExcelJS diferido: **Comisiones, Resumen agentes, Movimientos FAX, Partidas origen,
-Criterios**. Comisiones conserva las 18 columnas de 211: AGENTE, CLIENTE, FECHA
+ExcelJS diferido: **Liquidación, Tarifas, Neto a recibir, hoja por agente,
+Comisiones, Resumen agentes, Movimientos FAX, Partidas origen y Criterios**.
+Comisiones conserva las 18 posiciones base de 211: AGENTE, CLIENTE, FECHA
 DOCTO, FECHA PAGO, FACTURA, DÍAS, SUBTOTAL, DEVOLUCIONES, TOTAL, PAGO, COSTO,
-COSTO REAL, UTILIDAD, %, FLETES, CLIENTE NUEVO, LM, LM_VALOR. Agrupa documentos por
+COSTO REAL, UTILIDAD, %, FLETES, CLASIFICACIÓN CLIENTE, LM, LM_VALOR; agrega
+BASE CLIENTES 1%, % CLIENTES y BONO CLIENTES. Agrupa documentos por
 agente, con subtotales y total general mediante fórmulas y resultados guardados.
 El total suma sólo subtotales, sin contar documentos dos veces. Fechas e importes
 numéricos; null queda vacío. Partidas incluye AITIPMV, ILUGAR, compañía y si participa
@@ -211,3 +216,142 @@ y navegador con API real aprobados; tres Excel contrastados con la respuesta.
 Evidencia privada `captures/sql/new-version/sales/collection-commissions-services-20261106/`
 y `captures/ui/new-version/collection-commissions-services-20261106/`.
 general_log permanece OFF; no se modificó MySQL.
+
+## Liquidación según el Excel y marca de clientes (2026-11-09)
+
+Fuentes: `Reporte Comisiones Suc. Mexico Sep 26 V2.xlsx` (13 hojas) y
+`CLIENTES NUEVO.pdf` (2 páginas), método Nueva Marca de clientes Nuevos de
+PROSCAI.MREPESP06. Leídos completos; PDF y resumen/hojas del libro inspeccionados
+visualmente. El original no se incorpora al programa ni a Git. El SQL sigue
+siendo **derivado de código proporcionado**, sin captura MySQL nueva.
+
+| Vista / control | Referencia | Endpoint | Tablas / efecto |
+| --- | --- | --- | --- |
+| Documentos / Vista previa | PDF y Excel | GET /api/sales/reports/collection-commissions | Agrega lectura completa de FCLI.CLITARJETA |
+| Liquidación y ajustes / Recalcular liquidación | Tablas del Excel y selección del usuario | POST /api/sales/reports/collection-commissions/preview | Misma lectura de FAX, FDOC, FCLI, FAG, FAXINV, FINV; sin persistencia |
+| Aplicar y cerrar / Descargar liquidación Excel | Parámetros y respuesta vigentes | Sin HTTP de escritura | Mantiene configuración en la consulta de UI y genera el libro |
+
+### Clasificación y bono del 1%
+
+Se conserva `customerStatusRaw=FCLI.CLITARJETA` completo. Se reconocen Nuevo,
+Recurrente, Viejo_Reactivado e Inactivo, normalizando espacios y mayúsculas.
+Viejo_Reactivado se presenta como **Viejo recuperado**. Sólo Nuevo y
+Viejo_Reactivado generan 1% del importe cobrado **sin IVA**, después del límite
+documentado a DBRUTO; no del costo ni del subtotal de factura. Para cálculos
+se usa `-paymentAmount`, como la conversión `J*-1` del Excel, conservando el
+sentido contrario de PA positivos. Sólo Pago visible usa ABS. Las hojas de agente
+incluyen Cobranza de cálculo (-PA) para conciliar, sin convertir contramovimientos
+en ingresos/bonos positivos. No se altera el signo de los datos originales.
+Sin marca reconocida queda Sin clasificar: bono null, nunca un cero supuesto.
+
+El PDF clasifica y escribe CLITARJETA/CLILOCALIZ. Su orden es:
+
+- Nuevo: CLIPAR3=301 con alta en los últimos seis meses; otros, doce meses.
+- Recurrente: después de Nuevo, ocho meses distintos con documentos en doce meses,
+  o cuatro en seis meses.
+- Viejo_Reactivado: última compra dentro de seis/doce meses según 301/otros,
+  sin documento en el año anterior a esa compra, hasta el día previo.
+- Inactivo: resto. Sus subconsultas usan FDOC sin restringir clase/cancelación.
+
+El reporte **no ejecuta esa rutina ni sus UPDATE**. Lee la marca guardada por el
+usuario. La rutina usa CURDATE() al marcar; no se afirma una clasificación
+histórica de septiembre ni se reclasifica al consultar. CLILOCALIZ no añade un
+filtro de elegibilidad que no fue solicitado.
+
+El detalle del bono conserva cuatro decimales; se redondea al centavo el subtotal
+del agente, como porcentaje de su base agrupada en el Excel. El total suma esos
+subtotales redondeados. Dos pagos de 0.50 del mismo agente generan 0.005 cada uno
+y un bono agrupado de 0.01, no 0.02. Si pertenecen a agentes distintos, cada
+subtotal se redondea a 0.01 y el total de pagos a agentes es 0.02.
+
+Campos nuevos: customerStatusRaw/customerStatus, customerBonusEligible,
+customerBonusRate (1/0/null), customerBonusBase, customerBonus. Resúmenes agregan
+base/bono, customerBonusInvoices y unclassifiedInvoices; branchName identifica sucursal.
+
+### Reglas de liquidación y parámetros
+
+`settlement` separa bruta=cobranza normal-costo aplicado; neta=bruta-flete-
+gratificaciones; comisión normal=neta*tasa; total=normal+clientes+PLM seleccionado.
+Su bruta firmada no se confunde con la utilidad ABS del detalle heredado.
+Permite costo proporcional (predeterminado) o total, costo manual opcional (cero
+válido), flete, gratificaciones, tasa fija/plan e inclusión de PLM.
+
+El tabulador principal A48:D54 usa límites inferiores
+0/270001/500001/750001/1142502/1785003/4085004 y porcentajes 0/4/5/7/8/9/12%,
+sólo con margen neto **estrictamente mayor a 16%**. Se conservan los límites
+enteros de VLOOKUP sin interpolarlos. Sólo se usa para rangos del mismo mes.
+
+Los perfiles precargados se limitan al **mes completo septiembre 2026 de México**:
+1216/1223/1231/1279/1284 usan tabla, 1235 fijo 0 y 1292 fijo 6, según lo
+identificable en el archivo. No se extrapolan esas asignaciones a otros meses,
+sucursales o equipos. Los demás quedan por confirmar y pueden configurarse.
+
+La modalidad del 1% inicia **por confirmar**, sin asumir la decisión del usuario:
+
+- `additional`: todas las facturas aportan a comisión normal y se añade el bono.
+- `exclusive`: las elegibles aportan sólo al bono y sus pagos/costos se excluyen
+  de la comisión normal. Permanecen en los documentos de origen.
+
+`settlement.ready`, `agents[].pending` y totales null distinguen valores no
+confirmados. El POST sólo recalcula en lectura, con el mismo snapshot; no guarda
+parámetros ni modifica MySQL, PostgreSQL o clasificaciones. Zod valida cuerpo
+estricto, agentes/duplicados, tasas 0..100, importes no negativos y centavos.
+La frontera global permite sólo el POST exacto de este cálculo; otras escrituras
+no migradas continúan bloqueadas. No hay migraciones de base nuevas.
+
+### Interfaz y libro
+
+La ventana **Liquidación y ajustes** permite configurar, **Recalcular liquidación**,
+descargar y **Aplicar y cerrar**. Aplicar conserva parámetros de la consulta;
+cambiar fechas/sucursal/agente los reinicia. Editar bloquea exportación obsoleta.
+Cancelar descarta ajustes no aplicados. No son preferencias persistentes globales.
+
+El libro actual tiene **Liquidación, Tarifas, Neto a recibir, hoja por agente,
+Comisiones, Resumen agentes, Movimientos FAX, Partidas origen y Criterios**.
+Con diez agentes son 18 hojas. El detalle conserva 18 posiciones base, cambia
+Cliente nuevo a Clasificación cliente y agrega tres columnas: Base clientes 1%,
+% clientes y Bono clientes. El bono por factura se muestra con cuatro decimales.
+
+Liquidación conserva las posiciones del ejemplo: nombre, cobranza, costo, bruta/%,
+flete, gratificaciones, neta/%, tasa/efectiva, comisión, dos vendedores, tres
+cotizadores y total. Separa normal/nuevos-recuperados/PLM por agente. Las hojas
+individuales incluyen facturas, resumen, ajustes y reparto editable en azul.
+
+El reparto admite hasta cinco beneficiarios, con porcentajes distintos para
+normal/clientes/PLM. Exige 100% por componente y nombres para porcentajes positivos.
+Usa diferencias de acumulados redondeados para conservar centavos. Por defecto
+asigna al grupo del agente; no inventa identidades dentro de equipos. Neto a recibir
+lista cada asignación y su agente de origen, sin combinar personas sólo por nombre.
+Los repartos se ajustan en Excel, no se escriben al ERP.
+
+El bloque OTROS sólo referencia el umbral 4,500,000 y 1.5% del ejemplo, editable
+y sin sumar automáticamente al total ni asignar un beneficiario supuesto. La segunda
+tabla 22%/25% con tasas 5.5%/6% queda como referencia, sin asignación inferida.
+Se eliminan vínculos externos. Fórmulas internas con resultados guardados y
+recálculo al abrir; importes desconocidos permanecen vacíos.
+
+### Verificación actual
+
+Septiembre 2026, México: **69 facturas/71 PA**, cobranza positiva 5,211,970.96;
+45 documentos Recurrente, 11 Inactivo, 13 Nuevo y ninguno sin clasificar.
+Base del 1% **158,708.82**, bono **1,587.09**. Viejo_Reactivado y marcas desconocidas
+se verifican con fixtures. Los importes/costos/utilidad fuente coinciden con la
+versión anterior. El ejemplo contiene ajustes particulares y otras agrupaciones:
+no se fuerzan sus importes sobre la base actual ni se confunde costo manual con origen.
+
+Se probaron ambas modalidades con parámetros de **simulación**, incluyendo costo
+manual/flete y tasa cero explícita en perfiles no confirmados. Esas decisiones
+de prueba no se guardan como autorización o configuración global del usuario.
+Cuatro libros descargados y contrastados con API/XML: 18 hojas, 1,239 fórmulas
+por libro, sin vínculos externos ni cachés de error. No se afirma recálculo nativo
+de Excel. Navegador verifica ambas modalidades, ajustes, descarga obsoleta y
+conservación de parámetros aplicados. Evidencia privada:
+`captures/commission-reference-20261109/`,
+`captures/sql/new-version/sales/commission-settlement-20261109/` y
+`captures/ui/new-version/commission-settlement-20261109/`.
+
+Verificaciones finales: backend `pnpm lint`, `pnpm build`, `pnpm test`
+(**233 pruebas**, 47 de clasificación/liquidación/cobranza); frontend
+`pnpm lint`, `pnpm typecheck`, `pnpm build`, navegador con API real y
+conciliación independiente Decimal/API/Excel aprobados. general_log OFF y
+MySQL80 Running, sin modificaciones de datos ni configuración del servidor.

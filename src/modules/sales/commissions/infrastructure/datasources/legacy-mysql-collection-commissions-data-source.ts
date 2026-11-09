@@ -46,7 +46,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
       COALESCE(f.CLICOD,'') customerCode,COALESCE(f.CLINOM,d.DCLINOM) customerName,
       TRIM(d.DPAR1) agentCode,COALESCE(NULLIF(g.name,''),'Sin agente identificado') agentName,d.DALMACEN warehouse,d.DMONEDA currency,d.DMULTICIA companyId,
       CAST(d.DBRUTO AS CHAR) subtotal,c.payments,c.returns,CAST(d.DCOSTOFLETE AS CHAR) freight,
-      IF(f.CLITARJETA='Nuevo','Nuevo','') newCustomer,c.paymentCount,c.invalidVatCount
+      IF(f.CLITARJETA='Nuevo','Nuevo','') newCustomer,COALESCE(f.CLITARJETA,'') customerStatusRaw,c.paymentCount,c.invalidVatCount
     FROM collected c JOIN fdoc d ON d.DSEQ=c.DSEQ LEFT JOIN fcli f ON f.CLISEQ=d.CLISEQ
     LEFT JOIN (SELECT TRIM(AGTNUM) code,MAX(TRIM(AGDESCR)) name FROM fag WHERE AGT='1' GROUP BY TRIM(AGTNUM)) g ON g.code=TRIM(d.DPAR1)
     ORDER BY agentCode,d.DNUM,d.DSEQ LIMIT 10001`;
@@ -59,7 +59,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
         firstPaymentDate: String(r.firstPaymentDate), lastPaymentDate: String(r.lastPaymentDate), customerCode: String(r.customerCode).trim(),
         customerName: String(r.customerName).trim(), agentCode: String(r.agentCode).trim(), agentName: String(r.agentName).trim(), warehouse: String(r.warehouse).trim(),
         currency: Number(r.currency), companyId: Number(r.companyId), subtotal: String(r.subtotal), payments: Number(r.invalidVatCount) ? null : r.payments === null ? null : String(r.payments),
-        returns: Number(r.invalidVatCount) ? null : r.returns === null ? null : String(r.returns), freight: String(r.freight), newCustomer: String(r.newCustomer),
+        returns: Number(r.invalidVatCount) ? null : r.returns === null ? null : String(r.returns), freight: String(r.freight), newCustomer: String(r.newCustomer), customerStatusRaw: String(r.customerStatusRaw ?? ''),
         paymentCount: Number(r.paymentCount), invalidVatCount: Number(r.invalidVatCount) }));
       let movements: CollectionInputs['movements'] = [], products: CollectionInputs['products'] = [];
       if (invoices.length) {

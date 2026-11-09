@@ -1,17 +1,20 @@
+import { collectionCustomerBonus } from './collection-customer-bonus.js';
+import { buildCollectionSettlement, type SettlementSettings } from './collection-settlement.js';
+
 export type CollectionCriteria = { from: string; to: string; branch: string; agent: string };
 export type CollectionOptions = { company: string; defaultFrom: string; defaultTo: string;
   branches: Array<{ code: string; name: string; warehouses: string[] }>;
   agents: Array<{ code: string; name: string }> };
 export type CollectionInvoiceInput = { id: number; number: string; date: string; firstPaymentDate: string; lastPaymentDate: string;
   customerCode: string; customerName: string; agentCode: string; agentName: string; warehouse: string; currency: number; companyId: number;
-  subtotal: string; payments: string | null; returns: string | null; freight: string; newCustomer: string;
+  subtotal: string; payments: string | null; returns: string | null; freight: string; newCustomer: string; customerStatusRaw: string;
   paymentCount: number; invalidVatCount: number };
 export type CollectionMovement = { id: number; invoiceId: number; date: string; type: string; amount: string; vatRate: string;
   withoutVat: string | null; reference: string };
 export type CollectionProduct = { id: number; invoiceId: number; productId: number; code: string; description: string;
   family: string; quantity: string; billedQuantity: string; price: string; unitCost: string; applied: number; movementType: string; location: string; typeId: number | null };
 export type CollectionInputs = { invoices: CollectionInvoiceInput[]; movements: CollectionMovement[]; products: CollectionProduct[] };
-export type CollectionInvoice = CollectionInvoiceInput & { branch: string; days: number; subtotalAmount: number; paymentAmount: number | null;
+export type CollectionInvoice = CollectionInvoiceInput & ReturnType<typeof collectionCustomerBonus> & { branch: string; days: number; subtotalAmount: number; paymentAmount: number | null;
   returnAmount: number | null; totalAmount: number | null; freightAmount: number; paymentCapped: boolean; displayPaymentAmount: number | null;
   cost: number | null; realCost: number | null; profit: number | null; signedProfit: number | null; margin: number | null;
   lm: number | null; lmAmount: number | null; costMovementType: string | null; costStatus: 'complete' | 'unavailable'; commissionAmount: null };
@@ -40,7 +43,7 @@ function rounded(numerator: bigint, denominator: bigint): number {
   return Number(result);
 }
 const saleMovementTypes: Record<number, string> = { 1: 'FA', 2: 'FB', 3: 'FC', 4: 'FD', 5: 'FZ', 6: 'FV', 7: 'FX' };
-export function buildCollectionCommissions(options: CollectionOptions, criteria: CollectionCriteria, input: CollectionInputs, generatedAt: string) {
+export function buildCollectionCommissions(options: CollectionOptions, criteria: CollectionCriteria, input: CollectionInputs, generatedAt: string, settings?: SettlementSettings) {
   const products = new Map<number, CollectionProduct[]>();
   for (const product of input.products) { const rows = products.get(product.invoiceId) ?? []; rows.push(product); products.set(product.invoiceId, rows); }
   // Any service line excludes the whole document, including mixed invoices.
@@ -58,7 +61,7 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
     const signedProfit = proportional === null || presented === null ? null : presented - proportional;
     const lmLines = lines.filter(p => p.location === 'XXX');
     const lmAmount = !lines.length ? null : rounded(lmLines.reduce((sum, p) => sum + fixed(p.price) * fixed(p.billedQuantity), 0n), 10_000_000_000_000_000n);
-    return { ...row, branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
+    return { ...row, ...collectionCustomerBonus(row.customerStatusRaw, presented), branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
       days: Math.round((Date.parse(row.lastPaymentDate) - Date.parse(row.date)) / 86_400_000),
       subtotalAmount: subtotal / 100, paymentAmount: payment === null ? null : (capped ? -subtotal : payment) / 100,
       displayPaymentAmount: presented === null ? null : Math.abs(presented) / 100,
@@ -70,7 +73,7 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       lm: lines.length ? lmLines.length : null, lmAmount: lmAmount === null ? null : lmAmount / 100, costMovementType,
       costStatus: proportional === null ? 'unavailable' : 'complete', commissionAmount: null };
   }).sort((a, b) => a.agentCode.localeCompare(b.agentCode) || a.number.localeCompare(b.number) || a.id - b.id);
-  const sum = (rows: CollectionInvoice[], key: 'cost' | 'realCost' | 'profit' | 'signedProfit' | 'lmAmount') => rows.some(r => r[key] === null) ? null : rows.reduce((total, r) => total + Math.round(r[key]! * 100), 0) / 100;
+  const sum = (rows: CollectionInvoice[], key: 'cost' | 'realCost' | 'profit' | 'signedProfit' | 'lmAmount' | 'customerBonusBase' | 'customerBonus') => rows.some(r => r[key] === null) ? null : rows.reduce((total, r) => total + Math.round(r[key]! * 100), 0) / 100;
   const summarize = (rows: CollectionInvoice[]) => ({ invoices: rows.length, payments: rows.reduce((sum, r) => sum + r.paymentCount, 0),
     subtotal: rows.reduce((sum, r) => sum + Math.round(r.subtotalAmount * 100), 0) / 100,
     payment: rows.some(r => r.paymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.paymentAmount! * 100), 0) / 100,
@@ -79,17 +82,25 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
     total: rows.some(r => r.totalAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.totalAmount! * 100), 0) / 100,
     freight: rows.reduce((sum, r) => sum + Math.round(r.freightAmount * 100), 0) / 100,
     cost: sum(rows, 'cost'), realCost: sum(rows, 'realCost'), profit: sum(rows, 'profit'), lmAmount: sum(rows, 'lmAmount'),
+    customerBonusBase: sum(rows, 'customerBonusBase'), customerBonus: rows.some(r => r.customerBonusBase === null) ? null :
+      rounded(BigInt(rows.reduce((total, r) => total + Math.round(r.customerBonusBase! * 100), 0)), 100n) / 100,
+    customerBonusInvoices: rows.filter(r => r.customerBonusEligible).length, unclassifiedInvoices: rows.filter(r => r.customerStatus === 'Sin clasificar').length,
     lm: rows.some(r => r.lm === null) ? null : rows.reduce((sum, r) => sum + r.lm!, 0),
     unavailableCosts: rows.filter(r => r.costStatus === 'unavailable').length });
   const agents = [...new Set(invoices.map(r => r.agentCode))].map(code => {
     const rows = invoices.filter(r => r.agentCode === code);
     return { code, name: rows[0]!.agentName, ...summarize(rows) };
   });
-  return { title: 'Comisiones por cobranza', company: options.company, criteria, generatedAt, source: 'derivada' as const,
+  const totals = summarize(invoices);
+  totals.customerBonus = agents.some(a => a.customerBonus === null) ? null : agents.reduce((total, a) => total + Math.round(a.customerBonus! * 100), 0) / 100;
+  return { title: 'Comisiones por cobranza', company: options.company,
+    branchName: criteria.branch === 'all' ? 'Todas las sucursales' : options.branches.find(b => b.code === criteria.branch)?.name ?? criteria.branch,
+    criteria, generatedAt, source: 'derivada' as const,
     status: invoices.some(r => r.costStatus === 'unavailable') ? 'incomplete' as const : 'complete' as const,
     calculationReady: invoices.every(r => r.costStatus === 'complete'), invoices,
     movements: input.movements.filter(row => !serviceInvoices.has(row.invoiceId)), products: input.products.filter(row => !serviceInvoices.has(row.invoiceId)),
-    agents, totals: summarize(invoices), empty: invoices.length === 0,
+    agents, totals, empty: invoices.length === 0,
+    settlement: buildCollectionSettlement(invoices, criteria, settings),
     notes: [
       'Costo según el método 214 de CUATRO.pdf: SUM(AICOSTO*AICANTF), sin incremento del 3% (código comentado). Costo real=ABS(costo*pago PA sin IVA original/DBRUTO). El prorrateo usa el pago original, no el pago limitado presentado.',
       'Utilidad=ABS(pago firmado limitado-costo prorrateado con signo). %=utilidad con signo/pago firmado limitado*100. LM cuenta partidas con FINV.ILUGAR=XXX; LM_VALOR suma AICANTF*AIPRECIO*0.01 de esas partidas. Redondeo monetario a dos decimales; divisores cero o partidas ausentes se indican como no disponibles.',
@@ -102,8 +113,11 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       'Facturas DESFACT=1 con folio F, DCANCELADA=0; excluye AF. No se hereda DSTATUSCFD=3 del reporte de ventas por familia. Devoluciones sin PA del periodo no generan una fila.',
       'México usa los almacenes 01 y 15 del método 213. Las demás sucursales se amplían con el catálogo FALMCAT; sin atribuir movimientos por el nombre del almacén.',
       'FAG se limita a AGT=1 y se agrupa por código para evitar multiplicar pagos. Las partidas FAXINV/FINV se leen aparte: no multiplican la cobranza. Documentos agrupados por agente con subtotales.',
-      'Los métodos proporcionados definen el reporte de costo y utilidad sobre cobranza, no una tasa de pago al agente. No se inventa un importe de comisión adicional.',
-      'Cliente nuevo conserva la marca actual CLITARJETA=Nuevo. Importes sin conversión adicional de moneda, descuentos ni IVA; no se afirma moneda base no verificada.',
+      'Bono de clientes: 1% del importe cobrado sin IVA para marcas actuales FCLI.CLITARJETA=Nuevo o Viejo_Reactivado. Para cálculo se invierte el signo del pago firmado, como en el Excel; los PA de signo opuesto compensan, no se vuelven ingresos por ABS. Detalle a cuatro decimales y redondeo por agente. Recurrente/Inactivo no generan bono; Sin clasificar queda pendiente.',
+      'La rutina CLIENTES NUEVO.pdf clasifica usando CURDATE() y actualiza FCLI.CLITARJETA/CLILOCALIZ. El reporte sólo lee la marca guardada; no ejecuta esa rutina ni reconstruye una marca histórica a la fecha del pago.',
+      'Liquidación basada en el Excel proporcionado: requiere elegir modalidad del 1% y confirmar planes pendientes. El tabulador mensual exige margen neto mayor a 16%. Los perfiles del ejemplo sólo se precargan para septiembre 2026 de México; no se extrapolan.',
+      'Costo manual, flete, gratificaciones y reparto son ajustes del reporte, separados del origen; no escriben al ERP. El bloque OTROS y la segunda tabla son referencias del ejemplo, sin asignación automática de incentivos.',
+      'Importes sin conversión adicional de moneda, descuentos ni IVA; no se afirma moneda base no verificada.',
     ] };
 }
 export type CollectionCommissions = ReturnType<typeof buildCollectionCommissions>;

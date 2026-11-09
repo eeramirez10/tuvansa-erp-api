@@ -52,7 +52,7 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
   no ABS de la suma neta. `paymentAmount`, `payments`, `totals.payment` y
   `agents[].payment` conservan signos para cálculo/auditoría. Los resúmenes
   agregan `displayPayment`. Un importe desconocido sigue siendo null.
-  La hoja Movimientos FAX conserva importes originales firmados. Costo prorrateado,
+  La respuesta HTTP conserva los movimientos originales firmados. Costo prorrateado,
   utilidad y margen siguen usando P/Q firmados, sin alterarse por el cambio visual.
 - Una fila por DSEQ evita colisiones de folios. FECHA PAGO y DÍAS usan el último PA
   del intervalo; conserva primera fecha, cantidad de pagos y cada fecha/importe.
@@ -130,16 +130,16 @@ al cambiar de página y muestra el subtotal completo al terminar el grupo.
 Cambio de filtros bloquea exportación anterior hasta regenerar. Maneja carga,
 error/reintento, vacío y rango inválido.
 
-ExcelJS diferido: **Liquidación, Tarifas, Neto a recibir, hoja por agente,
-Comisiones, Resumen agentes, Movimientos FAX, Partidas origen y Criterios**.
-Comisiones conserva las 18 posiciones base de 211: AGENTE, CLIENTE, FECHA
-DOCTO, FECHA PAGO, FACTURA, DÍAS, SUBTOTAL, DEVOLUCIONES, TOTAL, PAGO, COSTO,
-COSTO REAL, UTILIDAD, %, FLETES, CLASIFICACIÓN CLIENTE, LM, LM_VALOR; agrega
-BASE CLIENTES 1%, % CLIENTES y BONO CLIENTES. Agrupa documentos por
-agente, con subtotales y total general mediante fórmulas y resultados guardados.
-El total suma sólo subtotales, sin contar documentos dos veces. Fechas e importes
-numéricos; null queda vacío. Partidas incluye AITIPMV, ILUGAR, compañía y si participa
-en el costo. Exporta todas las filas, independientemente de la página visible.
+ExcelJS diferido: primero **Ventas por agente**, después **Comisiones del mes**
+y una hoja por vendedor. El detalle general contiene agente más las trece
+columnas solicitadas del documento. Se agrupa por agente, ordenado por fecha
+de factura, folio e identificador; subtotales de todos los importes y total
+general que suma sólo subtotales. Fechas/importes numéricos; null vacío.
+El resumen tiene exactamente tres filas por vendedor: normal, clientes nuevos/
+recuperados y lento movimiento. Las hojas individuales tienen trece columnas
+y el resumen azul de catorce filas de la captura proporcionada. No hay hojas
+adicionales de auditoría ni columnas ocultas; la respuesta HTTP conserva todos
+los datos de origen. Se exportan todas las filas, sin depender de la página visible.
 
 ## Validación previa al filtro de servicios (2026-11-06)
 
@@ -239,8 +239,8 @@ Viejo_Reactivado se presenta como **Viejo recuperado**. Sólo Nuevo y
 Viejo_Reactivado generan 1% del importe cobrado **sin IVA**, después del límite
 documentado a DBRUTO; no del costo ni del subtotal de factura. Para cálculos
 se usa `-paymentAmount`, como la conversión `J*-1` del Excel, conservando el
-sentido contrario de PA positivos. Sólo Pago visible usa ABS. Las hojas de agente
-incluyen Cobranza de cálculo (-PA) para conciliar, sin convertir contramovimientos
+sentido contrario de PA positivos. Sólo Pago visible usa ABS. El resumen de cada
+agente usa esa cobranza firmada de la API, sin convertir contramovimientos
 en ingresos/bonos positivos. No se altera el signo de los datos originales.
 Sin marca reconocida queda Sin clasificar: bono null, nunca un cero supuesto.
 
@@ -306,29 +306,27 @@ descargar y **Aplicar y cerrar**. Aplicar conserva parámetros de la consulta;
 cambiar fechas/sucursal/agente los reinicia. Editar bloquea exportación obsoleta.
 Cancelar descarta ajustes no aplicados. No son preferencias persistentes globales.
 
-El libro actual tiene **Liquidación, Tarifas, Neto a recibir, hoja por agente,
-Comisiones, Resumen agentes, Movimientos FAX, Partidas origen y Criterios**.
-Con diez agentes son 18 hojas. El detalle conserva 18 posiciones base, cambia
-Cliente nuevo a Clasificación cliente y agrega tres columnas: Base clientes 1%,
-% clientes y Bono clientes. El bono por factura se muestra con cuatro decimales.
+Corrección de formato del mismo día, según la captura del resumen azul:
+**Ventas por agente**, **Comisiones Sep 26 Mex** (nombre según filtros) y
+**una hoja por vendedor**, doce hojas con diez agentes. La primera agrupa por
+agente y ordena por fecha de factura; el resumen general tiene sólo tres filas
+por agente y total. Se conservan las posiciones del resumen de referencia,
+incluidos dos vendedores y tres cotizadores, sin inventar repartos individuales:
+la comisión permanece asignada al grupo del agente.
 
-Liquidación conserva las posiciones del ejemplo: nombre, cobranza, costo, bruta/%,
-flete, gratificaciones, neta/%, tasa/efectiva, comisión, dos vendedores, tres
-cotizadores y total. Separa normal/nuevos-recuperados/PLM por agente. Las hojas
-individuales incluyen facturas, resumen, ajustes y reparto editable en azul.
+Cada hoja individual contiene únicamente Cliente, Fecha documento, Fecha pago,
+Factura, Días, Subtotal, Devoluciones, Total, Pago, Costo, Costo real, Utilidad,
+%%. Después del total, sólo el bloque azul/blanco de catorce filas, desde NOMBRE
+hasta CLIENTES NUEVOS, que incluye también reactivados. No se añaden columnas
+ocultas, Tarifas, Neto a recibir, OTROS, reparto ni auditorías al Excel.
+Los ajustes se realizan en la ventana antes de descargar; el detalle completo
+y la clasificación/bono permanecen disponibles en la API y pantalla.
 
-El reparto admite hasta cinco beneficiarios, con porcentajes distintos para
-normal/clientes/PLM. Exige 100% por componente y nombres para porcentajes positivos.
-Usa diferencias de acumulados redondeados para conservar centavos. Por defecto
-asigna al grupo del agente; no inventa identidades dentro de equipos. Neto a recibir
-lista cada asignación y su agente de origen, sin combinar personas sólo por nombre.
-Los repartos se ajustan en Excel, no se escriben al ERP.
-
-El bloque OTROS sólo referencia el umbral 4,500,000 y 1.5% del ejemplo, editable
-y sin sumar automáticamente al total ni asignar un beneficiario supuesto. La segunda
-tabla 22%/25% con tasas 5.5%/6% queda como referencia, sin asignación inferida.
-Se eliminan vínculos externos. Fórmulas internas con resultados guardados y
-recálculo al abrir; importes desconocidos permanecen vacíos.
+Cobranza/costo del bloque son valores del snapshot decimal del servidor;
+fórmulas internas para bruta, neta, tasas, comisión y totales con resultados
+guardados. Sin vínculos externos; importes desconocidos permanecen vacíos.
+Costo real continúa proporcional al pago original: costo 33.34, subtotal 100,
+pago 25 → costo real 8.34, utilidad 16.66. No cambia el SQL ni los cálculos fuente.
 
 ### Verificación actual
 
@@ -342,7 +340,7 @@ no se fuerzan sus importes sobre la base actual ni se confunde costo manual con 
 Se probaron ambas modalidades con parámetros de **simulación**, incluyendo costo
 manual/flete y tasa cero explícita en perfiles no confirmados. Esas decisiones
 de prueba no se guardan como autorización o configuración global del usuario.
-Cuatro libros descargados y contrastados con API/XML: 18 hojas, 1,239 fórmulas
+Validación del formato anterior: cuatro libros contrastados con API/XML, 18 hojas, 1,239 fórmulas
 por libro, sin vínculos externos ni cachés de error. No se afirma recálculo nativo
 de Excel. Navegador verifica ambas modalidades, ajustes, descarga obsoleta y
 conservación de parámetros aplicados. Evidencia privada:
@@ -355,3 +353,12 @@ Verificaciones finales: backend `pnpm lint`, `pnpm build`, `pnpm test`
 `pnpm lint`, `pnpm typecheck`, `pnpm build`, navegador con API real y
 conciliación independiente Decimal/API/Excel aprobados. general_log OFF y
 MySQL80 Running, sin modificaciones de datos ni configuración del servidor.
+
+Corrección de formato: cuatro descargas mediante navegador y API real,
+**12 hojas y 420 fórmulas** por archivo. Conciliación de cada documento, importe
+y total, orden por fecha, trece columnas individuales, tres filas por agente y
+catorce filas del resumen azul, sin columnas/hojas ocultas. Configuración pendiente,
+modos adicional/exclusivo, ajustes aplicados, fallo/reintento y descarga obsoleta
+probados. Evidencia privada `captures/ui/new-version/commission-layout-20261109/`.
+Backend: **234 pruebas** aprobadas, incluida ordenación determinista por fecha.
+La evidencia no implica recálculo nativo de Excel.

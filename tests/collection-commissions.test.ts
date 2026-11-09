@@ -19,6 +19,17 @@ const repo = () => ({ options: vi.fn().mockResolvedValue(options), read: vi.fn()
 const connection = () => ({ query: vi.fn().mockResolvedValue([]), execute: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() });
 afterEach(() => vi.clearAllMocks());
 describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
+  it('ordena por agente y fecha de factura, con folio e identificador como desempate', () => {
+    const invoices = [
+      { ...invoice, id: 14, agentCode: 'B01', date: '2026-01-01' },
+      { ...invoice, id: 13, number: 'FE001', date: '2026-07-20' },
+      { ...invoice, id: 12, number: 'FE999', date: '2026-07-01' },
+      { ...invoice, id: 11, number: 'FE002', date: '2026-07-20' },
+      { ...invoice, id: 10, number: 'FE001', date: '2026-07-20' },
+    ];
+    const report = buildCollectionCommissions(options, criteria, { ...input, invoices }, '');
+    expect(report.invoices.map(r => r.id)).toEqual([12, 10, 13, 11, 14]);
+  });
   it('incluye una factura anterior al periodo y calcula días a su último pago; aplica el límite documentado', () => {
     const report = buildCollectionCommissions(options, criteria, input, '');
     expect(report.invoices[0]).toMatchObject({ days: 41, branch: '01', subtotalAmount: 100, paymentAmount: -100, displayPaymentAmount: 100, returnAmount: -10, totalAmount: 90, freightAmount: 3.5, paymentCapped: true });

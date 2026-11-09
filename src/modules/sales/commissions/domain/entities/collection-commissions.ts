@@ -116,7 +116,7 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       'Bono de clientes: 1% del importe cobrado sin IVA para marcas actuales FCLI.CLITARJETA=Nuevo o Viejo_Reactivado. Para cálculo se invierte el signo del pago firmado, como en el Excel; los PA de signo opuesto compensan, no se vuelven ingresos por ABS. Detalle a cuatro decimales y redondeo por agente. Recurrente/Inactivo no generan bono; Sin clasificar queda pendiente.',
       'La rutina CLIENTES NUEVO.pdf clasifica usando CURDATE() y actualiza FCLI.CLITARJETA/CLILOCALIZ. El reporte sólo lee la marca guardada; no ejecuta esa rutina ni reconstruye una marca histórica a la fecha del pago.',
       'Liquidación basada en el Excel proporcionado: requiere elegir modalidad del 1% y confirmar planes pendientes. El tabulador mensual exige margen neto mayor a 16%. Los perfiles del ejemplo sólo se precargan para septiembre 2026 de México; no se extrapolan.',
-      'Costo manual, flete y gratificaciones son ajustes del reporte, separados del origen; no escriben al ERP. El Excel presenta detalle por agente y fecha, resumen de tres renglones por agente y hojas individuales de trece columnas con resumen compacto.',
+      'Costo manual, flete y gratificaciones son ajustes del reporte, separados del origen; no escriben al ERP. El Excel presenta detalle por agente y fecha, resumen de tres renglones por agente y hojas individuales de quince columnas con resumen compacto, marca nuevo y su 1% pagado.',
       'Importes sin conversión adicional de moneda, descuentos ni IVA; no se afirma moneda base no verificada.',
     ] };
 }

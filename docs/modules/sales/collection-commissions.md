@@ -131,12 +131,12 @@ Cambio de filtros bloquea exportación anterior hasta regenerar. Maneja carga,
 error/reintento, vacío y rango inválido.
 
 ExcelJS diferido: primero **Ventas por agente**, después **Comisiones del mes**
-y una hoja por vendedor. El detalle general contiene agente más las trece
+y una hoja por vendedor. El detalle general contiene agente más las quince
 columnas solicitadas del documento. Se agrupa por agente, ordenado por fecha
 de factura, folio e identificador; subtotales de todos los importes y total
 general que suma sólo subtotales. Fechas/importes numéricos; null vacío.
 El resumen tiene exactamente tres filas por vendedor: normal, clientes nuevos/
-recuperados y lento movimiento. Las hojas individuales tienen trece columnas
+recuperados y lento movimiento. Las hojas individuales tienen quince columnas
 y el resumen azul de catorce filas de la captura proporcionada. No hay hojas
 adicionales de auditoría ni columnas ocultas; la respuesta HTTP conserva todos
 los datos de origen. Se exportan todas las filas, sin depender de la página visible.
@@ -316,7 +316,10 @@ la comisión permanece asignada al grupo del agente.
 
 Cada hoja individual contiene únicamente Cliente, Fecha documento, Fecha pago,
 Factura, Días, Subtotal, Devoluciones, Total, Pago, Costo, Costo real, Utilidad,
-%%. Después del total, sólo el bloque azul/blanco de catorce filas, desde NOMBRE
+%%, Cliente nuevo y 1% de lo pagado. Sólo la marca Nuevo muestra "nuevo" y su
+importe de incentivo; las otras clasificaciones quedan vacías en esas dos columnas.
+El subtotal conserva precisión y redondea por agente; la liquidación mantiene
+también el incentivo de recuperados. Después del total, sólo el bloque azul/blanco de catorce filas, desde NOMBRE
 hasta CLIENTES NUEVOS, que incluye también reactivados. No se añaden columnas
 ocultas, Tarifas, Neto a recibir, OTROS, reparto ni auditorías al Excel.
 Los ajustes se realizan en la ventana antes de descargar; el detalle completo

@@ -187,7 +187,7 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     const result = await source.read({ ...criteria, agent: 'A01' }, ['01','15']);
     expect(result.invoices[0]?.adjustment).toMatchObject({ kind: 'return', movementId: 321, date: '2026-08-12', sourceDocumentId: 20, amount: '-100.00' });
     const [sql, params] = conn.execute.mock.calls[1]!;
-    expect(params).toEqual(['2026-08-01','2026-09-01','01','15','A01',4,4]);
+    expect(params).toEqual(['2026-08-01','2026-09-01','01','15','2026-09-01',4,4,'A01']);
     for (const text of ["a.ATIPMV='K'", "LEFT(a.ATIPMV,1) IN ('D','C')", 'paid.AFECHA<=a.AFECHA', "paid.ATIPMV='PA'", 'posted.DSEQ=e.sourceId', 'LEFT(original.ATIPMV,1)=LEFT(r.DNUM,1)', 'x.CLISEQ=d.CLISEQ']) expect(sql).toContain(text);
     expect(sql).not.toContain('d.DESCXC=1');
     expect(conn.execute.mock.calls[3]![1]).toEqual([10,20]);
@@ -197,6 +197,22 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
   it('el repository delega los filtros sin SQL propio', async () => {
     const source = repo(), repository = new CollectionCommissionsRepositoryImpl(source);
     await repository.options(); await repository.read(criteria, ['01','15']); expect(source.read).toHaveBeenCalledWith(criteria, ['01','15']);
+  });
+  it('asigna notas al agente de la última factura del mismo cliente/compañía antes de filtrar y conserva el agente original', async () => {
+    const conn = connection();
+    const credit = { ...invoice, number: 'CA001', agentCode: 'A01', originalAgentCode: 'OLD', originalAgentName: 'ANTERIOR', agentAssignment: 'latest-invoice',
+      movementId: 321, adjustmentKind: 'credit-note', adjustmentAmount: '-100', movementType: 'CA', sourceDocumentId: 10, sourceSubtotal: '-100', relatedInvoiceNumber: null };
+    conn.execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[credit], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
+    const data = await source.read({ ...criteria, agent: 'A01' }, ['01','15']);
+    expect(data.invoices[0]).toMatchObject({ agentCode: 'A01', agentAttribution: { originalCode: 'OLD', originalName: 'ANTERIOR', source: 'latest-invoice' } });
+    const [sql, params] = conn.execute.mock.calls[1]!;
+    for (const text of ['SELECT DISTINCT d.CLISEQ customerId,d.DMULTICIA companyId', 'x.CLISEQ=c.customerId AND x.DMULTICIA=c.companyId',
+      'x.DCANCELADA=0 AND x.DBRUTO>0 AND x.DFECHA<?', 'ORDER BY x.DFECHA DESC,x.DSEQ DESC LIMIT 1', "FROM fag WHERE AGT='1'",
+      "NULLIF(TRIM(f.CLIPAR1),'')", 'COALESCE(ca.billingAgent,ca.catalogAgent', 'FROM assigned e', 'AND e.agentCode=?']) expect(sql).toContain(text);
+    expect(sql).not.toContain('AND TRIM(d.DPAR1)=?');
+    expect(params).toEqual(['2026-08-01','2026-09-01','01','15','2026-09-01',4,4,'A01']);
+    expect(buildCollectionCommissions(options, criteria, data, '').invoices[0]).toMatchObject({ agentReassigned: true, originalAgentCode: 'OLD', creditNoteAmount: -100 });
   });
   it('POST preview recalcula en lectura y valida parámetros de liquidación sin aceptar datos del ERP enviados por el cliente', async () => {
     const repository=repo(),app=express().use(express.json()).use(createCollectionCommissionsRouter(new GetCollectionCommissions(repository))).use(errorHandler);

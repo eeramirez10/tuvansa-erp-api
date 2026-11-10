@@ -38,14 +38,16 @@ describe('Ajustes de comisiones por fecha del auxiliar', () => {
   it('incluye notas C sin cobro del periodo y conserva el costo registrado, sin suponer costo cero', () => {
     const result = report([adjusted({ kind: 'credit-note', movementType: 'CA', amount: '-100', sourceSubtotal: '-100' }, { number: 'CA001', canceled: false })],
       [{ ...product, movementType: 'CA', billedQuantity: '-1', unitCost: '1.71' }]);
-    expect(result.invoices[0]).toMatchObject({ returnAmount: -100, displayPaymentAmount: -100, cost: -1.71, profit: -98.29 });
+    expect(result.invoices[0]).toMatchObject({ returnAmount: 0, creditNoteAmount: -100, displayPaymentAmount: -100, cost: -1.71, profit: -98.29 });
+    expect(result.totals).toMatchObject({ returns: 0, creditNotes: -100 });
     expect(result.settlement.agents[0]?.regularCommission).toBe(-9.83);
   });
   it('la cancelación de una nota C compensa el abono original con un movimiento positivo', () => {
     const credit = adjusted({ kind: 'credit-note', movementType: 'CA', amount: '-100', sourceSubtotal: '-100' }, { number: 'CA001' });
     const reversal = adjusted({ kind: 'adjustment-reversal', movementId: 101, amount: '100', sourceSubtotal: '-100' }, { number: 'CA001' });
     const result = report([credit, reversal], [{ ...product, movementType: 'CA', billedQuantity: '-1', unitCost: '60' }]);
-    expect(result.invoices.find(r => r.kind === 'adjustment-reversal')).toMatchObject({ displayPaymentAmount: 100, cost: 60, profit: 40 });
+    expect(result.invoices.find(r => r.kind === 'adjustment-reversal')).toMatchObject({ subtotalAmount: 0, returnAmount: 0, creditNoteAmount: 100, displayPaymentAmount: 100, cost: 60, profit: 40 });
+    expect(result.totals).toMatchObject({ subtotal: 0, returns: 0, creditNotes: 0, total: 0 });
     expect(result.totals.displayPayment).toBe(0); expect(result.settlement.agents[0]?.regularCommission).toBe(0);
   });
   it('prorratea el costo si un D se aplica parcialmente y no duplica un mismo ASEQ', () => {
@@ -66,6 +68,36 @@ describe('Ajustes de comisiones por fecha del auxiliar', () => {
   it('un servicio en el documento D excluye el ajuste completo y sus datos de auditoría', () => {
     const result = report([adjusted({ kind: 'return', sourceDocumentId: 20 })], [product, { ...product, invoiceId: 20, typeId: 4 }]);
     expect(result.empty).toBe(true); expect(result.products).toEqual([]);
+  });
+  it('integra la nota del agente anterior en el vendedor resuelto y conserva su origen sin duplicar el abono', () => {
+    const credit = adjusted({ kind: 'credit-note', movementType: 'CA', amount: '-100', sourceSubtotal: '-100' },
+      { number: 'CA001', canceled: false, agentAttribution: { originalCode: 'OLD', originalName: 'ANTERIOR', source: 'latest-invoice' } });
+    const result = report([invoice, credit, credit], [product, { ...product, id: 2, movementType: 'CA', billedQuantity: '-1', unitCost: '60' }]);
+    expect(result.agents).toHaveLength(1);
+    expect(result.agents[0]).toMatchObject({ code: 'A01', invoices: 2, returns: 0, creditNotes: -100, displayPayment: 900, realCost: 540, profit: 360 });
+    const note = result.invoices.find(r => r.kind === 'credit-note')!;
+    expect(note).toMatchObject({ agentCode: 'A01', originalAgentCode: 'OLD', originalAgentName: 'ANTERIOR', agentAssignment: 'latest-invoice', agentReassigned: true });
+    expect(note.reviewReasons.join(' ')).toContain('última factura vigente');
+    expect(result.settlement.agents[0]).toMatchObject({ code: 'A01', payment: 900, netProfit: 360, regularCommission: 36 });
+  });
+  it('documenta la alternativa del catálogo y conserva las notas sin agente resoluble para revisión', () => {
+    const rows = [adjusted({ kind: 'credit-note', movementType: 'CA', amount: '-100' },
+      { number: 'CA001', agentAttribution: { originalCode: 'OLD', originalName: 'ANTERIOR', source: 'customer-catalog' } }),
+    adjusted({ kind: 'credit-note', movementId: 101, movementType: 'CA', amount: '-50' }, { number: 'CA002', agentCode: 'OLD', agentName: 'ANTERIOR' })];
+    const result = report(rows);
+    expect(result.invoices.find(r => r.number === 'CA001')?.reviewReasons.join(' ')).toContain('catálogo actual del cliente');
+    expect(result.invoices.find(r => r.number === 'CA002')).toMatchObject({ agentCode: 'OLD', originalAgentCode: 'OLD', agentAssignment: 'document', agentReassigned: false, creditNoteAmount: -50 });
+    expect(result.invoices.find(r => r.number === 'CA002')?.reviewReasons.join(' ')).toContain('se conserva el agente original');
+    expect(result.totals.creditNotes).toBe(-150);
+  });
+  it('las devoluciones y sus reversiones compensan sólo Devoluciones; notas sin importe no fabrican un total conocido', () => {
+    const result = report([adjusted({ kind: 'return', movementType: 'DA', amount: '-100' }, { number: 'DA001' }),
+      adjusted({ kind: 'adjustment-reversal', movementId: 101, amount: '100' }, { number: 'DA001' })]);
+    expect(result.totals).toMatchObject({ subtotal: 0, returns: 0, creditNotes: 0, total: 0 });
+    expect(result.invoices.map(r => r.returnAmount)).toEqual([-100,100]);
+    const unknown = report([adjusted({ kind: 'credit-note', movementType: 'CA', amount: null }, { number: 'CA001' })]);
+    expect(unknown.invoices[0]).toMatchObject({ returnAmount: 0, creditNoteAmount: null });
+    expect(unknown.totals.creditNotes).toBeNull(); expect(unknown.agents[0]?.creditNotes).toBeNull();
   });
   it('no fabrica ceros si el movimiento carece de IVA/base/costo válido', () => {
     const result = report([adjusted({ amount: null, sourceSubtotal: null, sourceDocumentId: null }, { invalidVatCount: 1 })]);

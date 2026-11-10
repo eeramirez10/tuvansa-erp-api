@@ -9,6 +9,8 @@ ya no incluye esta opción y conserva los otros tres reportes financieros.
 **Alcance vigente:** [cancelaciones por fecha K, devoluciones D y notas C](collection-commission-adjustments.md).
 Los ajustes se muestran firmados en su mes, aunque no haya PA dentro de ese mes.
 Ese documento sustituye las limitaciones del etiquetado inicial de canceladas.
+Las [notas de crédito se atribuyen al vendedor del cliente](collection-credit-note-agents.md)
+y tienen columna separada de las devoluciones en pantalla y Excel.
 
 ## Evidencia y procedencia
 

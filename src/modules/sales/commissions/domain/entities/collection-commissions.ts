@@ -5,13 +5,15 @@ export type CollectionCriteria = { from: string; to: string; branch: string; age
 export type CollectionOptions = { company: string; defaultFrom: string; defaultTo: string;
   branches: Array<{ code: string; name: string; warehouses: string[] }>;
   agents: Array<{ code: string; name: string }> };
+export type CollectionAgentAssignment = 'document' | 'latest-invoice' | 'customer-catalog';
 export type CollectionAdjustment = { movementId: number; kind: 'cancellation' | 'return' | 'credit-note' | 'adjustment-reversal';
   date: string; amount: string | null; movementType: string; sourceDocumentId: number | null;
   sourceSubtotal: string | null; relatedInvoiceNumber: string | null };
 export type CollectionInvoiceInput = { id: number; number: string; canceled: boolean; date: string; firstPaymentDate: string; lastPaymentDate: string;
   customerCode: string; customerName: string; agentCode: string; agentName: string; warehouse: string; currency: number; companyId: number;
   subtotal: string; payments: string | null; returns: string | null; freight: string; newCustomer: string; customerStatusRaw: string;
-  paymentCount: number; invalidVatCount: number; adjustment?: CollectionAdjustment };
+  paymentCount: number; invalidVatCount: number; adjustment?: CollectionAdjustment;
+  agentAttribution?: { originalCode: string; originalName: string; source: CollectionAgentAssignment } };
 export type CollectionMovement = { id: number; invoiceId: number; date: string; type: string; amount: string; vatRate: string;
   withoutVat: string | null; reference: string };
 export type CollectionProduct = { id: number; invoiceId: number; productId: number; code: string; description: string;
@@ -20,7 +22,8 @@ export type CollectionInputs = { invoices: CollectionInvoiceInput[]; movements: 
 export type CollectionInvoice = CollectionInvoiceInput & ReturnType<typeof collectionCustomerBonus> & { branch: string; days: number; subtotalAmount: number | null; paymentAmount: number | null;
   rowKey: string; kind: 'collection' | CollectionAdjustment['kind']; eventDate: string; sourceMovementId: number | null;
   relatedInvoiceNumber: string | null; reviewRequired: boolean; reviewReasons: string[];
-  returnAmount: number | null; totalAmount: number | null; freightAmount: number; paymentCapped: boolean; displayPaymentAmount: number | null;
+  originalAgentCode: string; originalAgentName: string; agentAssignment: CollectionAgentAssignment; agentReassigned: boolean;
+  returnAmount: number | null; creditNoteAmount: number | null; totalAmount: number | null; freightAmount: number; paymentCapped: boolean; displayPaymentAmount: number | null;
   cost: number | null; realCost: number | null; profit: number | null; signedProfit: number | null; margin: number | null;
   lm: number | null; lmAmount: number | null; costMovementType: string | null; costStatus: 'complete' | 'unavailable'; commissionAmount: null };
 
@@ -59,6 +62,10 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       const key = row.adjustment ? `movement:${row.adjustment.movementId}` : `collection:${row.id}`;
       if (seen.has(key)) return false; seen.add(key); return true;
     }).map<CollectionInvoice>(row => {
+    const attribution = { originalAgentCode: row.agentAttribution?.originalCode ?? row.agentCode,
+      originalAgentName: row.agentAttribution?.originalName ?? row.agentName,
+      agentAssignment: row.agentAttribution?.source ?? 'document' as CollectionAgentAssignment,
+      agentReassigned: row.agentAttribution !== undefined && row.agentAttribution.originalCode !== row.agentCode };
     if (row.adjustment) {
       const event = row.adjustment;
       const amount = event.amount === null ? null : collectionCents(event.amount);
@@ -78,18 +85,22 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       if (proportional === null) reviewReasons.push('No existe base histórica suficiente para calcular el costo y la utilidad del ajuste.');
       if (event.sourceDocumentId === null) reviewReasons.push('No se identificó un documento de origen único para las partidas.');
       if (event.relatedInvoiceNumber === null) reviewReasons.push('Revisar la factura relacionada y el agente al que corresponde el abono.');
-      const isReturnOrCredit = event.kind === 'return' || event.kind === 'credit-note';
-      return { ...row, ...collectionCustomerBonus(row.customerStatusRaw, amount === null ? null : -amount),
+      if (attribution.agentReassigned) reviewReasons.push(`Nota de crédito del agente ${attribution.originalAgentCode || 'sin código'} (${attribution.originalAgentName}) asignada a ${row.agentCode} (${row.agentName}) por ${attribution.agentAssignment === 'latest-invoice' ? 'la última factura vigente del mismo cliente y compañía hasta el cierre del reporte' : 'el catálogo actual del cliente'}.`);
+      const isCredit = event.kind === 'credit-note' || (event.kind === 'adjustment-reversal' && row.number.startsWith('C'));
+      const isReturn = event.kind === 'return' || (event.kind === 'adjustment-reversal' && row.number.startsWith('D'));
+      if (isCredit && attribution.agentAssignment === 'document') reviewReasons.push('Sin factura vigente ni agente válido en el catálogo del cliente: se conserva el agente original; revisar asignación.');
+      return { ...row, ...attribution, ...collectionCustomerBonus(row.customerStatusRaw, amount === null ? null : -amount),
         rowKey: `movement:${event.movementId}`, kind: event.kind, eventDate: event.date, sourceMovementId: event.movementId,
         relatedInvoiceNumber: event.relatedInvoiceNumber, reviewRequired: true, reviewReasons,
         branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
         days: Math.round((Date.parse(event.date) - Date.parse(row.date)) / 86_400_000),
         // The legacy paymentAmount has the inverse financial sign. The visible
         // adjustment keeps the actual debit/credit sign; never apply ABS here.
-        subtotalAmount: isReturnOrCredit ? 0 : amount === null ? null : amount / 100,
+        subtotalAmount: isCredit || isReturn ? 0 : amount === null ? null : amount / 100,
         paymentAmount: amount === null ? null : amount === 0 ? 0 : -amount / 100,
         displayPaymentAmount: amount === null ? null : amount / 100,
-        returnAmount: isReturnOrCredit ? amount === null ? null : amount / 100 : 0,
+        returnAmount: isReturn ? amount === null ? null : amount / 100 : 0,
+        creditNoteAmount: isCredit ? amount === null ? null : amount / 100 : 0,
         totalAmount: amount === null ? null : amount / 100, freightAmount: 0, paymentCapped: false,
         cost: proportional === null ? null : proportional / 100, realCost: proportional === null ? null : proportional / 100,
         profit: profit === null ? null : profit / 100, signedProfit: profit === null ? null : -profit / 100,
@@ -112,14 +123,14 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
     const signedProfit = proportional === null || presented === null ? null : presented - proportional;
     const lmLines = lines.filter(p => p.location === 'XXX');
     const lmAmount = !lines.length ? null : rounded(lmLines.reduce((sum, p) => sum + fixed(p.price) * fixed(p.billedQuantity), 0n), 10_000_000_000_000_000n);
-    return { ...row, ...collectionCustomerBonus(row.customerStatusRaw, presented),
+    return { ...row, ...attribution, ...collectionCustomerBonus(row.customerStatusRaw, presented),
       rowKey: `collection:${row.id}`, kind: 'collection', eventDate: row.lastPaymentDate, sourceMovementId: null,
       relatedInvoiceNumber: null, reviewRequired: false, reviewReasons: [],
       branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
       days: Math.round((Date.parse(row.lastPaymentDate) - Date.parse(row.date)) / 86_400_000),
       subtotalAmount: subtotal / 100, paymentAmount: payment === null ? null : (capped ? -subtotal : payment) / 100,
       displayPaymentAmount: presented === null ? null : Math.abs(presented) / 100,
-      returnAmount: returns === null ? null : returns / 100, totalAmount: returns === null ? null : (subtotal + returns) / 100,
+      returnAmount: returns === null ? null : returns / 100, creditNoteAmount: 0, totalAmount: returns === null ? null : (subtotal + returns) / 100,
       freightAmount: collectionCents(row.freight) / 100, paymentCapped: capped,
       cost: cost === null ? null : cost / 100, realCost: proportional === null ? null : Math.abs(proportional) / 100,
       profit: signedProfit === null ? null : Math.abs(signedProfit) / 100, signedProfit: signedProfit === null ? null : signedProfit / 100,
@@ -134,6 +145,7 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
     payment: rows.some(r => r.paymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.paymentAmount! * 100), 0) / 100,
     displayPayment: rows.some(r => r.displayPaymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.displayPaymentAmount! * 100), 0) / 100,
     returns: rows.some(r => r.returnAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.returnAmount! * 100), 0) / 100,
+    creditNotes: rows.some(r => r.creditNoteAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.creditNoteAmount! * 100), 0) / 100,
     total: rows.some(r => r.totalAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.totalAmount! * 100), 0) / 100,
     freight: rows.reduce((sum, r) => sum + Math.round(r.freightAmount * 100), 0) / 100,
     cost: sum(rows, 'cost'), realCost: sum(rows, 'realCost'), profit: sum(rows, 'profit'), lmAmount: sum(rows, 'lmAmount'),
@@ -169,11 +181,12 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       'Una fila por DSEQ para cobros PA y una por ASEQ para ajustes, con rowKey independiente. Fecha pago/ajuste usa último PA o AFECHA del ajuste. Referencia a devolución/nota y factura relacionada evita confundir el documento que aporta el costo.',
       'La cancelación K se resta por su importe sin IVA en el mes de AFECHA, no por el importe del pago anterior ni por el estado DCANCELADA. Los ajustes negativos conservan su signo en pago, costo y utilidad. REVISAR señala conciliación histórica; no sustituye costos desconocidos por cero.',
       'México usa los almacenes 01 y 15 del método 213. Las demás sucursales se amplían con el catálogo FALMCAT; sin atribuir movimientos por el nombre del almacén.',
-      'FAG se limita a AGT=1 y se agrupa por código para evitar multiplicar pagos. Las partidas FAXINV/FINV se leen aparte: no multiplican la cobranza. Documentos agrupados por agente con subtotales.',
+      'Notas C y sus reversiones se asignan al agente de la última factura vigente del mismo CLISEQ y compañía hasta el fin del reporte; en ausencia de ésta se usa CLIPAR1 válido en FAG (AGT=1), y como último recurso el agente original con aviso. Se conserva la atribución original y el filtro de agente se aplica después de resolverla. No cambia al agente de PA, devoluciones D ni cancelaciones F.',
+      'FAG se limita a AGT=1 y se agrupa por código para evitar multiplicar pagos. Las partidas FAXINV/FINV se leen aparte: no multiplican la cobranza. Documentos agrupados por agente con subtotales. Devoluciones y notas de crédito tienen columnas separadas; sus reversiones compensan en la misma columna.',
       'Bono de clientes: 1% del importe cobrado sin IVA para marcas actuales FCLI.CLITARJETA=Nuevo o Viejo_Reactivado. Para cálculo se invierte el signo del pago firmado, como en el Excel; los PA de signo opuesto compensan, no se vuelven ingresos por ABS. Detalle a cuatro decimales y redondeo por agente. Recurrente/Inactivo no generan bono; Sin clasificar queda pendiente.',
       'La rutina CLIENTES NUEVO.pdf clasifica usando CURDATE() y actualiza FCLI.CLITARJETA/CLILOCALIZ. El reporte sólo lee la marca guardada; no ejecuta esa rutina ni reconstruye una marca histórica a la fecha del pago.',
       'Liquidación basada en el Excel proporcionado: requiere elegir modalidad del 1% y confirmar planes pendientes. El tabulador mensual exige margen neto mayor a 16%. Los perfiles del ejemplo sólo se precargan para septiembre 2026 de México; no se extrapolan.',
-      'Costo manual, flete y gratificaciones son ajustes del reporte, separados del origen; no escriben al ERP. El Excel presenta detalle por agente y fecha, resumen de tres renglones por agente y hojas individuales de quince columnas con resumen compacto, marca nuevo y su 1% pagado.',
+      'Costo manual, flete y gratificaciones son ajustes del reporte, separados del origen; no escriben al ERP. El Excel presenta detalle por agente y fecha, resumen de tres renglones por agente y hojas individuales de dieciséis columnas con resumen compacto, marca nuevo y su 1% pagado.',
       'Importes sin conversión adicional de moneda, descuentos ni IVA; no se afirma moneda base no verificada.',
     ] };
 }

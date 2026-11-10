@@ -50,3 +50,6 @@ Content-Type: application/json
   "criteria": { "from": "2026-09-01", "to": "2026-09-30", "branch": "01", "agent": "1231" },
   "settings": { "bonusMode": "exclusive", "agents": [ { "code": "1231", "plan": "fixed", "fixedRate": 6 } ] }
 }
+
+### Notas C asignadas al vendedor actual por cliente; incluye notas de agentes anteriores
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-10-01&to=2026-10-31&branch=01&agent=1223

@@ -31,8 +31,8 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
     const next = new Date(criteria.to + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1);
     const params: Array<string | number> = [criteria.from, next.toISOString().slice(0, 10), 4];
     const filterParams: Array<string | number> = [];
-    let filter = '';
-    if (warehouses) { filter += ` AND d.DALMACEN IN (${warehouses.map(() => '?').join(',')})`; filterParams.push(...warehouses); }
+    let filter = '', warehouseFilter = '';
+    if (warehouses) { warehouseFilter = ` AND d.DALMACEN IN (${warehouses.map(() => '?').join(',')})`; filter = warehouseFilter; filterParams.push(...warehouses); }
     if (criteria.agent !== 'all') { filter += ' AND TRIM(d.DPAR1)=?'; filterParams.push(criteria.agent); }
     params.push(...filterParams);
     // DERIVADA: PA is aggregated once per invoice. D/C/K are separate dated
@@ -69,17 +69,42 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
           (SELECT CASE WHEN COUNT(*)=1 THEN MIN(x.DSEQ) END FROM fdoc x
            WHERE x.DNUM=a.AREFPAG AND x.DMULTICIA=d.DMULTICIA AND x.CLISEQ=d.CLISEQ AND LEFT(x.DNUM,1) IN ('C','D')) END sourceId
       FROM fax a JOIN fdoc d ON d.DSEQ=a.DSEQ
-      WHERE a.AFECHA>=? AND a.AFECHA<? AND d.DESFACT=1${filter} AND (
+      WHERE a.AFECHA>=? AND a.AFECHA<? AND d.DESFACT=1${warehouseFilter} AND (
         (a.ATIPMV='K' AND LEFT(d.DNUM,1)='F' AND a.ACANT<0 AND EXISTS
           (SELECT 1 FROM fax paid WHERE paid.DSEQ=d.DSEQ AND paid.ATIPMV='PA' AND paid.ACANT<0 AND paid.AFECHA<=a.AFECHA))
         OR (LEFT(a.ATIPMV,1) IN ('D','C') AND a.ACANT<0 AND LEFT(d.DNUM,1) IN ('F','D','C'))
         OR (a.ATIPMV='K' AND LEFT(d.DNUM,1) IN ('D','C') AND a.ACANT>0)
       )
+    ), salesAgents AS (
+      SELECT TRIM(AGTNUM) code,MAX(TRIM(AGDESCR)) name FROM fag WHERE AGT='1' GROUP BY TRIM(AGTNUM)
+    ), creditCustomers AS (
+      SELECT DISTINCT d.CLISEQ customerId,d.DMULTICIA companyId
+      FROM events e JOIN fdoc d ON d.DSEQ=e.DSEQ
+      WHERE LEFT(e.ATIPMV,1)='C' OR (e.ATIPMV='K' AND LEFT(d.DNUM,1)='C')
+    ), creditAgents AS (
+      SELECT c.customerId,c.companyId,
+        (SELECT TRIM(x.DPAR1) FROM fdoc x
+         WHERE x.CLISEQ=c.customerId AND x.DMULTICIA=c.companyId AND LEFT(x.DNUM,1)='F'
+           AND x.DESFACT=1 AND x.DCANCELADA=0 AND x.DBRUTO>0 AND x.DFECHA<?
+           AND EXISTS (SELECT 1 FROM salesAgents validAgent WHERE validAgent.code=TRIM(x.DPAR1) AND validAgent.code<>'')
+         ORDER BY x.DFECHA DESC,x.DSEQ DESC LIMIT 1) billingAgent,
+        (SELECT NULLIF(TRIM(f.CLIPAR1),'') FROM fcli f
+         WHERE f.CLISEQ=c.customerId AND EXISTS (SELECT 1 FROM salesAgents validAgent WHERE validAgent.code=TRIM(f.CLIPAR1))) catalogAgent
+      FROM creditCustomers c
+    ), assigned AS (
+      SELECT e.*,CASE WHEN LEFT(e.ATIPMV,1)='C' OR (e.ATIPMV='K' AND LEFT(d.DNUM,1)='C')
+        THEN COALESCE(NULLIF(TRIM(r.DPAR1),''),TRIM(d.DPAR1)) ELSE TRIM(d.DPAR1) END originalAgentCode,
+        CASE WHEN ca.customerId IS NOT NULL THEN COALESCE(ca.billingAgent,ca.catalogAgent,NULLIF(TRIM(r.DPAR1),''),TRIM(d.DPAR1)) ELSE TRIM(d.DPAR1) END agentCode,
+        CASE WHEN ca.billingAgent IS NOT NULL THEN 'latest-invoice' WHEN ca.catalogAgent IS NOT NULL THEN 'customer-catalog' ELSE 'document' END agentAssignment
+      FROM events e JOIN fdoc d ON d.DSEQ=e.DSEQ LEFT JOIN fdoc r ON r.DSEQ=e.sourceId
+      LEFT JOIN creditAgents ca ON ca.customerId=d.CLISEQ AND ca.companyId=d.DMULTICIA
+        AND (LEFT(e.ATIPMV,1)='C' OR (e.ATIPMV='K' AND LEFT(d.DNUM,1)='C'))
     ) SELECT /*+ MAX_EXECUTION_TIME(30000) */ d.DSEQ id,
       CASE WHEN LEFT(d.DNUM,1)='F' AND e.ATIPMV<>'K' THEN COALESCE(r.DNUM,NULLIF(e.AREFPAG,''),d.DNUM) ELSE d.DNUM END number,
       d.DCANCELADA canceled,COALESCE(r.DFECHA,d.DFECHA) date,e.AFECHA firstPaymentDate,e.AFECHA lastPaymentDate,
-      COALESCE(f.CLICOD,'') customerCode,COALESCE(f.CLINOM,d.DCLINOM) customerName,TRIM(d.DPAR1) agentCode,
+      COALESCE(f.CLICOD,'') customerCode,COALESCE(f.CLINOM,d.DCLINOM) customerName,e.agentCode,
       COALESCE(NULLIF(g.name,''),'Sin agente identificado') agentName,d.DALMACEN warehouse,d.DMONEDA currency,d.DMULTICIA companyId,
+      e.originalAgentCode,COALESCE(NULLIF(og.name,''),'Sin agente identificado') originalAgentName,e.agentAssignment,
       CAST(COALESCE(r.DBRUTO,d.DBRUTO) AS CHAR) subtotal,'0.00000000' payments,'0.00000000' returns,'0.00' freight,
       IF(f.CLITARJETA='Nuevo','Nuevo','') newCustomer,COALESCE(f.CLITARJETA,'') customerStatusRaw,0 paymentCount,
       IF(d.DPORCIVA IS NULL OR d.DPORCIVA=-100,1,0) invalidVatCount,
@@ -93,23 +118,24 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
         (SELECT SUM(ABS(original.ACANT)/NULLIF(1+r.DPORCIVA/100,0)) FROM fax original WHERE original.DSEQ=r.DSEQ
           AND ((LEFT(r.DNUM,1)='F' AND original.ATIPMV=r.DITIPMV)
             OR (LEFT(r.DNUM,1) IN ('D','C') AND LEFT(original.ATIPMV,1)=LEFT(r.DNUM,1))))) AS DECIMAL(38,8)) AS CHAR) sourceSubtotal
-    FROM events e JOIN fdoc d ON d.DSEQ=e.DSEQ LEFT JOIN fdoc r ON r.DSEQ=e.sourceId
+    FROM assigned e JOIN fdoc d ON d.DSEQ=e.DSEQ LEFT JOIN fdoc r ON r.DSEQ=e.sourceId
     LEFT JOIN fcli f ON f.CLISEQ=d.CLISEQ
-    LEFT JOIN (SELECT TRIM(AGTNUM) code,MAX(TRIM(AGDESCR)) name FROM fag WHERE AGT='1' GROUP BY TRIM(AGTNUM)) g ON g.code=TRIM(d.DPAR1)
+    LEFT JOIN salesAgents g ON g.code=e.agentCode LEFT JOIN salesAgents og ON og.code=e.originalAgentCode
     WHERE NOT EXISTS (SELECT 1 FROM faxinv serviceLine JOIN finv serviceProduct ON serviceProduct.ISEQ=serviceLine.ISEQ
       WHERE serviceLine.DSEQ=d.DSEQ AND serviceProduct.ITIPO=?)
       AND NOT EXISTS (SELECT 1 FROM faxinv serviceLine JOIN finv serviceProduct ON serviceProduct.ISEQ=serviceLine.ISEQ
       WHERE serviceLine.DSEQ=e.sourceId AND serviceProduct.ITIPO=?)
       AND NOT (LEFT(d.DNUM,1)='F' AND LEFT(e.ATIPMV,1) IN ('D','C') AND e.sourceId IS NOT NULL AND EXISTS
-        (SELECT 1 FROM fax posted WHERE posted.DSEQ=e.sourceId AND LEFT(posted.ATIPMV,1)=LEFT(e.ATIPMV,1) AND posted.ACANT<0))
+          (SELECT 1 FROM fax posted WHERE posted.DSEQ=e.sourceId AND LEFT(posted.ATIPMV,1)=LEFT(e.ATIPMV,1) AND posted.ACANT<0))${criteria.agent === 'all' ? '' : ' AND e.agentCode=?'}
     ORDER BY agentCode,e.AFECHA,e.ASEQ LIMIT 10001`;
     const connection = await this.db.getConnection();
     try {
       await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
       const [rows] = await connection.execute<RowDataPacket[]>(sql, params);
-      const [adjustments] = await connection.execute<RowDataPacket[]>(adjustmentSql, [criteria.from, next.toISOString().slice(0, 10), ...filterParams, 4, 4]);
+      const [adjustments] = await connection.execute<RowDataPacket[]>(adjustmentSql, [criteria.from, next.toISOString().slice(0, 10), ...(warehouses ?? []), next.toISOString().slice(0, 10), 4, 4, ...(criteria.agent === 'all' ? [] : [criteria.agent])]);
       if (rows.length + adjustments.length > 10000) throw new ApplicationError('El reporte excede 10,000 documentos/ajustes. Reduce el periodo o selecciona sucursal/agente.', 'COLLECTION_COMMISSIONS_TOO_LARGE', 413);
-      const invoices: CollectionInputs['invoices'] = [...rows.map(invoiceRow), ...adjustments.map(r => ({ ...invoiceRow(r), adjustment: {
+      const invoices: CollectionInputs['invoices'] = [...rows.map(invoiceRow), ...adjustments.map(r => ({ ...invoiceRow(r),
+        agentAttribution: { originalCode: String(r.originalAgentCode ?? r.agentCode).trim(), originalName: String(r.originalAgentName ?? r.agentName).trim(), source: r.agentAssignment ?? 'document' }, adjustment: {
         movementId: Number(r.movementId), kind: String(r.adjustmentKind) as CollectionAdjustment['kind'],
         date: String(r.lastPaymentDate), amount: r.adjustmentAmount === null ? null : String(r.adjustmentAmount), movementType: String(r.movementType).trim(),
         sourceDocumentId: r.sourceDocumentId === null ? null : Number(r.sourceDocumentId), sourceSubtotal: r.sourceSubtotal === null ? null : String(r.sourceSubtotal),

@@ -2,6 +2,9 @@
 
 Vigente desde el 2026-11-10. Amplía el reporte de Ventas y sustituye el alcance
 anterior que sólo etiquetaba el estado actual de cancelación en los cobros PA.
+Ampliación vigente: [notas de crédito por vendedor y columna separada](collection-credit-note-agents.md).
+Ese documento actualiza la asignación de C, sus reversiones y el formato Excel
+de dieciséis columnas; las métricas de quince columnas al final son históricas.
 
 ## Procedencia y trazabilidad
 
@@ -14,7 +17,7 @@ No se activó general_log ni se modificaron datos o configuración del servidor.
 | Reporte Comisiones x Cobranza / Vista previa | Movimientos desde / hasta | Solicitud 2026-11-10; sin marcador de captura | GET /api/sales/reports/collection-commissions | FAX, FDOC, FCLI, FAG, FAXINV, FINV |
 | Documento del reporte | CANCELADA, DEVOLUCIÓN, NOTA DE CRÉDITO, REVISAR | AFECHA y ASEQ del auxiliar | Mismo GET y POST /preview | FAX, FDOC |
 | Liquidación y ajustes | Recalcular liquidación | Respuesta con cobros y ajustes firmados | POST /api/sales/reports/collection-commissions/preview | Mismo snapshot READ ONLY |
-| Excel | Pago / ajuste, Devoluciones / NC | Misma respuesta vigente | Sin HTTP adicional | Sin SQL adicional |
+| Excel | Pago / ajuste, Devoluciones, Notas de crédito | Misma respuesta vigente | Sin HTTP adicional | Sin SQL adicional |
 
 ## Selección y fecha contable
 

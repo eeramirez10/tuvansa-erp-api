@@ -1,6 +1,6 @@
 # Reporte Comisiones x Cobranza
 
-Actualizado el 2026-11-09. Pertenece a **Ventas**, por indicación expresa del usuario:
+Actualizado el 2026-11-10. Pertenece a **Ventas**, por indicación expresa del usuario:
 **Reportes de Ventas → Comisiones → Reporte Comisiones x Cobranza**.
 Disponible desde Pedidos, Facturación y su ruta `/ventas/reportes/comisiones-por-cobranza`.
 El enlace anterior de Contabilidad redirige conservando query/hash; Contabilidad
@@ -27,6 +27,7 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
 | Reporte Comisiones x Cobranza | Vista previa | Código de los cuatro PDF; sin captura nueva | Derivada | GET /api/sales/reports/collection-commissions | FAX, FDOC, FCLI, FAG, FAXINV, FINV |
 | Reporte Comisiones x Cobranza | Resumen por agente / Descargar Excel | Presentación de respuesta vigente | Derivada/presentación | Sin HTTP adicional | Sin SQL adicional |
 | Liquidación y ajustes | Recalcular liquidación | Excel y CLIENTES NUEVO.pdf; sin marcador MySQL | Derivada | POST /api/sales/reports/collection-commissions/preview | Mismas tablas y snapshot de lectura; sin persistencia |
+| Vista previa / Excel | CANCELADA junto al folio | Solicitud 2026-11-10, sin captura MySQL | Derivada | Mismos GET y POST preview | FDOC.DCANCELADA; mismos pagos y partidas |
 
 ## Selección de documentos y pagos (211/213)
 
@@ -35,7 +36,7 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
 - Requiere al menos un **ATIPMV=PA** dentro del rango. Movimientos D* del mismo
   intervalo aportan devoluciones; devoluciones sin PA no generan documento.
   Este HAVING precisa el alcance solicitado frente a 213.
-- DCANCELADA=0, excluye AF y limita a DESFACT=1 con folio F. No añade filtros
+- Incluye vigentes y canceladas; `canceled` refleja FDOC.DCANCELADA=1. Excluye AF y limita a DESFACT=1 con folio F. No añade filtros
   DSTATUSCFD=3, DEST=0, AMES=1 o POS de otros reportes. Por solicitud posterior
   se excluye completa cualquier factura con al menos una partida de servicio
   **FINV.ITIPO=4**, incluidas las mixtas. No se limita a productos ITIPO=1.
@@ -47,6 +48,9 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
 - Subtotal `S=DBRUTO`; pago firmado de cálculo `Q=-S` si `ABS(P)>S`, de otro modo `Q=P`.
   El pago original se conserva en `payments`. Total=S+devoluciones firmadas;
   flete=DCOSTOFLETE y cliente nuevo=marca actual CLITARJETA=Nuevo.
+  Excepción derivada del 2026-11-10: una cancelada con S=0 conserva P, sin
+  limitarlo artificialmente a cero. El cero posterior a cancelar no identifica
+  el subtotal original; costo real y utilidad son null si falta esa base histórica.
 - **Presentación:** `displayPaymentAmount=ABS(Q)`. Pantalla, Excel, subtotales
   de agente y total general usan la suma de esos valores positivos por factura;
   no ABS de la suma neta. `paymentAmount`, `payments`, `totals.payment` y
@@ -67,6 +71,43 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
   en las operaciones activas de 211/214.
 
 ## Costo y utilidad (214 de CUATRO.pdf)
+
+### Facturas canceladas (2026-11-10)
+
+Se retira únicamente la exclusión `d.DCANCELADA=0` y se proyecta `canceled`
+como booleano de dominio. Siguen siendo obligatorios PA dentro del periodo
+FAX.AFECHA, sucursal/agente y exclusión completa de servicios, incluidas mixtas.
+No se agregan filtros fiscales ni se inventa una devolución por cancelar.
+
+Pantalla usa Badge compartido shadcn **CANCELADA** junto al folio; Excel lo coloca
+en segunda línea roja del mismo campo Factura, tanto en Ventas por agente como
+en la hoja individual. No agrega columnas ni cambia el número de hojas.
+
+El estado es **actual**, no histórico al cierre del periodo. FDOC no expone una
+fecha de cancelación. La única columna de fecha de cancelación encontrada en
+el esquema es FPENC.PEDATECANCELED, de pedidos, y no se usa como fecha de factura.
+Por eso una factura pagada fuera del rango y cancelada dentro de él no se puede
+ubicar automáticamente por fecha de cancelación con esta fuente. Se mantiene
+el criterio de pagos del reporte; no se traen todos los PA históricos a cada mes
+ni se revierten automáticamente comisiones ya pagadas.
+
+Caso real septiembre 2026/México: se agrega una cancelada a las 69 facturas
+anteriores. Conserva PA por 22,690.03 sin IVA, pero su DBRUTO actual es cero y
+no conserva partidas de venta para calcular costo. Se muestra ese pago conocido;
+costo real/utilidad/comisión afectados permanecen no disponibles, con avisos,
+sin usar cero ni reconstruir un costo supuesto. Los valores de las 69 facturas
+anteriores no cambian. Evidencia privada bajo
+`captures/sql/new-version/sales/commission-cancellations-20261110/`.
+
+Validación: **238 pruebas** y lint/build aprobados. Navegador/API real verifica
+el Badge y cuatro descargas, con 12 hojas/441 fórmulas por libro conciliadas
+contra la respuesta y evaluadas independientemente. Se verifica CANCELADA en
+ambas hojas de detalle, preservación del PA y celdas de costo/utilidad vacías.
+Frontend lint/typecheck/build aprobados. Evidencia visual/Excel bajo
+`captures/ui/new-version/commission-cancellations-20261110/`; general_log OFF,
+sin cambios de datos, configuración ni reinicios.
+
+### Fórmulas de costo
 
 Para cada factura se seleccionan sus partidas FAXINV relacionadas por DSEQ con
 FDOC y por ISEQ con FINV. El movimiento de costo depende de FDOC.DMULTICIA:

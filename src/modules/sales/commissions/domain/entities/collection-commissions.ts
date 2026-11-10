@@ -5,7 +5,7 @@ export type CollectionCriteria = { from: string; to: string; branch: string; age
 export type CollectionOptions = { company: string; defaultFrom: string; defaultTo: string;
   branches: Array<{ code: string; name: string; warehouses: string[] }>;
   agents: Array<{ code: string; name: string }> };
-export type CollectionInvoiceInput = { id: number; number: string; date: string; firstPaymentDate: string; lastPaymentDate: string;
+export type CollectionInvoiceInput = { id: number; number: string; canceled: boolean; date: string; firstPaymentDate: string; lastPaymentDate: string;
   customerCode: string; customerName: string; agentCode: string; agentName: string; warehouse: string; currency: number; companyId: number;
   subtotal: string; payments: string | null; returns: string | null; freight: string; newCustomer: string; customerStatusRaw: string;
   paymentCount: number; invalidVatCount: number };
@@ -51,7 +51,9 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
   const invoices = input.invoices.filter(row => !serviceInvoices.has(row.id)).map<CollectionInvoice>(row => {
     const subtotal = collectionCents(row.subtotal), returns = row.returns === null ? null : collectionCents(row.returns);
     const payment = row.payments === null ? null : collectionCents(row.payments);
-    const capped = payment !== null && Math.abs(payment) > subtotal;
+    // Cancellation may zero DBRUTO after collection. A known PA must not become
+    // a fictitious zero payment; an unavailable original cost remains unknown.
+    const capped = payment !== null && Math.abs(payment) > subtotal && !(row.canceled && subtotal === 0);
     const presented = payment === null ? null : capped ? -subtotal : payment;
     const costMovementType = saleMovementTypes[row.companyId] ?? null;
     const lines = (products.get(row.id) ?? []).filter(p => p.movementType === costMovementType);
@@ -107,10 +109,10 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       'Movimiento de costo por compañía FDOC.DMULTICIA: 1=FA, 2=FB, 3=FC, 4=FD, 5=FZ, 6=FV, 7=FX. No se filtra AIMES. 1/5/7 están explícitos en el método 214; los demás se verificaron en las partidas de las facturas cobradas.',
       'Periodo inclusivo aplicado a FAX.AFECHA, no a FDOC.DFECHA. Incluye facturas con uno o más pagos PA en el periodo, aunque sean parciales o de facturas de otros meses.',
       'Referencia: métodos 211 y 213 de los PDF proporcionados. Pagos PA y devoluciones de tipo D se suman por separado sin IVA: ACANT/(1+DPORCIVA/100). Conserva los signos originales.',
-      'Pago de cálculo limitado al negativo del subtotal DBRUTO cuando su valor absoluto supera ese subtotal, según el método 211. Para presentación se muestra su valor absoluto; subtotales y total suman esos valores positivos por documento. El cálculo y los movimientos conservan sus signos originales.',
+      'Pago de cálculo limitado al negativo del subtotal DBRUTO cuando su valor absoluto supera ese subtotal, según el método 211. Excepción derivada: canceladas con DBRUTO=0 conservan el PA original sin IVA, pues el cero posterior no identifica el subtotal antes de cancelar. Costo/utilidad permanecen no disponibles si falta la base histórica. Para presentación se muestra el valor absoluto; subtotales y total suman esos valores por documento. Los movimientos conservan sus signos originales.',
       'Por solicitud del usuario se excluye completa cualquier factura con una partida de servicio (FINV.ITIPO=4), también las mixtas. No aporta pagos, costos, documentos ni partidas a los totales o al Excel. Se utiliza la clasificación actual del catálogo.',
       'Una fila por DSEQ. Fecha pago y días usan el último PA del periodo; también se conserva la primera fecha y cada movimiento. No se usa una fecha arbitraria de GROUP BY DNUM.',
-      'Facturas DESFACT=1 con folio F, DCANCELADA=0; excluye AF. No se hereda DSTATUSCFD=3 del reporte de ventas por familia. Devoluciones sin PA del periodo no generan una fila.',
+      'Facturas DESFACT=1 con folio F, incluidas canceladas; canceled identifica el estado actual FDOC.DCANCELADA=1. Excluye AF. No se hereda DSTATUSCFD=3 del reporte de ventas por familia. Se requieren pagos PA dentro del periodo; la marca no identifica la fecha de cancelación ni revierte automáticamente comisiones anteriores.',
       'México usa los almacenes 01 y 15 del método 213. Las demás sucursales se amplían con el catálogo FALMCAT; sin atribuir movimientos por el nombre del almacén.',
       'FAG se limita a AGT=1 y se agrupa por código para evitar multiplicar pagos. Las partidas FAXINV/FINV se leen aparte: no multiplican la cobranza. Documentos agrupados por agente con subtotales.',
       'Bono de clientes: 1% del importe cobrado sin IVA para marcas actuales FCLI.CLITARJETA=Nuevo o Viejo_Reactivado. Para cálculo se invierte el signo del pago firmado, como en el Excel; los PA de signo opuesto compensan, no se vuelven ingresos por ABS. Detalle a cuatro decimales y redondeo por agente. Recurrente/Inactivo no generan bono; Sin clasificar queda pendiente.',

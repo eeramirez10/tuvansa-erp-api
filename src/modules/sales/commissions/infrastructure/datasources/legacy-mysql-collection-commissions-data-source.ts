@@ -31,7 +31,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
       SELECT a.DSEQ,a.AFECHA,a.ATIPMV,a.ACANT,d.DPORCIVA
       FROM fax a JOIN fdoc d ON d.DSEQ=a.DSEQ
       WHERE a.AFECHA>=? AND a.AFECHA<? AND (a.ATIPMV='PA' OR LEFT(a.ATIPMV,1)='D')
-        AND d.DCANCELADA=0 AND LEFT(d.DNUM,2)<>'AF' AND LEFT(d.DNUM,1)='F' AND d.DESFACT=1
+        AND LEFT(d.DNUM,2)<>'AF' AND LEFT(d.DNUM,1)='F' AND d.DESFACT=1
         AND NOT EXISTS (SELECT 1 FROM faxinv serviceLine JOIN finv serviceProduct ON serviceProduct.ISEQ=serviceLine.ISEQ
           WHERE serviceLine.DSEQ=d.DSEQ AND serviceProduct.ITIPO=?)${filter}
     ), collected AS (
@@ -42,7 +42,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
         SUM(DPORCIVA IS NULL OR DPORCIVA=-100) invalidVatCount
       FROM period GROUP BY DSEQ HAVING SUM(ATIPMV='PA')>0
     )
-    SELECT /*+ MAX_EXECUTION_TIME(30000) */ d.DSEQ id,d.DNUM number,d.DFECHA date,c.firstPaymentDate,c.lastPaymentDate,
+    SELECT /*+ MAX_EXECUTION_TIME(30000) */ d.DSEQ id,d.DNUM number,d.DCANCELADA canceled,d.DFECHA date,c.firstPaymentDate,c.lastPaymentDate,
       COALESCE(f.CLICOD,'') customerCode,COALESCE(f.CLINOM,d.DCLINOM) customerName,
       TRIM(d.DPAR1) agentCode,COALESCE(NULLIF(g.name,''),'Sin agente identificado') agentName,d.DALMACEN warehouse,d.DMONEDA currency,d.DMULTICIA companyId,
       CAST(d.DBRUTO AS CHAR) subtotal,c.payments,c.returns,CAST(d.DCOSTOFLETE AS CHAR) freight,
@@ -55,7 +55,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
       await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
       const [rows] = await connection.execute<RowDataPacket[]>(sql, params);
       if (rows.length > 10000) throw new ApplicationError('El reporte excede 10,000 facturas. Reduce el periodo o selecciona sucursal/agente.', 'COLLECTION_COMMISSIONS_TOO_LARGE', 413);
-      const invoices: CollectionInputs['invoices'] = rows.map(r => ({ id: Number(r.id), number: String(r.number).trim(), date: String(r.date),
+      const invoices: CollectionInputs['invoices'] = rows.map(r => ({ id: Number(r.id), number: String(r.number).trim(), canceled: Number(r.canceled) === 1, date: String(r.date),
         firstPaymentDate: String(r.firstPaymentDate), lastPaymentDate: String(r.lastPaymentDate), customerCode: String(r.customerCode).trim(),
         customerName: String(r.customerName).trim(), agentCode: String(r.agentCode).trim(), agentName: String(r.agentName).trim(), warehouse: String(r.warehouse).trim(),
         currency: Number(r.currency), companyId: Number(r.companyId), subtotal: String(r.subtotal), payments: Number(r.invalidVatCount) ? null : r.payments === null ? null : String(r.payments),

@@ -11,7 +11,7 @@ vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({ l
 import { LegacyMysqlCollectionCommissionsDataSource } from '../src/modules/sales/commissions/infrastructure/datasources/legacy-mysql-collection-commissions-data-source.js';
 const options: CollectionOptions = { company: 'TEST', defaultFrom: '', defaultTo: '', branches: [{ code: '01', name: 'MEXICO', warehouses: ['01','15'] }], agents: [{ code: 'A01', name: 'AGENTE' }] };
 const criteria = { from: '2026-08-01', to: '2026-08-31', branch: '01', agent: 'all' };
-const invoice: CollectionInputs['invoices'][number] = { id: 10, number: 'FE001', date: '2026-07-15', firstPaymentDate: '2026-08-05', lastPaymentDate: '2026-08-25',
+const invoice: CollectionInputs['invoices'][number] = { id: 10, number: 'FE001', canceled: false, date: '2026-07-15', firstPaymentDate: '2026-08-05', lastPaymentDate: '2026-08-25',
   customerCode: '000001', customerName: 'TEST', agentCode: 'A01', agentName: 'AGENTE', warehouse: '15', currency: 1,
   subtotal: '100.00', payments: '-150.00000000', returns: '-10.00000000', freight: '3.50', newCustomer: 'Nuevo', customerStatusRaw: 'Nuevo', paymentCount: 2, invalidVatCount: 0, companyId: 1 };
 const input: CollectionInputs = { invoices: [invoice], movements: [], products: [] };
@@ -19,6 +19,36 @@ const repo = () => ({ options: vi.fn().mockResolvedValue(options), read: vi.fn()
 const connection = () => ({ query: vi.fn().mockResolvedValue([]), execute: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() });
 afterEach(() => vi.clearAllMocks());
 describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
+  it('incluye canceladas de facturas anteriores al periodo y conserva pagos, costos y comisiones sin inventar reversos', () => {
+    const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: 'TEST', description: '', family: '',
+      quantity: '1', billedQuantity: '1', price: '100', unitCost: '60', typeId: 1, applied: 0, movementType: 'FA', location: '' };
+    const data = { ...input, invoices: [{ ...invoice, canceled: true, payments: '-25' }, { ...invoice, id: 11, canceled: false, payments: '-25' }],
+      products: [product, { ...product, id: 2, invoiceId: 11 }] };
+    const settings = { bonusMode: 'additional' as const, agents: [{ code: 'A01', plan: 'fixed' as const, fixedRate: 10 }] };
+    const report = buildCollectionCommissions(options, criteria, data, '', settings);
+    expect(report.invoices.map(r => r.canceled)).toEqual([true, false]);
+    expect(report.invoices[0]).toMatchObject({ date: '2026-07-15', lastPaymentDate: '2026-08-25', paymentAmount: -25, cost: 60, realCost: 15 });
+    const active = buildCollectionCommissions(options, criteria, { ...data, invoices: data.invoices.map(r => ({ ...r, canceled: false })) }, '', settings);
+    expect(report.totals).toEqual(active.totals);
+    expect(report.settlement).toEqual(active.settlement);
+  });
+  it('expone el estado cancelado por HTTP y lo mapea desde DCANCELADA sin excluir el documento', async () => {
+    const repository = repo(); repository.read.mockResolvedValue({ ...input, invoices: [{ ...invoice, canceled: true }] });
+    const app = express().use(createCollectionCommissionsRouter(new GetCollectionCommissions(repository))).use(errorHandler);
+    const response = await request(app).get('/collection-commissions?from=2026-08-01&to=2026-08-31').expect(200);
+    expect(response.body.data.invoices[0].canceled).toBe(true);
+    const conn = connection(); conn.execute.mockResolvedValueOnce([[{ ...invoice, canceled: 1 }], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
+    expect((await source.read(criteria)).invoices[0]?.canceled).toBe(true);
+    expect(conn.execute.mock.calls[0]![0]).not.toContain('d.DCANCELADA=0');
+  });
+  it('conserva el PA de una cancelada cuyo subtotal se borró sin inventar costo histórico ni utilidad cero', () => {
+    const report = buildCollectionCommissions(options, criteria, { ...input, invoices: [{ ...invoice, canceled: true, subtotal: '0', payments: '-25' }] }, '');
+    expect(report.invoices[0]).toMatchObject({ canceled: true, subtotalAmount: 0, paymentAmount: -25, displayPaymentAmount: 25, paymentCapped: false,
+      cost: null, realCost: null, profit: null, margin: null });
+    expect(report.totals).toMatchObject({ payment: -25, displayPayment: 25, cost: null, realCost: null, profit: null });
+    expect(report.settlement.agents[0]?.regularCommission).toBeNull();
+  });
   it('ordena por agente y fecha de factura, con folio e identificador como desempate', () => {
     const invoices = [
       { ...invoice, id: 14, agentCode: 'B01', date: '2026-01-01' },
@@ -91,7 +121,7 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     const product: CollectionInputs['products'][number] = { id: 1, invoiceId: 10, productId: 1, code: 'TEST', description: '', family: '', typeId: 1,
       quantity: '2', billedQuantity: '2', price: '50', unitCost: '30', applied: 1, movementType: 'FA', location: '' };
     const movement: CollectionInputs['movements'][number] = { id: 1, invoiceId: 10, date: '2026-08-25', type: 'PA', amount: '-174', vatRate: '16', withoutVat: '-150', reference: '' };
-    const report = buildCollectionCommissions(options, criteria, { invoices: [invoice, { ...invoice, id: 11, agentCode: 'SERVICE' }, { ...invoice, id: 12, agentCode: 'MIXED' }],
+    const report = buildCollectionCommissions(options, criteria, { invoices: [invoice, { ...invoice, id: 11, canceled: true, agentCode: 'SERVICE' }, { ...invoice, id: 12, canceled: true, agentCode: 'MIXED' }],
       products: [product, { ...product, id: 2, invoiceId: 11, typeId: 4 }, { ...product, id: 3, invoiceId: 12 }, { ...product, id: 4, invoiceId: 12, typeId: 4, movementType: 'FE' }],
       movements: [movement, { ...movement, id: 2, invoiceId: 11 }, { ...movement, id: 3, invoiceId: 12 }] }, '');
     expect(report.invoices.map(r => r.id)).toEqual([10]); expect(report.products.map(r => r.id)).toEqual([1]); expect(report.movements.map(r => r.id)).toEqual([1]);
@@ -132,7 +162,8 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     await source.read({ ...criteria, agent: 'A01' }, ['01','15']);
     const [sql, params] = conn.execute.mock.calls[0]!;
     expect(params).toEqual(['2026-08-01','2026-09-01',4,'01','15','A01']);
-    for (const text of ['a.AFECHA>=?', 'a.AFECHA<?', "a.ATIPMV='PA'", "LEFT(a.ATIPMV,1)='D'", 'ACANT/NULLIF(1+DPORCIVA/100,0)', "HAVING SUM(ATIPMV='PA')>0", 'd.DCANCELADA=0', "LEFT(d.DNUM,2)<>'AF'"]) expect(sql).toContain(text);
+    for (const text of ['a.AFECHA>=?', 'a.AFECHA<?', "a.ATIPMV='PA'", "LEFT(a.ATIPMV,1)='D'", 'ACANT/NULLIF(1+DPORCIVA/100,0)', "HAVING SUM(ATIPMV='PA')>0", 'd.DCANCELADA canceled', "LEFT(d.DNUM,2)<>'AF'"]) expect(sql).toContain(text);
+    expect(sql).not.toContain('d.DCANCELADA=0');
     for (const text of ['d.DFECHA>=','JOIN faxinv a','JOIN fpenc','DSTATUSCFD=3','SUM(ABS(']) expect(sql).not.toContain(text);
     for (const text of ['AND NOT EXISTS (SELECT 1 FROM faxinv serviceLine', 'serviceProduct.ISEQ=serviceLine.ISEQ', 'serviceLine.DSEQ=d.DSEQ AND serviceProduct.ITIPO=?']) expect(sql).toContain(text);
     for (const text of ['LEFT JOIN finv', 'a.AITIPMV movementType', "COALESCE(i.ILUGAR,'') location"]) expect(conn.execute.mock.calls[2]?.[0]).toContain(text);

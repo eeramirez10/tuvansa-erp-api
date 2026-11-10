@@ -1,5 +1,11 @@
 @baseUrl = http://localhost:3000/api
 
+### Octubre: PA del periodo y ajustes K/D/C por su propia AFECHA, sin exigir PA nuevo al ajuste
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-10-01&to=2026-10-31&branch=01&agent=all
+
+### Caso FE0064831: cancelación K del 29/octubre (el PA pertenece a septiembre)
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-10-29&to=2026-10-29&branch=01&agent=1223
+
 ### Sucursales, agentes y periodo inicial de pagos (mes actual)
 GET {{baseUrl}}/sales/reports/collection-commissions/options
 

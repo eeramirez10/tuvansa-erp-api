@@ -37,7 +37,7 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     const app = express().use(createCollectionCommissionsRouter(new GetCollectionCommissions(repository))).use(errorHandler);
     const response = await request(app).get('/collection-commissions?from=2026-08-01&to=2026-08-31').expect(200);
     expect(response.body.data.invoices[0].canceled).toBe(true);
-    const conn = connection(); conn.execute.mockResolvedValueOnce([[{ ...invoice, canceled: 1 }], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const conn = connection(); conn.execute.mockResolvedValueOnce([[{ ...invoice, canceled: 1 }], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
     const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
     expect((await source.read(criteria)).invoices[0]?.canceled).toBe(true);
     expect(conn.execute.mock.calls[0]![0]).not.toContain('d.DCANCELADA=0');
@@ -157,26 +157,42 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     await request(app).post('/collection-commissions').expect(404);
   });
   it('separa pagos de partidas, parametriza fechas AFECHA y requiere PA en una lectura consistente', async () => {
-    const conn = connection(); conn.execute.mockResolvedValueOnce([[invoice], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const conn = connection(); conn.execute.mockResolvedValueOnce([[invoice], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
     const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
     await source.read({ ...criteria, agent: 'A01' }, ['01','15']);
     const [sql, params] = conn.execute.mock.calls[0]!;
     expect(params).toEqual(['2026-08-01','2026-09-01',4,'01','15','A01']);
-    for (const text of ['a.AFECHA>=?', 'a.AFECHA<?', "a.ATIPMV='PA'", "LEFT(a.ATIPMV,1)='D'", 'ACANT/NULLIF(1+DPORCIVA/100,0)', "HAVING SUM(ATIPMV='PA')>0", 'd.DCANCELADA canceled', "LEFT(d.DNUM,2)<>'AF'"]) expect(sql).toContain(text);
+    for (const text of ['a.AFECHA>=?', 'a.AFECHA<?', "a.ATIPMV='PA'", 'ACANT/NULLIF(1+DPORCIVA/100,0)', "HAVING SUM(ATIPMV='PA')>0", 'd.DCANCELADA canceled', "LEFT(d.DNUM,2)<>'AF'"]) expect(sql).toContain(text);
     expect(sql).not.toContain('d.DCANCELADA=0');
     for (const text of ['d.DFECHA>=','JOIN faxinv a','JOIN fpenc','DSTATUSCFD=3','SUM(ABS(']) expect(sql).not.toContain(text);
     for (const text of ['AND NOT EXISTS (SELECT 1 FROM faxinv serviceLine', 'serviceProduct.ISEQ=serviceLine.ISEQ', 'serviceLine.DSEQ=d.DSEQ AND serviceProduct.ITIPO=?']) expect(sql).toContain(text);
-    for (const text of ['LEFT JOIN finv', 'a.AITIPMV movementType', "COALESCE(i.ILUGAR,'') location"]) expect(conn.execute.mock.calls[2]?.[0]).toContain(text);
-    expect(conn.execute.mock.calls[2]?.[0]).not.toContain('AIMES=1'); expect(sql).toContain('d.DMULTICIA companyId');
+    for (const text of ['LEFT JOIN finv', 'a.AITIPMV movementType', "COALESCE(i.ILUGAR,'') location"]) expect(conn.execute.mock.calls[3]?.[0]).toContain(text);
+    expect(conn.execute.mock.calls[3]?.[0]).not.toContain('AIMES=1'); expect(sql).toContain('d.DMULTICIA companyId');
     expect(conn.query).toHaveBeenCalledWith('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
     expect(conn.commit).toHaveBeenCalled(); expect(conn.rollback).not.toHaveBeenCalled(); expect(conn.release).toHaveBeenCalled();
   });
   it('no consulta detalles si no hay facturas y revierte/libera ante errores', async () => {
-    const conn = connection(); conn.execute.mockResolvedValueOnce([[], []]);
+    const conn = connection(); conn.execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
     const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
-    expect(await source.read(criteria)).toEqual({ invoices: [], movements: [], products: [] }); expect(conn.execute).toHaveBeenCalledTimes(1);
+    expect(await source.read(criteria)).toEqual({ invoices: [], movements: [], products: [] }); expect(conn.execute).toHaveBeenCalledTimes(2);
     conn.execute.mockRejectedValueOnce(new Error('read failure')); await expect(source.read(criteria)).rejects.toThrow('read failure');
     expect(conn.rollback).toHaveBeenCalled(); expect(conn.release).toHaveBeenCalledTimes(2);
+  });
+  it('consulta ajustes aunque no haya PA en el periodo y obtiene el costo del documento D relacionado', async () => {
+    const conn = connection();
+    const adjustment = { ...invoice, number: 'DA001', firstPaymentDate: '2026-08-12', lastPaymentDate: '2026-08-12',
+      movementId: 321, adjustmentKind: 'return', adjustmentAmount: '-100.00', movementType: 'DA', sourceDocumentId: 20, sourceSubtotal: '-100.00', relatedInvoiceNumber: 'FE001' };
+    conn.execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[adjustment], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
+    const result = await source.read({ ...criteria, agent: 'A01' }, ['01','15']);
+    expect(result.invoices[0]?.adjustment).toMatchObject({ kind: 'return', movementId: 321, date: '2026-08-12', sourceDocumentId: 20, amount: '-100.00' });
+    const [sql, params] = conn.execute.mock.calls[1]!;
+    expect(params).toEqual(['2026-08-01','2026-09-01','01','15','A01',4,4]);
+    for (const text of ["a.ATIPMV='K'", "LEFT(a.ATIPMV,1) IN ('D','C')", 'paid.AFECHA<=a.AFECHA', "paid.ATIPMV='PA'", 'posted.DSEQ=e.sourceId', 'LEFT(original.ATIPMV,1)=LEFT(r.DNUM,1)', 'x.CLISEQ=d.CLISEQ']) expect(sql).toContain(text);
+    expect(sql).not.toContain('d.DESCXC=1');
+    expect(conn.execute.mock.calls[3]![1]).toEqual([10,20]);
+    expect(conn.query).toHaveBeenCalledWith('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+    expect(conn.commit).toHaveBeenCalled();
   });
   it('el repository delega los filtros sin SQL propio', async () => {
     const source = repo(), repository = new CollectionCommissionsRepositoryImpl(source);

@@ -6,6 +6,10 @@ Disponible desde Pedidos, Facturación y su ruta `/ventas/reportes/comisiones-po
 El enlace anterior de Contabilidad redirige conservando query/hash; Contabilidad
 ya no incluye esta opción y conserva los otros tres reportes financieros.
 
+**Alcance vigente:** [cancelaciones por fecha K, devoluciones D y notas C](collection-commission-adjustments.md).
+Los ajustes se muestran firmados en su mes, aunque no haya PA dentro de ese mes.
+Ese documento sustituye las limitaciones del etiquetado inicial de canceladas.
+
 ## Evidencia y procedencia
 
 UNO.pdf (1 página), DOS.pdf (2), TRES.pdf (1) y CUATRO.pdf (1) son exportaciones
@@ -28,37 +32,41 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
 | Reporte Comisiones x Cobranza | Resumen por agente / Descargar Excel | Presentación de respuesta vigente | Derivada/presentación | Sin HTTP adicional | Sin SQL adicional |
 | Liquidación y ajustes | Recalcular liquidación | Excel y CLIENTES NUEVO.pdf; sin marcador MySQL | Derivada | POST /api/sales/reports/collection-commissions/preview | Mismas tablas y snapshot de lectura; sin persistencia |
 | Vista previa / Excel | CANCELADA junto al folio | Solicitud 2026-11-10, sin captura MySQL | Derivada | Mismos GET y POST preview | FDOC.DCANCELADA; mismos pagos y partidas |
+| Vista previa / Excel | CANCELADA / DEVOLUCIÓN / NOTA DE CRÉDITO / REVISAR | Ampliación 2026-11-10, FAX.AFECHA/ASEQ | Derivada | Mismos GET y POST preview | FAX, FDOC, FAXINV, FINV |
 
 ## Selección de documentos y pagos (211/213)
 
 - Intervalo inclusivo por **FAX.AFECHA**, nunca por FDOC.DFECHA: `>=from` y
   `<día siguiente de to`. Incluye pagos parciales y facturas de otros meses.
-- Requiere al menos un **ATIPMV=PA** dentro del rango. Movimientos D* del mismo
-  intervalo aportan devoluciones; devoluciones sin PA no generan documento.
-  Este HAVING precisa el alcance solicitado frente a 213.
+- Los renglones de cobro requieren **ATIPMV=PA** dentro del rango. Los ajustes
+  K/D/C se leen separadamente por AFECHA y no exigen PA en el mes del ajuste.
 - Incluye vigentes y canceladas; `canceled` refleja FDOC.DCANCELADA=1. Excluye AF y limita a DESFACT=1 con folio F. No añade filtros
   DSTATUSCFD=3, DEST=0, AMES=1 o POS de otros reportes. Por solicitud posterior
   se excluye completa cualquier factura con al menos una partida de servicio
   **FINV.ITIPO=4**, incluidas las mixtas. No se limita a productos ITIPO=1.
   Se usa la clasificación actual de FINV, sin inferir servicios por folio,
   descripción, costo cero o movimiento. Un tipo desconocido no se inventa como servicio.
-- Pago original `P=SUM(PA.ACANT/(1+DPORCIVA/100))`; devoluciones D* se suman
-  por separado sin IVA. Conserva signos, precisión decimal y movimientos originales.
+- Pago original `P=SUM(PA.ACANT/(1+DPORCIVA/100))`; D/C se muestran en renglones
+  separados, sin repetir su importe dentro del cobro. Conserva signos y precisión.
   IVA inválido produce null, nunca un importe falso cero.
 - Subtotal `S=DBRUTO`; pago firmado de cálculo `Q=-S` si `ABS(P)>S`, de otro modo `Q=P`.
-  El pago original se conserva en `payments`. Total=S+devoluciones firmadas;
+  El pago original se conserva en `payments`. El renglón PA conserva S y los
+  abonos D/C se presentan por separado, para no duplicarlos en el total;
   flete=DCOSTOFLETE y cliente nuevo=marca actual CLITARJETA=Nuevo.
   Excepción derivada del 2026-11-10: una cancelada con S=0 conserva P, sin
   limitarlo artificialmente a cero. El cero posterior a cancelar no identifica
   el subtotal original; costo real y utilidad son null si falta esa base histórica.
-- **Presentación:** `displayPaymentAmount=ABS(Q)`. Pantalla, Excel, subtotales
+- **Presentación de cobros PA:** `displayPaymentAmount=ABS(Q)`. Pantalla, Excel, subtotales
   de agente y total general usan la suma de esos valores positivos por factura;
   no ABS de la suma neta. `paymentAmount`, `payments`, `totals.payment` y
   `agents[].payment` conservan signos para cálculo/auditoría. Los resúmenes
   agregan `displayPayment`. Un importe desconocido sigue siendo null.
   La respuesta HTTP conserva los movimientos originales firmados. Costo prorrateado,
   utilidad y margen siguen usando P/Q firmados, sin alterarse por el cambio visual.
-- Una fila por DSEQ evita colisiones de folios. FECHA PAGO y DÍAS usan el último PA
+  Los ajustes K/D/C conservan su signo, también en `displayPaymentAmount`;
+  no se les aplica ABS. Reducen la base financiera del mes correspondiente.
+- Una fila de cobro por DSEQ evita colisiones de folios; los ajustes usan ASEQ.
+  Para cobros PA, FECHA PAGO y DÍAS usan el último PA
   del intervalo; conserva primera fecha, cantidad de pagos y cada fecha/importe.
   Corrige la AFECHA arbitraria del GROUP BY DNUM del procedimiento.
 - Agente DPAR1 relacionado con FAG.AGTNUM, restringido a AGT=1 y agrupado antes
@@ -72,7 +80,10 @@ de clientes, documentados al final. El formato actual agrega resumen y hojas por
 
 ## Costo y utilidad (214 de CUATRO.pdf)
 
-### Facturas canceladas (2026-11-10)
+### Estado anterior: etiqueta de canceladas (2026-11-10)
+
+La limitación de fecha descrita en este apartado fue superada por la lectura
+de movimientos K del auxiliar. Véase el documento de ajustes vigente enlazado arriba.
 
 Se retira únicamente la exclusión `d.DCANCELADA=0` y se proyecta `canceled`
 como booleano de dominio. Siguen siendo obligatorios PA dentro del periodo

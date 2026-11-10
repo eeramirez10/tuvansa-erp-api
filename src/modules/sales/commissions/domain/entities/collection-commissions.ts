@@ -5,16 +5,21 @@ export type CollectionCriteria = { from: string; to: string; branch: string; age
 export type CollectionOptions = { company: string; defaultFrom: string; defaultTo: string;
   branches: Array<{ code: string; name: string; warehouses: string[] }>;
   agents: Array<{ code: string; name: string }> };
+export type CollectionAdjustment = { movementId: number; kind: 'cancellation' | 'return' | 'credit-note' | 'adjustment-reversal';
+  date: string; amount: string | null; movementType: string; sourceDocumentId: number | null;
+  sourceSubtotal: string | null; relatedInvoiceNumber: string | null };
 export type CollectionInvoiceInput = { id: number; number: string; canceled: boolean; date: string; firstPaymentDate: string; lastPaymentDate: string;
   customerCode: string; customerName: string; agentCode: string; agentName: string; warehouse: string; currency: number; companyId: number;
   subtotal: string; payments: string | null; returns: string | null; freight: string; newCustomer: string; customerStatusRaw: string;
-  paymentCount: number; invalidVatCount: number };
+  paymentCount: number; invalidVatCount: number; adjustment?: CollectionAdjustment };
 export type CollectionMovement = { id: number; invoiceId: number; date: string; type: string; amount: string; vatRate: string;
   withoutVat: string | null; reference: string };
 export type CollectionProduct = { id: number; invoiceId: number; productId: number; code: string; description: string;
   family: string; quantity: string; billedQuantity: string; price: string; unitCost: string; applied: number; movementType: string; location: string; typeId: number | null };
 export type CollectionInputs = { invoices: CollectionInvoiceInput[]; movements: CollectionMovement[]; products: CollectionProduct[] };
-export type CollectionInvoice = CollectionInvoiceInput & ReturnType<typeof collectionCustomerBonus> & { branch: string; days: number; subtotalAmount: number; paymentAmount: number | null;
+export type CollectionInvoice = CollectionInvoiceInput & ReturnType<typeof collectionCustomerBonus> & { branch: string; days: number; subtotalAmount: number | null; paymentAmount: number | null;
+  rowKey: string; kind: 'collection' | CollectionAdjustment['kind']; eventDate: string; sourceMovementId: number | null;
+  relatedInvoiceNumber: string | null; reviewRequired: boolean; reviewReasons: string[];
   returnAmount: number | null; totalAmount: number | null; freightAmount: number; paymentCapped: boolean; displayPaymentAmount: number | null;
   cost: number | null; realCost: number | null; profit: number | null; signedProfit: number | null; margin: number | null;
   lm: number | null; lmAmount: number | null; costMovementType: string | null; costStatus: 'complete' | 'unavailable'; commissionAmount: null };
@@ -48,7 +53,51 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
   for (const product of input.products) { const rows = products.get(product.invoiceId) ?? []; rows.push(product); products.set(product.invoiceId, rows); }
   // Any service line excludes the whole document, including mixed invoices.
   const serviceInvoices = new Set(input.products.filter(p => p.typeId === 4).map(p => p.invoiceId));
-  const invoices = input.invoices.filter(row => !serviceInvoices.has(row.id)).map<CollectionInvoice>(row => {
+  const seen = new Set<string>();
+  const invoices = input.invoices.filter(row => !serviceInvoices.has(row.id) && !serviceInvoices.has(row.adjustment?.sourceDocumentId ?? row.id))
+    .filter(row => {
+      const key = row.adjustment ? `movement:${row.adjustment.movementId}` : `collection:${row.id}`;
+      if (seen.has(key)) return false; seen.add(key); return true;
+    }).map<CollectionInvoice>(row => {
+    if (row.adjustment) {
+      const event = row.adjustment;
+      const amount = event.amount === null ? null : collectionCents(event.amount);
+      const denominator = event.sourceSubtotal === null ? null : Math.abs(collectionCents(event.sourceSubtotal));
+      const costMovementType = event.kind === 'cancellation' ? saleMovementTypes[row.companyId] ?? null
+        : event.kind === 'adjustment-reversal' ? row.number.match(/^[A-Z]+/i)?.[0].toUpperCase() ?? null : event.movementType;
+      const lines = (products.get(event.sourceDocumentId ?? -1) ?? []).filter(p => p.movementType === costMovementType);
+      const sourceCost = lines.length ? rounded(lines.reduce((sum, p) => sum + fixed(p.unitCost) * fixed(p.billedQuantity), 0n), 100_000_000_000_000n) : null;
+      const proportional = sourceCost === null || amount === null || !denominator ? null
+        : rounded(BigInt(Math.abs(sourceCost)) * BigInt(amount), BigInt(denominator));
+      const profit = proportional === null || amount === null ? null : amount - proportional;
+      const lmLines = lines.filter(p => p.location === 'XXX');
+      const sourceLm = !lines.length ? null : rounded(lmLines.reduce((sum, p) => sum + fixed(p.price) * fixed(p.billedQuantity), 0n), 10_000_000_000_000_000n);
+      const lmAmount = sourceLm === null || amount === null || !denominator ? null
+        : rounded(BigInt(Math.abs(sourceLm)) * BigInt(amount), BigInt(denominator));
+      const reviewReasons = ['Ajuste del auxiliar: revisar contra las comisiones del documento original.'];
+      if (proportional === null) reviewReasons.push('No existe base histórica suficiente para calcular el costo y la utilidad del ajuste.');
+      if (event.sourceDocumentId === null) reviewReasons.push('No se identificó un documento de origen único para las partidas.');
+      if (event.relatedInvoiceNumber === null) reviewReasons.push('Revisar la factura relacionada y el agente al que corresponde el abono.');
+      const isReturnOrCredit = event.kind === 'return' || event.kind === 'credit-note';
+      return { ...row, ...collectionCustomerBonus(row.customerStatusRaw, amount === null ? null : -amount),
+        rowKey: `movement:${event.movementId}`, kind: event.kind, eventDate: event.date, sourceMovementId: event.movementId,
+        relatedInvoiceNumber: event.relatedInvoiceNumber, reviewRequired: true, reviewReasons,
+        branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
+        days: Math.round((Date.parse(event.date) - Date.parse(row.date)) / 86_400_000),
+        // The legacy paymentAmount has the inverse financial sign. The visible
+        // adjustment keeps the actual debit/credit sign; never apply ABS here.
+        subtotalAmount: isReturnOrCredit ? 0 : amount === null ? null : amount / 100,
+        paymentAmount: amount === null ? null : amount === 0 ? 0 : -amount / 100,
+        displayPaymentAmount: amount === null ? null : amount / 100,
+        returnAmount: isReturnOrCredit ? amount === null ? null : amount / 100 : 0,
+        totalAmount: amount === null ? null : amount / 100, freightAmount: 0, paymentCapped: false,
+        cost: proportional === null ? null : proportional / 100, realCost: proportional === null ? null : proportional / 100,
+        profit: profit === null ? null : profit / 100, signedProfit: profit === null ? null : -profit / 100,
+        margin: profit === null || !amount ? null : rounded(BigInt(profit) * 10_000n, BigInt(amount)) / 100,
+        lm: lines.length && amount !== null ? Math.sign(amount) * lmLines.length : null,
+        lmAmount: lmAmount === null ? null : lmAmount / 100, costMovementType,
+        costStatus: proportional === null ? 'unavailable' : 'complete', commissionAmount: null };
+    }
     const subtotal = collectionCents(row.subtotal), returns = row.returns === null ? null : collectionCents(row.returns);
     const payment = row.payments === null ? null : collectionCents(row.payments);
     // Cancellation may zero DBRUTO after collection. A known PA must not become
@@ -63,7 +112,10 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
     const signedProfit = proportional === null || presented === null ? null : presented - proportional;
     const lmLines = lines.filter(p => p.location === 'XXX');
     const lmAmount = !lines.length ? null : rounded(lmLines.reduce((sum, p) => sum + fixed(p.price) * fixed(p.billedQuantity), 0n), 10_000_000_000_000_000n);
-    return { ...row, ...collectionCustomerBonus(row.customerStatusRaw, presented), branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
+    return { ...row, ...collectionCustomerBonus(row.customerStatusRaw, presented),
+      rowKey: `collection:${row.id}`, kind: 'collection', eventDate: row.lastPaymentDate, sourceMovementId: null,
+      relatedInvoiceNumber: null, reviewRequired: false, reviewReasons: [],
+      branch: options.branches.find(b => b.warehouses.includes(row.warehouse))?.code ?? 'unassigned',
       days: Math.round((Date.parse(row.lastPaymentDate) - Date.parse(row.date)) / 86_400_000),
       subtotalAmount: subtotal / 100, paymentAmount: payment === null ? null : (capped ? -subtotal : payment) / 100,
       displayPaymentAmount: presented === null ? null : Math.abs(presented) / 100,
@@ -74,10 +126,11 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
       margin: signedProfit === null || !presented ? null : rounded(BigInt(signedProfit) * 10_000n, BigInt(presented)) / 100,
       lm: lines.length ? lmLines.length : null, lmAmount: lmAmount === null ? null : lmAmount / 100, costMovementType,
       costStatus: proportional === null ? 'unavailable' : 'complete', commissionAmount: null };
-  }).sort((a, b) => a.agentCode.localeCompare(b.agentCode) || a.date.localeCompare(b.date) || a.number.localeCompare(b.number) || a.id - b.id);
+  }).sort((a, b) => a.agentCode.localeCompare(b.agentCode) || a.date.localeCompare(b.date) || a.number.localeCompare(b.number)
+    || a.eventDate.localeCompare(b.eventDate) || a.rowKey.localeCompare(b.rowKey));
   const sum = (rows: CollectionInvoice[], key: 'cost' | 'realCost' | 'profit' | 'signedProfit' | 'lmAmount' | 'customerBonusBase' | 'customerBonus') => rows.some(r => r[key] === null) ? null : rows.reduce((total, r) => total + Math.round(r[key]! * 100), 0) / 100;
   const summarize = (rows: CollectionInvoice[]) => ({ invoices: rows.length, payments: rows.reduce((sum, r) => sum + r.paymentCount, 0),
-    subtotal: rows.reduce((sum, r) => sum + Math.round(r.subtotalAmount * 100), 0) / 100,
+    subtotal: rows.some(r => r.subtotalAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.subtotalAmount! * 100), 0) / 100,
     payment: rows.some(r => r.paymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.paymentAmount! * 100), 0) / 100,
     displayPayment: rows.some(r => r.displayPaymentAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.displayPaymentAmount! * 100), 0) / 100,
     returns: rows.some(r => r.returnAmount === null) ? null : rows.reduce((sum, r) => sum + Math.round(r.returnAmount! * 100), 0) / 100,
@@ -95,24 +148,26 @@ export function buildCollectionCommissions(options: CollectionOptions, criteria:
   });
   const totals = summarize(invoices);
   totals.customerBonus = agents.some(a => a.customerBonus === null) ? null : agents.reduce((total, a) => total + Math.round(a.customerBonus! * 100), 0) / 100;
+  const documentIds = new Set(invoices.flatMap(r => [r.id, ...(r.adjustment?.sourceDocumentId ? [r.adjustment.sourceDocumentId] : [])]));
   return { title: 'Comisiones por cobranza', company: options.company,
     branchName: criteria.branch === 'all' ? 'Todas las sucursales' : options.branches.find(b => b.code === criteria.branch)?.name ?? criteria.branch,
     criteria, generatedAt, source: 'derivada' as const,
     status: invoices.some(r => r.costStatus === 'unavailable') ? 'incomplete' as const : 'complete' as const,
     calculationReady: invoices.every(r => r.costStatus === 'complete'), invoices,
-    movements: input.movements.filter(row => !serviceInvoices.has(row.invoiceId)), products: input.products.filter(row => !serviceInvoices.has(row.invoiceId)),
+    movements: input.movements.filter(row => documentIds.has(row.invoiceId) && !serviceInvoices.has(row.invoiceId)),
+    products: input.products.filter(row => documentIds.has(row.invoiceId) && !serviceInvoices.has(row.invoiceId)),
     agents, totals, empty: invoices.length === 0,
     settlement: buildCollectionSettlement(invoices, criteria, settings),
     notes: [
-      'Costo según el método 214 de CUATRO.pdf: SUM(AICOSTO*AICANTF), sin incremento del 3% (código comentado). Costo real=ABS(costo*pago PA sin IVA original/DBRUTO). El prorrateo usa el pago original, no el pago limitado presentado.',
-      'Utilidad=ABS(pago firmado limitado-costo prorrateado con signo). %=utilidad con signo/pago firmado limitado*100. LM cuenta partidas con FINV.ILUGAR=XXX; LM_VALOR suma AICANTF*AIPRECIO*0.01 de esas partidas. Redondeo monetario a dos decimales; divisores cero o partidas ausentes se indican como no disponibles.',
+      'Cobros PA: costo según el método 214 de CUATRO.pdf, SUM(AICOSTO*AICANTF), sin incremento del 3% (código comentado). Costo real=ABS(costo*pago PA sin IVA original/DBRUTO). El prorrateo usa el pago original, no el pago limitado presentado.',
+      'Cobros PA: utilidad=ABS(pago firmado limitado-costo prorrateado con signo). %=utilidad con signo/pago firmado limitado*100. LM cuenta partidas con FINV.ILUGAR=XXX; LM_VALOR suma AICANTF*AIPRECIO*0.01 de esas partidas. Redondeo monetario a dos decimales; divisores cero o partidas ausentes se indican como no disponibles.',
       'Movimiento de costo por compañía FDOC.DMULTICIA: 1=FA, 2=FB, 3=FC, 4=FD, 5=FZ, 6=FV, 7=FX. No se filtra AIMES. 1/5/7 están explícitos en el método 214; los demás se verificaron en las partidas de las facturas cobradas.',
-      'Periodo inclusivo aplicado a FAX.AFECHA, no a FDOC.DFECHA. Incluye facturas con uno o más pagos PA en el periodo, aunque sean parciales o de facturas de otros meses.',
-      'Referencia: métodos 211 y 213 de los PDF proporcionados. Pagos PA y devoluciones de tipo D se suman por separado sin IVA: ACANT/(1+DPORCIVA/100). Conserva los signos originales.',
-      'Pago de cálculo limitado al negativo del subtotal DBRUTO cuando su valor absoluto supera ese subtotal, según el método 211. Excepción derivada: canceladas con DBRUTO=0 conservan el PA original sin IVA, pues el cero posterior no identifica el subtotal antes de cancelar. Costo/utilidad permanecen no disponibles si falta la base histórica. Para presentación se muestra el valor absoluto; subtotales y total suman esos valores por documento. Los movimientos conservan sus signos originales.',
+      'Periodo inclusivo aplicado a FAX.AFECHA. Incluye cobros PA y, por fecha propia, cancelaciones K con cobro previo, devoluciones D y notas C, aunque no exista PA en el periodo del ajuste. Las reversiones K de documentos D/C compensan el abono original.',
+      'Los cobros PA siguen los métodos 211/213 proporcionados. D/C/K son ajustes derivados solicitados para este reporte: ACANT/(1+DPORCIVA/100), por ASEQ y con signo. No se afirma que esta ampliación sea SQL capturado de OMNIS.',
+      'Cobros PA: pago de cálculo limitado al negativo de DBRUTO si lo supera. Excepción derivada: canceladas con DBRUTO=0 conservan el PA original sin IVA, pues el cero posterior no identifica el subtotal anterior. Costo/utilidad quedan no disponibles si falta histórico. Sólo PA se presenta en valor absoluto; los ajustes conservan signo y reducen los totales.',
       'Por solicitud del usuario se excluye completa cualquier factura con una partida de servicio (FINV.ITIPO=4), también las mixtas. No aporta pagos, costos, documentos ni partidas a los totales o al Excel. Se utiliza la clasificación actual del catálogo.',
-      'Una fila por DSEQ. Fecha pago y días usan el último PA del periodo; también se conserva la primera fecha y cada movimiento. No se usa una fecha arbitraria de GROUP BY DNUM.',
-      'Facturas DESFACT=1 con folio F, incluidas canceladas; canceled identifica el estado actual FDOC.DCANCELADA=1. Excluye AF. No se hereda DSTATUSCFD=3 del reporte de ventas por familia. Se requieren pagos PA dentro del periodo; la marca no identifica la fecha de cancelación ni revierte automáticamente comisiones anteriores.',
+      'Una fila por DSEQ para cobros PA y una por ASEQ para ajustes, con rowKey independiente. Fecha pago/ajuste usa último PA o AFECHA del ajuste. Referencia a devolución/nota y factura relacionada evita confundir el documento que aporta el costo.',
+      'La cancelación K se resta por su importe sin IVA en el mes de AFECHA, no por el importe del pago anterior ni por el estado DCANCELADA. Los ajustes negativos conservan su signo en pago, costo y utilidad. REVISAR señala conciliación histórica; no sustituye costos desconocidos por cero.',
       'México usa los almacenes 01 y 15 del método 213. Las demás sucursales se amplían con el catálogo FALMCAT; sin atribuir movimientos por el nombre del almacén.',
       'FAG se limita a AGT=1 y se agrupa por código para evitar multiplicar pagos. Las partidas FAXINV/FINV se leen aparte: no multiplican la cobranza. Documentos agrupados por agente con subtotales.',
       'Bono de clientes: 1% del importe cobrado sin IVA para marcas actuales FCLI.CLITARJETA=Nuevo o Viejo_Reactivado. Para cálculo se invierte el signo del pago firmado, como en el Excel; los PA de signo opuesto compensan, no se vuelven ingresos por ABS. Detalle a cuatro decimales y redondeo por agente. Recurrente/Inactivo no generan bono; Sin clasificar queda pendiente.',

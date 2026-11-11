@@ -1,5 +1,20 @@
 @baseUrl = http://localhost:3000/api
 
+### Cliente exacto (CLISEQ) con todos los agentes, sucursal México y fechas del auxiliar
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-10-01&to=2026-10-31&branch=01&agent=all&customerId=24798
+
+### Cliente y vendedor efectivo: conserva las notas C de agentes anteriores reasignadas al 1223
+GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-10-01&to=2026-10-31&branch=01&agent=1223&customerId=24798
+
+### Liquidación del mismo cliente y agente, sólo lectura; porcentaje de ejemplo para simulación
+POST {{baseUrl}}/sales/reports/collection-commissions/preview
+Content-Type: application/json
+
+{
+  "criteria": { "from": "2026-10-01", "to": "2026-10-31", "branch": "01", "agent": "1223", "customerId": 24798 },
+  "settings": { "bonusMode": "additional", "agents": [ { "code": "1223", "plan": "fixed", "fixedRate": 10 } ] }
+}
+
 ### Octubre: PA del periodo y ajustes K/D/C por su propia AFECHA, sin exigir PA nuevo al ajuste
 GET {{baseUrl}}/sales/reports/collection-commissions?from=2026-10-01&to=2026-10-31&branch=01&agent=all
 

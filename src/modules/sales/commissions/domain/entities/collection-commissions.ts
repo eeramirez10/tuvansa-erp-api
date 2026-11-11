@@ -1,7 +1,7 @@
 import { collectionCustomerBonus } from './collection-customer-bonus.js';
 import { buildCollectionSettlement, type SettlementSettings } from './collection-settlement.js';
 
-export type CollectionCriteria = { from: string; to: string; branch: string; agent: string };
+export type CollectionCriteria = { from: string; to: string; branch: string; agent: string; customerId?: number | undefined };
 export type CollectionOptions = { company: string; defaultFrom: string; defaultTo: string;
   branches: Array<{ code: string; name: string; warehouses: string[] }>;
   agents: Array<{ code: string; name: string }> };

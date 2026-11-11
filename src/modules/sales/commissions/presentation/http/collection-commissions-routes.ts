@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { GetCollectionCommissions } from '../../application/use-cases/get-collection-commissions.js';
 const criteria = z.object({ from: z.iso.date(), to: z.iso.date(), branch: z.string().regex(/^(all|0[1-7])$/).default('01'),
-  agent: z.string().max(20).default('all') }).strict();
+  agent: z.string().max(20).default('all'), customerId: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)])
+    .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).optional() }).strict();
 const money = z.number().finite().min(0).max(1_000_000_000_000).multipleOf(0.01);
 const settings = z.object({ bonusMode: z.enum(['additional','exclusive','unconfirmed']), agents: z.array(z.object({
   code: z.string().max(20), plan: z.enum(['salary','fixed','unconfirmed']).optional(), fixedRate: z.number().min(0).max(100).multipleOf(0.01).optional(),

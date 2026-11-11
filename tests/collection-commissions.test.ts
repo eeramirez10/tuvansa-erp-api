@@ -178,6 +178,26 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     conn.execute.mockRejectedValueOnce(new Error('read failure')); await expect(source.read(criteria)).rejects.toThrow('read failure');
     expect(conn.rollback).toHaveBeenCalled(); expect(conn.release).toHaveBeenCalledTimes(2);
   });
+  it.each(['all','A01'])('combina cliente exacto con sucursal y agente %s en PA y ajustes, sin limitar las facturas usadas para reasignar C', async agent => {
+    const conn = connection(); conn.execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
+    await source.read({ ...criteria, agent, customerId: 15 }, ['01','15']);
+    const [paidSql, paidParams] = conn.execute.mock.calls[0]!, [adjustSql, adjustParams] = conn.execute.mock.calls[1]!;
+    expect(paidSql).toContain('AND d.CLISEQ=?'); expect(adjustSql).toContain('AND d.CLISEQ=?');
+    expect(paidParams).toEqual(['2026-08-01','2026-09-01',4,'01','15',15,...(agent === 'all' ? [] : ['A01'])]);
+    expect(adjustParams).toEqual(['2026-08-01','2026-09-01','01','15',15,'2026-09-01',4,4,...(agent === 'all' ? [] : ['A01'])]);
+    expect(adjustSql).toContain('x.CLISEQ=c.customerId AND x.DMULTICIA=c.companyId');
+    expect(adjustSql).not.toContain('AND TRIM(d.DPAR1)=?');
+    if (agent !== 'all') expect(adjustSql).toContain('AND e.agentCode=?');
+    expect(conn.query).toHaveBeenCalledWith('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+  });
+  it('permite cliente exacto en todas las sucursales sin crear una selección adicional por almacén', async () => {
+    const conn = connection(); conn.execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
+    const source = new LegacyMysqlCollectionCommissionsDataSource({ getConnection: async () => conn } as never);
+    await source.read({ ...criteria, branch: 'all', customerId: 15 });
+    expect(conn.execute.mock.calls[0]![1]).toEqual(['2026-08-01','2026-09-01',4,15]);
+    expect(conn.execute.mock.calls[1]![1]).toEqual(['2026-08-01','2026-09-01',15,'2026-09-01',4,4]);
+  });
   it('consulta ajustes aunque no haya PA en el periodo y obtiene el costo del documento D relacionado', async () => {
     const conn = connection();
     const adjustment = { ...invoice, number: 'DA001', firstPaymentDate: '2026-08-12', lastPaymentDate: '2026-08-12',
@@ -223,6 +243,25 @@ describe('Comisiones por cobranza, métodos 211/213/214 proporcionados', () => {
     for(const next of [{...settings,agents:[{code:'A01',plan:'fixed'}]},{...settings,agents:[{code:'A01',fixedRate:101}]},{...settings,agents:[{code:'unknown'}]},{...settings,agents:[{code:'A01'},{code:'A01'}]},{...settings,payments:999},{...settings,agents:[{code:'A01',costOverride:-1}]}])
       await request(app).post('/collection-commissions/preview').send({criteria,settings:next}).expect(400);
     expect(repository.read).toHaveBeenCalledTimes(1);
+  });
+  it('GET y POST preview conservan el filtro exacto de cliente y rechazan identificadores ambiguos o inyectados', async () => {
+    const repository = repo(), app = express().use(express.json()).use(createCollectionCommissionsRouter(new GetCollectionCommissions(repository))).use(errorHandler);
+    const url = '/collection-commissions?from=2026-08-01&to=2026-08-31';
+    const get = await request(app).get(url+'&customerId=15&agent=A01').expect(200);
+    expect(get.body.data.criteria).toEqual({ ...criteria, agent: 'A01', customerId: 15 });
+    expect(repository.read).toHaveBeenLastCalledWith({ ...criteria, agent: 'A01', customerId: 15 }, ['01','15']);
+    const body = { criteria: { ...criteria, customerId: 15 }, settings: { bonusMode: 'additional', agents: [] } };
+    await request(app).post('/collection-commissions/preview').send(body).expect(200);
+    expect(repository.read).toHaveBeenLastCalledWith({ ...criteria, customerId: 15 }, ['01','15']);
+    for (const bad of ['0','-1','1.5','true','','NaN','9007199254740992','1%20OR%201%3D1','1&customerId=2'])
+      await request(app).get(url+'&customerId='+bad).expect(400);
+    for (const bad of [null,true,{},[15],0,-1,1.5,Number.MAX_SAFE_INTEGER+1])
+      await request(app).post('/collection-commissions/preview').send({ ...body, criteria: { ...criteria, customerId: bad } }).expect(400);
+    expect(repository.read).toHaveBeenCalledTimes(2);
+    const useCase = new GetCollectionCommissions(repository);
+    for (const customerId of [0,-1,1.5,Number.NaN,Number.MAX_SAFE_INTEGER+1])
+      await expect(useCase.execute({ ...criteria, customerId })).rejects.toMatchObject({ statusCode: 400 });
+    expect(repository.read).toHaveBeenCalledTimes(2);
   });
   it('permite sólo el POST exacto de cálculo en la frontera global y conserva el bloqueo de escrituras', async () => {
     const repository=repo(),app=express().use(express.json()).use('/api',postgresWriteBoundary)

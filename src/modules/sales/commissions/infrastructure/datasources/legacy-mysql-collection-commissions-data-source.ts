@@ -33,6 +33,9 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
     const filterParams: Array<string | number> = [];
     let filter = '', warehouseFilter = '';
     if (warehouses) { warehouseFilter = ` AND d.DALMACEN IN (${warehouses.map(() => '?').join(',')})`; filter = warehouseFilter; filterParams.push(...warehouses); }
+    const customerFilter = criteria.customerId === undefined ? '' : ' AND d.CLISEQ=?';
+    filter += customerFilter;
+    if (criteria.customerId !== undefined) filterParams.push(criteria.customerId);
     if (criteria.agent !== 'all') { filter += ' AND TRIM(d.DPAR1)=?'; filterParams.push(criteria.agent); }
     params.push(...filterParams);
     // DERIVADA: PA is aggregated once per invoice. D/C/K are separate dated
@@ -69,7 +72,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
           (SELECT CASE WHEN COUNT(*)=1 THEN MIN(x.DSEQ) END FROM fdoc x
            WHERE x.DNUM=a.AREFPAG AND x.DMULTICIA=d.DMULTICIA AND x.CLISEQ=d.CLISEQ AND LEFT(x.DNUM,1) IN ('C','D')) END sourceId
       FROM fax a JOIN fdoc d ON d.DSEQ=a.DSEQ
-      WHERE a.AFECHA>=? AND a.AFECHA<? AND d.DESFACT=1${warehouseFilter} AND (
+      WHERE a.AFECHA>=? AND a.AFECHA<? AND d.DESFACT=1${warehouseFilter}${customerFilter} AND (
         (a.ATIPMV='K' AND LEFT(d.DNUM,1)='F' AND a.ACANT<0 AND EXISTS
           (SELECT 1 FROM fax paid WHERE paid.DSEQ=d.DSEQ AND paid.ATIPMV='PA' AND paid.ACANT<0 AND paid.AFECHA<=a.AFECHA))
         OR (LEFT(a.ATIPMV,1) IN ('D','C') AND a.ACANT<0 AND LEFT(d.DNUM,1) IN ('F','D','C'))
@@ -132,7 +135,7 @@ export class LegacyMysqlCollectionCommissionsDataSource implements CollectionCom
     try {
       await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
       const [rows] = await connection.execute<RowDataPacket[]>(sql, params);
-      const [adjustments] = await connection.execute<RowDataPacket[]>(adjustmentSql, [criteria.from, next.toISOString().slice(0, 10), ...(warehouses ?? []), next.toISOString().slice(0, 10), 4, 4, ...(criteria.agent === 'all' ? [] : [criteria.agent])]);
+      const [adjustments] = await connection.execute<RowDataPacket[]>(adjustmentSql, [criteria.from, next.toISOString().slice(0, 10), ...(warehouses ?? []), ...(criteria.customerId === undefined ? [] : [criteria.customerId]), next.toISOString().slice(0, 10), 4, 4, ...(criteria.agent === 'all' ? [] : [criteria.agent])]);
       if (rows.length + adjustments.length > 10000) throw new ApplicationError('El reporte excede 10,000 documentos/ajustes. Reduce el periodo o selecciona sucursal/agente.', 'COLLECTION_COMMISSIONS_TOO_LARGE', 413);
       const invoices: CollectionInputs['invoices'] = [...rows.map(invoiceRow), ...adjustments.map(r => ({ ...invoiceRow(r),
         agentAttribution: { originalCode: String(r.originalAgentCode ?? r.agentCode).trim(), originalName: String(r.originalAgentName ?? r.agentName).trim(), source: r.agentAssignment ?? 'document' }, adjustment: {

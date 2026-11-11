@@ -11,6 +11,7 @@ Los ajustes se muestran firmados en su mes, aunque no haya PA dentro de ese mes.
 Ese documento sustituye las limitaciones del etiquetado inicial de canceladas.
 Las [notas de crédito se atribuyen al vendedor del cliente](collection-credit-note-agents.md)
 y tienen columna separada de las devoluciones en pantalla y Excel.
+Desde 2026-11-11 se puede [combinar un cliente exacto con agente, sucursal y fechas](collection-commission-filters.md), también en liquidación y Excel.
 
 ## Evidencia y procedencia
 

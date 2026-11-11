@@ -15,8 +15,9 @@ export class GetCollectionCommissions {
     if (!validDate(criteria.from) || !validDate(criteria.to) || criteria.from > criteria.to ||
       Date.parse(criteria.to) - Date.parse(criteria.from) > 365 * 86_400_000 ||
       (criteria.branch !== 'all' && !branch) || (criteria.agent !== 'all' && !options.agents.some(a => a.code === criteria.agent)) ||
+      (criteria.customerId !== undefined && (!Number.isSafeInteger(criteria.customerId) || criteria.customerId <= 0)) ||
       settings?.agents.some(a => !options.agents.some(o => o.code === a.code))) {
-      throw new ApplicationError('Selecciona fechas válidas (máximo 366 días), sucursal y agente disponibles.', 'COLLECTION_COMMISSIONS_INVALID', 400);
+      throw new ApplicationError('Selecciona fechas válidas (máximo 366 días), sucursal, agente y un identificador de cliente válido.', 'COLLECTION_COMMISSIONS_INVALID', 400);
     }
     return buildCollectionCommissions(options, criteria, await this.repository.read(criteria, branch?.warehouses), this.clock().toISOString(), settings);
   }

@@ -66,3 +66,10 @@
 - Agrega requests reproducibles en `http/` para endpoints nuevos.
 - Actualiza el documento del módulo con la tabla vista/botón/endpoint/captura/tablas.
 - Conserva fechas, códigos y suposiciones verificadas; separa hechos de inferencias.
+
+## Continuidad REA en otra instalación
+
+- Para cambiar de servidor o revisar una versión nueva sin OMNIS Studio, comenzar por [docs/REA-START-HERE.md](docs/REA-START-HERE.md) y [docs/REA-MODULE-MAP.md](docs/REA-MODULE-MAP.md).
+- Las skills de este proyecto están versionadas en `.agents/skills/`: `proscai-rea`, `proscai-desktop-rea`, `proscai-sql-capture` y `proscai-feature-migration`. Abrir su SKILL.md por ruta si el cliente no las descubre.
+- Revalidar destino, aislamiento y permisos del nuevo servidor. No trasladar como autorizaciones las pruebas realizadas en otra base. Pedidos con Neon configurado puede aplicar migraciones al inicializarse incluso desde una lectura.
+- Un clon no recibe cambios sin commit/push, evidencia de captures/ ni archivos del escritorio. Documentar qué versión y evidencia están realmente disponibles; no afirmar cobertura completa sólo por existir un módulo.

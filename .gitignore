@@ -10,3 +10,7 @@ captures/
 *.log
 .DS_Store
 Thumbs.db
+
+# REA Python tooling
+__pycache__/
+*.py[cod]

@@ -102,3 +102,9 @@ curl --fail http://127.0.0.1:3000/health
 
 La guía completa de preparación, actualización, logs y rollback está en
 [`docs/deployment/docker-production.md`](docs/deployment/docker-production.md).
+
+## REA en otro servidor, sin OMNIS Studio
+
+La entrada actual es [docs/REA-START-HERE.md](docs/REA-START-HERE.md): instalación de ambos repositorios, qué viaja con Git, mapa de documentación, estado real de escritura y cinco skills entre backend/frontend. Para una captura, usar [REA-SQL-CAPTURE](docs/REA-SQL-CAPTURE.md); para localizar consultas implementadas y sus evidencias, [REA-MODULE-MAP](docs/REA-MODULE-MAP.md).
+
+Las skills portables están en `.agents/skills/`. No transportan secretos ni logs. El extractor offline de general_log se comprueba con `python -m unittest discover -s tests/rea -p 'test_*.py'`. La captura SQL real requiere verificar hilo/destino y terminar con general_log OFF.

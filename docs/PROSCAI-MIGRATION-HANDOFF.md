@@ -1,5 +1,7 @@
 # Traspaso de contexto: migración PROSCAI / OMNIS
 
+> Actualización de continuidad 2026-11-17: para otro servidor sin Studio, comenzar por [REA-START-HERE](REA-START-HERE.md) y el [mapa de cobertura](REA-MODULE-MAP.md). Este documento conserva el runbook y contexto histórico. PostgreSQL/Neon ya está implementado para escrituras locales de Pedidos; no es sólo un cambio futuro. La lectura inicial con Neon configurado puede aplicar migraciones. Para límites de los scripts históricos, formatos y permisos usar [REA-SQL-CAPTURE](REA-SQL-CAPTURE.md). Las rutas, usuarios, PID y autorizaciones del servidor previo no se trasladan automáticamente.
+
 Este documento permite que una sesión nueva de Codex CLI continúe el trabajo en
 otro servidor sin depender del historial del chat original. Debe leerse junto a
 `AGENTS.md` y a la documentación específica de cada módulo.

@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import type { PostgresClient } from '../database/postgres-pool.js';
 
 // DERIVADA: persistence owned by this API, not SQL captured from OMNIS.
-export const postgresMigrations = [{ id: '001_orders_overlay', sql: `
+interface PostgresMigration {
+  id: string;
+  sql: string;
+}
+
+export const postgresMigrations: readonly PostgresMigration[] = [{ id: '001_orders_overlay', sql: `
 CREATE SEQUENCE tuvansa.order_ids START WITH 5000000000 MAXVALUE 9999999999999;
 CREATE TABLE tuvansa.orders (
   id bigint PRIMARY KEY CHECK (id > 0 AND id <= 9007199254740991),
@@ -41,7 +46,7 @@ CREATE INDEX order_stock_product ON tuvansa.order_stock_deltas(product_id,wareho
 
 export async function migratePostgres(
   client: PostgresClient,
-  migrations: readonly { id: string; sql: string }[] = postgresMigrations,
+  migrations: readonly PostgresMigration[] = postgresMigrations,
 ): Promise<void> {
   await client.query('BEGIN');
   try {

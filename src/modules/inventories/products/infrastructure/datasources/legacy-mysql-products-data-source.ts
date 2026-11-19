@@ -12,7 +12,7 @@ import type {
   ProductWriteValues,
 } from '../../domain/repositories/products-repository.js';
 
-interface ProductRow extends RowDataPacket {
+export interface ProductRow extends RowDataPacket {
   id: number;
   code: string;
   description: string;
@@ -82,7 +82,7 @@ interface EditRulesRow extends RowDataPacket {
   [column: `UTALLA${number}`]: string | null;
 }
 
-const selectProductFields = `
+export const selectProductFields = `
   FINV.ISEQ AS id,
   ICOD AS code,
   IDESCR AS description,
@@ -164,7 +164,7 @@ const businessDateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 
-const toProduct = (row: ProductRow, today = businessDateFormatter.format(new Date())): Product => {
+export const toProduct = (row: ProductRow, today = businessDateFormatter.format(new Date())): Product => {
   const props: ProductProps = {
     id: row.id,
     code: row.code,

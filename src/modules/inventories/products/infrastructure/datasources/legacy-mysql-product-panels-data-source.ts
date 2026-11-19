@@ -299,15 +299,22 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'customer-orders-ct': {
     section: 'queries', button: 'Pedidos por cliente CT',
-    sql: `SELECT PLSEQ AS id, ICOD AS productCode, CLICOD AS customerCode,
-      CLINOM AS customerName, PLCANT AS quantity, PLSURT AS fulfilled,
-      PENUM AS orderNumber, PLPRECI AS price, PEDESDE AS orderedAt,
-      PEVENCE AS dueAt, PENUMELLOS AS externalNumber
-      FROM fplin LEFT JOIN finv ON fplin.ISEQ=finv.ISEQ
-      LEFT JOIN fcli ON fplin.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
-      WHERE ICOD >= ? AND ICOD <= CONCAT(?, 'z') AND fcli.CLISEQ <> 0
-      AND PESPEDIDO = 1 AND fpenc.PEMULTICIA = 1 ORDER BY ICOD, PLSEQ`, parameterMode: 'code-range',
+    sql: `WITH order_lines AS (
+        SELECT FPLIN.PLSEQ AS id, ICOD AS productCode, CLICOD AS customerCode,
+          CLINOM AS customerName, SUM(PLCANT) OVER (PARTITION BY PENUM) AS quantity,
+          SUM(PLSURT) OVER (PARTITION BY PENUM) AS fulfilled,
+          PENUM AS orderNumber, PLPRECI AS price, PEDESDE AS orderedAt,
+          PEVENCE AS dueAt, PENUMELLOS AS externalNumber,
+          ROW_NUMBER() OVER (PARTITION BY PENUM ORDER BY PEDESDE, ICOD, FPLIN.PLSEQ) AS rowNumber
+        FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
+        LEFT JOIN fcli ON fplin.CLISEQ = fcli.CLISEQ
+        LEFT JOIN fpenc ON fplin.PESEQ = fpenc.PESEQ
+        WHERE ICOD >= ? AND ICOD <= ?
+          AND fcli.CLISEQ <> 0 AND PESPEDIDO = 1 AND fpenc.PEMULTICIA = 1
+      )
+      SELECT id, productCode, customerCode, customerName, quantity, fulfilled,
+        orderNumber, price, orderedAt, dueAt, externalNumber
+      FROM order_lines WHERE rowNumber = 1 ORDER BY orderNumber, id`,
   },
   'customer-quotes': {
     section: 'queries', button: 'Cotizaciones por cliente',
@@ -648,10 +655,12 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const customerOrdersTotals = isCustomerOrders
       ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = 1${fulfillmentFilter}`)
       : undefined;
+    const params = panel === 'customer-orders-ct' ? await this.getCustomerOrderRootRange(product)
+      : parametersFor(definition.parameterMode, product);
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
       `${definition.sql}${conditions.sql}${fulfillmentFilter}${order} LIMIT ? OFFSET ?`,
       [
-        ...parametersFor(definition.parameterMode, product),
+        ...params,
         ...conditions.params,
         criteria.limit,
         criteria.offset,
@@ -668,6 +677,15 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       ...(openingStock === undefined ? {} : { openingStock }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
     };
+  }
+
+  private async getCustomerOrderRootRange(product: ProductHeaderRow): Promise<[string, string]> {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { prefix: string }>>(
+      'SELECT LEFT(?, CIARAIZ) AS prefix FROM fcia WHERE CIASEQ = 1',
+      [product.code],
+    );
+    const prefix = rows[0]?.prefix ?? product.code;
+    return [prefix, `${prefix}z`];
   }
 
   private async getClassifiedCustomerOrders(

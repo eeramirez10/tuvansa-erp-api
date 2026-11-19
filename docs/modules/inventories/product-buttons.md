@@ -71,7 +71,7 @@ origen, registros y paginacion.
 | Auxiliar | `/:productId/queries/ledger` | `faxinv`, `fdoc`, `flotes` | `EINV#8/1` → `EINV#10` |
 | Pedidos por cliente | `/:productId/queries/customer-orders` | `fplin`, `finv`, `fpenc`, `fcli`; `PESPEDIDO=1`, `PEMULTICIA=1` | `EINV#8/2` → `EINV#7` |
 | Pedidos por cliente `*` | `/:productId/queries/customer-orders/star` | `fplin`, `finv`, `fpenc`, `fcli.CLIPAR1..9` y `fag` al elegir clasificador | `EINV#8/3` → `EINV#7A` |
-| Pedidos por cliente `CT` | `/:productId/queries/customer-orders/ct` | Rango de `finv.ICOD` | `EINV#8/4` → `EINV#7AA` |
+| Pedidos por cliente `CT` | `/:productId/queries/customer-orders/ct` | Rango de `finv.ICOD` según `FCIA.CIARAIZ`, con `FPLIN` agrupada por pedido | `EINV#8/4` → `EINV#7AA` |
 | Cotizaciones por cliente | `/:productId/queries/customer-quotes` | `fplin`, `fpenc`, `fcli`; `PESPEDIDO=4` | `EINV#8/5` → `EINV#47` |
 | Ventas por cliente | `/:productId/queries/customer-sales` | `faxinv`, `fdoc`, `fcli` | `EINV#8/6` → `EINV#6` |
 | Ventas por cliente `*` | `/:productId/queries/customer-sales/star` | Acumulados de `finv` usados por OMNIS | `EINV#8/7` → `EINV#6BA` |
@@ -134,6 +134,13 @@ encabezados del panel. Sus totales usan todas las partidas del resultado.
 adaptación procede del código de Omnis 7. La apertura capturada de
 [Pedidos por `*`](product-buttons-capture.md#L4156) corresponde al estado
 inicial sin consulta de partidas.
+
+**CT** lee el largo de la raíz del producto desde `FCIA.CIARAIZ`.
+`EINV#7AA/240` carga el rango de esa raíz hasta su concatenación con `z`,
+y después acumula Pedido y Surtido por `PENUM` para el listado superior.
+El GET agrega antes de paginar. Los controles de la matriz inferior
+corresponden a `EINV#7AA/241` y requieren el desglose por color y talla
+del pedido seleccionado.
 
 ### Ventana Auxiliar
 

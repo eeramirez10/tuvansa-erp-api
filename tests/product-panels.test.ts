@@ -191,6 +191,23 @@ describe('Inventarios PT - botones laterales', () => {
     });
   });
 
+  it('usa la raíz de la compañía y agrupa pedidos CT antes de paginar', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ prefix: '00421' }], []])
+      .mockResolvedValueOnce([[{ orderNumber: 'P200', quantity: 12, fulfilled: 5 }], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'customer-orders-ct', { limit: 500, offset: 0 },
+    );
+
+    const [root, range] = execute.mock.calls.slice(1);
+    expect(root).toEqual([expect.stringContaining('LEFT(?, CIARAIZ)'), [panel.product.code]]);
+    expect(range).toEqual([expect.stringContaining('SUM(PLCANT) OVER (PARTITION BY PENUM)'), ['00421', '00421z', 500, 0]]);
+    expect(result?.items).toEqual([{ orderNumber: 'P200', quantity: 12, fulfilled: 5 }]);
+  });
+
   it('devuelve el estado confirmado al bloquear', async () => {
     const repository: ProductPanelsRepository = {
       getPanel: async () => panel,

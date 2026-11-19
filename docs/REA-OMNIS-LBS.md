@@ -4,16 +4,15 @@ El objetivo es identificar las clases y métodos de una acción de PROSCAI, cont
 
 ## 1. Actualizar los repositorios
 
-Revisa `git status --short --branch` en ambos repositorios antes de cambiar de rama. Si hay trabajo local, usa un checkout separado. Desde el backend limpio, ejecuta:
+Revisa `git status --short --branch` en ambos repositorios antes de cambiar de rama. Si hay trabajo local, usa un checkout separado. Desde un checkout limpio de cada repositorio, ejecuta:
 
 ```powershell
-git fetch origin
-git switch --track origin/docs/proscai-lbs-handoff
-git pull --ff-only
+git switch main
+git pull --ff-only origin main
 git log -1 --oneline
 ```
 
-Si la rama ya existe en local, usa `git switch docs/proscai-lbs-handoff`. En el checkout limpio del frontend ejecuta `git switch main`, `git pull --ff-only origin main` y `git log -1 --oneline`. Registra las ramas y los SHA de ambos. La publicación de referencia para esta guía es el backend `12231bf` más el commit de documentación de esta rama, y el frontend `aed0a36`. Si el remoto avanzó, registra el commit que efectivamente descargaste y comprueba las rutas del módulo.
+Registra las ramas y los SHA de ambos. La publicación de referencia para esta guía es el backend `12231bf` más los cambios de documentación de esta guía, y el frontend `aed0a36`. Si el remoto avanzó, registra el commit que descargaste y comprueba las rutas del módulo.
 
 El mapa de cobertura enlaza los módulos y su documentación publicada. Las modificaciones locales de Pedidos (tipos XA/P, Duplicar y selección de productos) y de las comisiones de Cancún del servidor anterior siguen pendientes de revisión y publicación. Los archivos `captures/`, las bibliotecas, los árboles exportados, los datos y los secretos se mantienen locales. [Mapa de módulos y cobertura](REA-MODULE-MAP.md)
 

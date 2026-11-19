@@ -38,7 +38,7 @@ Para comprobar qué versión llegó, ejecutar en **cada repositorio** git branch
 Clonar ambos repositorios preferiblemente como carpetas hermanas. Las rutas de este documento son relativas; no copiar rutas C:\Users\... de capturas antiguas.
 
 ```powershell
-git clone --branch docs/proscai-lbs-handoff https://github.com/eeramirez10/tuvansa-erp-api.git
+git clone --branch main https://github.com/eeramirez10/tuvansa-erp-api.git
 git clone --branch main https://github.com/eeramirez10/tuvansa-erp-frontend.git
 ```
 

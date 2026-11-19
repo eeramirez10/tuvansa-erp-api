@@ -67,6 +67,39 @@ describe('Inventarios PT - botones laterales', () => {
     expect(response.pagination).toEqual({ page: 3, pageSize: 25, returned: 1 });
   });
 
+  it.each([
+    { warehouse: '01', openingMovementType: undefined },
+    { warehouse: '', openingMovementType: 'R' as const },
+  ])('calcula el saldo de almacén antes de paginar y conserva el orden de los filtros ($warehouse)', async ({ warehouse, openingMovementType }) => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ openingStock: '10.250' }], []])
+      .mockResolvedValueOnce([[{ id: 702, movementType: 'R', warehouse, quantity: 2 }], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id,
+      'ledger',
+      { offset: 100, limit: 100, ledger: { warehouse, movementType: 'R', openingMovementType } },
+    );
+
+    const [openingQuery, openingParams] = execute.mock.calls[1]!;
+    const [pageQuery, pageParams] = execute.mock.calls[2]!;
+    expect(openingQuery).toEqual(expect.stringContaining('ALMCANT FROM falm WHERE ALMKEY = ?'));
+    expect(openingQuery).toEqual(expect.stringContaining('SUM(faxinv.AICANT)'));
+    expect(openingParams).toEqual([
+      panel.product.code.padEnd(13, ' ') + warehouse,
+      panel.product.id,
+      warehouse,
+      ...(openingMovementType === undefined ? [] : [openingMovementType]),
+    ]);
+    expect(pageQuery).toEqual(expect.stringContaining(
+      "AND COALESCE(faxinv.AIALMACEN, '') = ? AND faxinv.AITIPMV = ? ORDER BY finv.ISEQ, faxinv.AISEQ LIMIT ? OFFSET ?",
+    ));
+    expect(pageParams).toEqual([panel.product.id, warehouse, 'R', 100, 100]);
+    expect(result).toMatchObject({ openingStock: 10.25, items: [{ id: 702, movementType: 'R', warehouse }] });
+  });
+
   it('responde 404 cuando el producto no existe', async () => {
     const repository: ProductPanelsRepository = {
       getPanel: async () => null,

@@ -18,6 +18,13 @@ export type ProductPanelKey =
 export interface ProductPanelCriteria {
   limit: number;
   offset: number;
+  ledger?: ProductLedgerFilters;
+}
+
+export interface ProductLedgerFilters {
+  warehouse?: string | undefined;
+  movementType?: 'R' | undefined;
+  openingMovementType?: 'R' | undefined;
 }
 
 export interface ProductPanelResult {
@@ -28,6 +35,7 @@ export interface ProductPanelResult {
   available: boolean;
   source: 'mysql' | 'product-cache' | 'not-available';
   items: Array<Record<string, unknown>>;
+  openingStock?: number;
   reason?: string;
 }
 

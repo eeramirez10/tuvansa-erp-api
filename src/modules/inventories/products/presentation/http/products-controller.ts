@@ -28,6 +28,16 @@ const panelQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(500).default(100),
 });
 
+const ledgerQuerySchema = panelQuerySchema.extend({
+  warehouse: z.string().max(16).optional(),
+  movementType: z.literal('R').optional(),
+  openingMovementType: z.literal('R').optional(),
+}).refine(
+  ({ warehouse, movementType, openingMovementType }) =>
+    openingMovementType === undefined || (warehouse !== undefined && movementType === 'R'),
+  { message: 'El tipo para el saldo inicial requiere filtrar por almacén y por tipo.' },
+);
+
 const blockStatusBodySchema = z.object({ blocked: z.boolean() }).strict();
 
 const nonnegativeNumber = z.number().nonnegative();
@@ -173,8 +183,10 @@ export class ProductsController {
   panel = (panel: ProductPanelKey): RequestHandler => async (request, response, next) => {
     try {
       const { productId } = productParamsSchema.parse(request.params);
-      const { page, pageSize } = panelQuerySchema.parse(request.query);
-      response.json(await this.getProductPanel.execute(productId, panel, page, pageSize));
+      const { page, pageSize, ...filters } = (panel === 'ledger' ? ledgerQuerySchema : panelQuerySchema).parse(request.query);
+      response.json(await this.getProductPanel.execute(
+        productId, panel, page, pageSize, panel === 'ledger' ? filters : undefined,
+      ));
     } catch (error) {
       next(error);
     }

@@ -123,10 +123,18 @@ En la base de lectura de Tuvansa se comprobaron dos páginas consecutivas de
 
 En la biblioteca German de Omnis 7, `EINV#10/13` filtra la lista por el
 almacén del movimiento seleccionado y recalcula su saldo inicial con
-`EINV#10/241`. El procedimiento `EINV#10/14` conserva sólo los movimientos
-`AITIPMV='R'` y vuelve a calcular el saldo. Son reglas leídas del código de
-esta biblioteca. Los controles internos y las variantes de sesión aún se deben
-verificar en la versión reciente.
+`EINV#10/241`. Este procedimiento busca el registro por `FALM.ALMKEY` y
+calcula `ALMCANT - SUM(AICANT)` sobre todos los movimientos de la lista que
+quedaron después de filtrar. El procedimiento `EINV#10/14`, **Filtrar XXX**,
+conserva sólo los movimientos `AITIPMV='R'` y recalcula el acumulado desde el
+saldo inicial anterior.
+
+El mismo GET admite `warehouse` (incluido el código vacío) y `movementType=R`.
+Con `warehouse`, el resultado devuelve `data.openingStock`. Si primero se
+aplicó **Filtrar XXX**, enviar también `openingMovementType=R` para calcular
+el saldo inicial con esa lista ya filtrada. Se aplican los filtros antes
+de `LIMIT/OFFSET`. Esta consulta es una adaptación de las reglas leídas en el
+código de Omnis 7, con `FALM` adicional para el saldo inicial.
 
 ## Acciones reproducidas en frontend
 

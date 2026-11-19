@@ -33,6 +33,17 @@ const unavailable = (
   reason: string,
 ): PanelDefinition => ({ section, button, source: 'not-available', reason });
 
+const ledgerScope = `FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ
+      LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ
+      LEFT JOIN flotes ON faxinv.LOSEQ = flotes.LOSEQ
+      WHERE finv.ISEQ = ? AND AIMES = 1 AND DEST = 0 AND DMULTICIA = 1`;
+
+const ledgerConditions = (warehouse?: string, movementType?: 'R') => ({
+  sql: (warehouse === undefined ? '' : " AND COALESCE(faxinv.AIALMACEN, '') = ?")
+    + (movementType === undefined ? '' : ' AND faxinv.AITIPMV = ?'),
+  params: [warehouse, movementType].filter((value): value is string => value !== undefined),
+});
+
 const definitions: Record<ProductPanelKey, PanelDefinition> = {
   warehouses: {
     section: 'actions', button: 'Almacenes',
@@ -257,11 +268,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       LOPEDIM AS customsEntry, DREFER AS reference,
       AIPZAS AS pieces, AISKU AS sku, AICANTF AS finalQuantity,
       DREFERELLOS AS ellosReference, AIPRECIO AS price
-      FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ
-      LEFT JOIN flotes ON faxinv.LOSEQ = flotes.LOSEQ
-      WHERE finv.ISEQ = ? AND AIMES = 1 AND DEST = 0 AND DMULTICIA = 1
-      ORDER BY finv.ISEQ, faxinv.AISEQ`, parameterMode: 'id',
+      ${ledgerScope}`, parameterMode: 'id',
   },
   'customer-orders': {
     section: 'queries', button: 'Pedidos por cliente',
@@ -620,10 +627,16 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       };
     }
 
+    const ledger = panel === 'ledger' ? criteria.ledger : undefined;
+    const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
+    const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ' : '';
+    const openingStock = ledger?.warehouse === undefined ? undefined
+      : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
-      `${definition.sql} LIMIT ? OFFSET ?`,
+      `${definition.sql}${conditions.sql}${order} LIMIT ? OFFSET ?`,
       [
         ...parametersFor(definition.parameterMode, product),
+        ...conditions.params,
         criteria.limit,
         criteria.offset,
       ],
@@ -636,7 +649,23 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       available: true,
       source: definition.source ?? 'mysql',
       items: rows.map((row) => ({ ...row })),
+      ...(openingStock === undefined ? {} : { openingStock }),
     };
+  }
+
+  private async getWarehouseOpeningStock(
+    product: ProductHeaderRow,
+    warehouse: string,
+    movementType?: 'R',
+  ): Promise<number> {
+    const conditions = ledgerConditions(warehouse, movementType);
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { openingStock: number | string }>>(
+      `SELECT COALESCE((SELECT ALMCANT FROM falm WHERE ALMKEY = ? ORDER BY ALMSEQ LIMIT 1), 0)
+        - COALESCE(SUM(faxinv.AICANT), 0) AS openingStock
+       ${ledgerScope}${conditions.sql}`,
+      [product.code.padEnd(13, ' ') + warehouse, product.id, ...conditions.params],
+    );
+    return Number(rows[0]?.openingStock ?? 0);
   }
 
   async setBlocked(productId: number, blocked: boolean): Promise<ProductBlockStatus | null> {

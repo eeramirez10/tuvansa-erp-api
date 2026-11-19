@@ -155,6 +155,12 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/purchases-produc
 ### Consultas - Auxiliar
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger?page=1&pageSize={{panelPageSize}}
 
+### Auxiliar - Filtrar almacen 01 y después Filtrar XXX
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger?warehouse=01&movementType=R
+
+### Auxiliar - Filtrar XXX y después Filtrar almacen 01
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger?warehouse=01&movementType=R&openingMovementType=R
+
 ### Consultas - Pedidos por cliente
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders?page=1&pageSize={{panelPageSize}}
 

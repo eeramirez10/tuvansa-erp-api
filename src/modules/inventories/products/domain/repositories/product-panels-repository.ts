@@ -15,10 +15,18 @@ export type ProductPanelKey =
   | 'pieces' | 'fulfilled-pieces' | 'work-in-progress' | 'work-in-progress-ct'
   | 'edi' | 'pending-enablements' | 'documents';
 
-export interface ProductPanelCriteria {
+export interface ProductPanelFilters {
+  ledger?: ProductLedgerFilters;
+  excludeFulfilled?: boolean;
+  customerOrderClassifier?: number | undefined;
+  customerOrderSort?: ProductCustomerOrderSort | undefined;
+}
+
+export type ProductCustomerOrderSort = 'code' | 'name' | 'order' | 'date';
+
+export interface ProductPanelCriteria extends ProductPanelFilters {
   limit: number;
   offset: number;
-  ledger?: ProductLedgerFilters;
 }
 
 export interface ProductLedgerFilters {
@@ -36,6 +44,7 @@ export interface ProductPanelResult {
   source: 'mysql' | 'product-cache' | 'not-available';
   items: Array<Record<string, unknown>>;
   openingStock?: number;
+  customerOrdersTotals?: { remaining: number; assigned: number };
   reason?: string;
 }
 

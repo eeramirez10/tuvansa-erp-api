@@ -38,6 +38,14 @@ const ledgerQuerySchema = panelQuerySchema.extend({
   { message: 'El tipo para el saldo inicial requiere filtrar por almacén y por tipo.' },
 );
 
+const customerOrdersQuerySchema = panelQuerySchema.extend({
+  excludeFulfilled: z.enum(['true', 'false']).optional(),
+});
+const classifiedOrdersQuerySchema = panelQuerySchema.extend({
+  classifier: z.coerce.number().int().min(1).max(9).optional(),
+  sort: z.enum(['code', 'name', 'order', 'date']).optional(),
+});
+
 const blockStatusBodySchema = z.object({ blocked: z.boolean() }).strict();
 
 const nonnegativeNumber = z.number().nonnegative();
@@ -183,10 +191,28 @@ export class ProductsController {
   panel = (panel: ProductPanelKey): RequestHandler => async (request, response, next) => {
     try {
       const { productId } = productParamsSchema.parse(request.params);
-      const { page, pageSize, ...filters } = (panel === 'ledger' ? ledgerQuerySchema : panelQuerySchema).parse(request.query);
-      response.json(await this.getProductPanel.execute(
-        productId, panel, page, pageSize, panel === 'ledger' ? filters : undefined,
-      ));
+      if (panel === 'ledger') {
+        const { page, pageSize, ...ledger } = ledgerQuerySchema.parse(request.query);
+        response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, { ledger }));
+        return;
+      }
+      if (panel === 'customer-orders') {
+        const { page, pageSize, excludeFulfilled } = customerOrdersQuerySchema.parse(request.query);
+        response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, {
+          excludeFulfilled: excludeFulfilled === 'true',
+        }));
+        return;
+      }
+      if (panel === 'customer-orders-star') {
+        const { page, pageSize, classifier, sort } = classifiedOrdersQuerySchema.parse(request.query);
+        response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, {
+          customerOrderClassifier: classifier,
+          customerOrderSort: sort,
+        }));
+        return;
+      }
+      const { page, pageSize } = panelQuerySchema.parse(request.query);
+      response.json(await this.getProductPanel.execute(productId, panel, page, pageSize));
     } catch (error) {
       next(error);
     }

@@ -1,6 +1,6 @@
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type {
-  ProductLedgerFilters,
+  ProductPanelFilters,
   ProductPanelKey,
   ProductPanelResult,
   ProductPanelsRepository,
@@ -14,12 +14,12 @@ export class GetProductPanel {
     panel: ProductPanelKey,
     page: number,
     pageSize: number,
-    ledger?: ProductLedgerFilters,
+    filters: ProductPanelFilters = {},
   ): Promise<{ data: ProductPanelResult; pagination: { page: number; pageSize: number; returned: number } }> {
     const result = await this.repository.getPanel(productId, panel, {
       limit: pageSize,
       offset: (page - 1) * pageSize,
-      ...(ledger === undefined ? {} : { ledger }),
+      ...filters,
     });
     if (result === null) throw new NotFoundError('Producto');
     return {

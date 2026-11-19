@@ -44,6 +44,21 @@ const ledgerConditions = (warehouse?: string, movementType?: 'R') => ({
   params: [warehouse, movementType].filter((value): value is string => value !== undefined),
 });
 
+const customerOrdersScope = `FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
+      LEFT JOIN fcli ON fplin.CLISEQ = fcli.CLISEQ
+      LEFT JOIN fpenc ON fplin.PESEQ = fpenc.PESEQ
+      WHERE finv.ISEQ = ? AND fcli.CLISEQ <> 0 AND fpenc.PEMULTICIA = 1`;
+const customerOrderClassifierFields = [
+  'fcli.CLIPAR1', 'fcli.CLIPAR2', 'fcli.CLIPAR3', 'fcli.CLIPAR4', 'fcli.CLIPAR5',
+  'fcli.CLIPAR6', 'fcli.CLIPAR7', 'fcli.CLIPAR8', 'fcli.CLIPAR9',
+] as const;
+const classifiedOrderSortFields = {
+  code: 'classifierCode',
+  name: 'classifierName',
+  order: 'orderNumber',
+  date: 'orderedAt',
+} as const;
+
 const definitions: Record<ProductPanelKey, PanelDefinition> = {
   warehouses: {
     section: 'actions', button: 'Almacenes',
@@ -275,17 +290,12 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     sql: `SELECT PLSEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
       PLCANT AS quantity, PLSURT AS fulfilled, PLASIGNADO AS assigned,
       PEDESDE AS orderedAt, PENUM AS orderNumber, PENUMELLOS AS externalNumber,
-      PEALMACEN AS warehouse, PLPRECI AS price, PLFACTOR AS factor
-      FROM fplin LEFT JOIN fcli ON fplin.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
-      WHERE fplin.ISEQ = ? AND fcli.CLISEQ <> 0 AND PESPEDIDO = 1
-      ORDER BY PLSEQ`, parameterMode: 'id',
+      PEALMACEN AS warehouse, PLASIGNPZAS AS assignedPieces,
+      PLPRECI AS price, PLFACTOR AS factor
+      ${customerOrdersScope} AND PESPEDIDO = 1`, parameterMode: 'id',
   },
   'customer-orders-star': {
-    section: 'queries', button: 'Pedidos por cliente *', source: 'product-cache',
-    sql: `SELECT IPEDCLI AS ordered, IASIGNADO AS assigned,
-      ISTKACT AS stock, (IPEDCLI - IASIGNADO) AS pending
-      FROM finv WHERE ISEQ = ?`, parameterMode: 'id',
+    section: 'queries', button: 'Pedidos por cliente *',
   },
   'customer-orders-ct': {
     section: 'queries', button: 'Pedidos por cliente CT',
@@ -297,17 +307,15 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       LEFT JOIN fcli ON fplin.CLISEQ=fcli.CLISEQ
       LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
       WHERE ICOD >= ? AND ICOD <= CONCAT(?, 'z') AND fcli.CLISEQ <> 0
-      AND PESPEDIDO = 1 ORDER BY ICOD, PLSEQ`, parameterMode: 'code-range',
+      AND PESPEDIDO = 1 AND fpenc.PEMULTICIA = 1 ORDER BY ICOD, PLSEQ`, parameterMode: 'code-range',
   },
   'customer-quotes': {
     section: 'queries', button: 'Cotizaciones por cliente',
     sql: `SELECT PLSEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
       PLCANT AS quantity, PLSURT AS fulfilled, PLASIGNADO AS assigned,
       PEDESDE AS quotedAt, PENUM AS quoteNumber, PENUMELLOS AS externalNumber,
-      PEALMACEN AS warehouse FROM fplin
-      LEFT JOIN fcli ON fplin.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
-      WHERE fplin.ISEQ = ? AND fcli.CLISEQ <> 0 AND PESPEDIDO = 4
+      PEALMACEN AS warehouse, PLASIGNPZAS AS assignedPieces
+      ${customerOrdersScope} AND PESPEDIDO = 4
       ORDER BY PLSEQ`, parameterMode: 'id',
   },
   'customer-sales': {
@@ -613,6 +621,8 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const product = productRows[0];
     if (product === undefined) return null;
 
+    if (panel === 'customer-orders-star') return this.getClassifiedCustomerOrders(product, criteria);
+
     const definition = definitions[panel];
     if (definition.sql === undefined) {
       return {
@@ -629,11 +639,17 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
 
     const ledger = panel === 'ledger' ? criteria.ledger : undefined;
     const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
-    const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ' : '';
+    const isCustomerOrders = panel === 'customer-orders';
+    const fulfillmentFilter = isCustomerOrders && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
+    const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ'
+      : isCustomerOrders ? ' ORDER BY PEDESDE, FPLIN.PLSEQ' : '';
     const openingStock = ledger?.warehouse === undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
+    const customerOrdersTotals = isCustomerOrders
+      ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = 1${fulfillmentFilter}`)
+      : undefined;
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
-      `${definition.sql}${conditions.sql}${order} LIMIT ? OFFSET ?`,
+      `${definition.sql}${conditions.sql}${fulfillmentFilter}${order} LIMIT ? OFFSET ?`,
       [
         ...parametersFor(definition.parameterMode, product),
         ...conditions.params,
@@ -650,6 +666,53 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       source: definition.source ?? 'mysql',
       items: rows.map((row) => ({ ...row })),
       ...(openingStock === undefined ? {} : { openingStock }),
+      ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
+    };
+  }
+
+  private async getClassifiedCustomerOrders(
+    product: ProductHeaderRow,
+    criteria: ProductPanelCriteria,
+  ): Promise<ProductPanelResult> {
+    const { button, section } = definitions['customer-orders-star'];
+    const base = { product, button, section, key: 'customer-orders-star', available: true, source: 'mysql' } as const;
+    const classifier = criteria.customerOrderClassifier === undefined
+      ? undefined : customerOrderClassifierFields[criteria.customerOrderClassifier - 1];
+    if (classifier === undefined) {
+      return { ...base, items: [], customerOrdersTotals: { remaining: 0, assigned: 0 } };
+    }
+
+    const orderBy = classifiedOrderSortFields[criteria.customerOrderSort ?? 'date'];
+    const [items] = await legacyMysqlPool.execute<PanelRow[]>(
+      `SELECT FPLIN.PLSEQ AS id, ${classifier} AS classifierCode,
+        COALESCE((SELECT AGDESCR FROM fag WHERE AGTNUM = ${classifier} ORDER BY AGSEQ LIMIT 1), '') AS classifierName,
+        PENUM AS orderNumber, PEDESDE AS orderedAt, PLCANT AS quantity,
+        PLSURT AS fulfilled, PLASIGNADO AS assigned
+       ${customerOrdersScope} ORDER BY ${orderBy}, FPLIN.PLSEQ LIMIT ? OFFSET ?`,
+      [product.id, criteria.limit, criteria.offset],
+    );
+    return {
+      ...base,
+      items: items.map((row) => ({ ...row })),
+      customerOrdersTotals: await this.getCustomerOrdersTotals(product.id, ''),
+    };
+  }
+
+  private async getCustomerOrdersTotals(
+    productId: number,
+    filters: string,
+  ): Promise<NonNullable<ProductPanelResult['customerOrdersTotals']>> {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & {
+      remaining: number | string; assigned: number | string;
+    }>>(
+      `SELECT COALESCE(SUM(PLCANT), 0) - COALESCE(SUM(PLSURT), 0) AS remaining,
+        COALESCE(SUM(PLASIGNADO), 0) AS assigned
+       ${customerOrdersScope}${filters}`,
+      [productId],
+    );
+    return {
+      remaining: Number(rows[0]?.remaining ?? 0),
+      assigned: Number(rows[0]?.assigned ?? 0),
     };
   }
 

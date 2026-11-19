@@ -66,37 +66,74 @@ origen, registros y paginacion.
 
 ## Consultas
 
-| Boton OMNIS | Endpoint GET | Origen confirmado |
-| --- | --- | --- |
-| Auxiliar | `/:productId/queries/ledger` | `faxinv`, `fdoc`, `flotes` |
-| Pedidos por cliente | `/:productId/queries/customer-orders` | `fplin`, `fpenc`, `fcli`; `PESPEDIDO=1` |
-| Pedidos por cliente `*` | `/:productId/queries/customer-orders/star` | Acumulados de `finv` usados por OMNIS |
-| Pedidos por cliente `CT` | `/:productId/queries/customer-orders/ct` | Rango de `finv.ICOD` |
-| Cotizaciones por cliente | `/:productId/queries/customer-quotes` | `fplin`, `fpenc`, `fcli`; `PESPEDIDO=4` |
-| Ventas por cliente | `/:productId/queries/customer-sales` | `faxinv`, `fdoc`, `fcli` |
-| Ventas por cliente `*` | `/:productId/queries/customer-sales/star` | Acumulados de `finv` usados por OMNIS |
-| Ventas por cliente `CT` | `/:productId/queries/customer-sales/ct` | Rango de `finv.ICOD` |
-| Ventas desglosadas | `/:productId/queries/customer-sales/detail` | `faxinv`, `fdoc`, `fcli` |
-| Ventas por sucursal | `/:productId/queries/sales/by-branch` | `faxinv.AISUCURSAL` |
-| Ventas anuales | `/:productId/queries/sales/annual` | `faxinv`, `fdoc`, `fcli` |
-| Ventas anuales resumen | `/:productId/queries/sales/annual-summary` | `faxinv`, `fdoc` |
-| Ordenado a proveedor | `/:productId/queries/supplier-orders` | `fplin`, `fpenc`, `fprv`; `PESPEDIDO IN (2,3)` |
-| Ordenado a proveedor `CT` | `/:productId/queries/supplier-orders/ct` | Rango de `finv.ICOD` |
-| Cotizado a proveedores | `/:productId/queries/supplier-quotes` | `fplin`, `fpenc`, `fprv`; `PESPEDIDO=5` |
-| Compras por proveedor | `/:productId/queries/supplier-purchases` | `faxinv`, `fdoc`, `fprv` |
-| Compras por proveedor `DT` | `/:productId/queries/supplier-purchases/dt` | `fplin`, `fpenc`, `fprv` por rango |
-| Compras desglosadas | `/:productId/queries/supplier-purchases/detail` | `faxinv`, `fdoc`, `fprv` |
-| Compras anuales | `/:productId/queries/purchases/annual` | `faxinv`, `fdoc`, `fprv` |
-| Compras anuales resumen | `/:productId/queries/purchases/annual-summary` | `faxinv`, `fdoc` |
-| Piezas | `/:productId/queries/pieces` | No disponible: esta version no incluye PIEZAS |
-| Piezas surtidas | `/:productId/queries/pieces/fulfilled` | `fcajas` |
-| W.I.P. | `/:productId/queries/work-in-progress` | `ftikets.TKTPROD` |
-| W.I.P. `CT` | `/:productId/queries/work-in-progress/ct` | `ftikets` por rango de producto |
-| E.D.I. | `/:productId/queries/edi` | `fvsucursal`, `fedi`, `fcli` |
-| Habilitaciones pendientes | `/:productId/queries/pending-enablements` | `faxinv`, `fdoc`; `DPAR9 IN ('9NVO','9HAB')` |
-| Documentos | `/:productId/queries/documents` | No disponible: reutilizo el ultimo documento sin filtro de producto |
+| Boton OMNIS | Endpoint GET | Origen confirmado | Procedimiento → ventana |
+| --- | --- | --- | --- |
+| Auxiliar | `/:productId/queries/ledger` | `faxinv`, `fdoc`, `flotes` | `EINV#8/1` → `EINV#10` |
+| Pedidos por cliente | `/:productId/queries/customer-orders` | `fplin`, `finv`, `fpenc`, `fcli`; `PESPEDIDO=1`, `PEMULTICIA=1` | `EINV#8/2` → `EINV#7` |
+| Pedidos por cliente `*` | `/:productId/queries/customer-orders/star` | `fplin`, `finv`, `fpenc`, `fcli.CLIPAR1..9` y `fag` al elegir clasificador | `EINV#8/3` → `EINV#7A` |
+| Pedidos por cliente `CT` | `/:productId/queries/customer-orders/ct` | Rango de `finv.ICOD` | `EINV#8/4` → `EINV#7AA` |
+| Cotizaciones por cliente | `/:productId/queries/customer-quotes` | `fplin`, `fpenc`, `fcli`; `PESPEDIDO=4` | `EINV#8/5` → `EINV#47` |
+| Ventas por cliente | `/:productId/queries/customer-sales` | `faxinv`, `fdoc`, `fcli` | `EINV#8/6` → `EINV#6` |
+| Ventas por cliente `*` | `/:productId/queries/customer-sales/star` | Acumulados de `finv` usados por OMNIS | `EINV#8/7` → `EINV#6BA` |
+| Ventas por cliente `CT` | `/:productId/queries/customer-sales/ct` | Rango de `finv.ICOD` | `EINV#8/8` → `EINV#6AA` |
+| Ventas desglosadas | `/:productId/queries/customer-sales/detail` | `faxinv`, `fdoc`, `fcli` | `EINV#8/9` → `EINV#38` |
+| Ventas por sucursal | `/:productId/queries/sales/by-branch` | `faxinv.AISUCURSAL` | `EINV#8/10` → `EINV#30` |
+| Ventas anuales | `/:productId/queries/sales/annual` | `faxinv`, `fdoc`, `fcli` | `EINV#8/11` → `EINV2#2` |
+| Ventas anuales resumen | `/:productId/queries/sales/annual-summary` | `faxinv`, `fdoc` | `EINV#8/12` → `EINV2#20` |
+| Ordenado a proveedor | `/:productId/queries/supplier-orders` | `fplin`, `fpenc`, `fprv`; `PESPEDIDO IN (2,3)` | `EINV#8/13` → `EINV#12` |
+| Ordenado a proveedor `CT` | `/:productId/queries/supplier-orders/ct` | Rango de `finv.ICOD` | `EINV#8/14` → `EINV#12A` |
+| Cotizado a proveedores | `/:productId/queries/supplier-quotes` | `fplin`, `fpenc`, `fprv`; `PESPEDIDO=5` | `EINV#8/15` → `EINV#12B` |
+| Compras por proveedor | `/:productId/queries/supplier-purchases` | `faxinv`, `fdoc`, `fprv` | `EINV#8/16` → `EINV#5` |
+| Compras por proveedor `DT` | `/:productId/queries/supplier-purchases/dt` | `fplin`, `fpenc`, `fprv` por rango | `EINV#8/17` → `EINV#50` |
+| Compras desglosadas | `/:productId/queries/supplier-purchases/detail` | `faxinv`, `fdoc`, `fprv` | `EINV#8/18` → `EINV#39` |
+| Compras anuales | `/:productId/queries/purchases/annual` | `faxinv`, `fdoc`, `fprv` | `EINV#8/19` → `EINV2#4` |
+| Compras anuales resumen | `/:productId/queries/purchases/annual-summary` | `faxinv`, `fdoc` | `EINV#8/27` → `EINV2#21` |
+| Piezas | `/:productId/queries/pieces` | No disponible: esta version no incluye PIEZAS | `EINV#8/20` → `EINV#28` |
+| Piezas surtidas | `/:productId/queries/pieces/fulfilled` | `fcajas` | `EINV#8/21` → `EINV#28A` |
+| W.I.P. | `/:productId/queries/work-in-progress` | `ftikets.TKTPROD` | `EINV#8/22` → `EINV#42` |
+| W.I.P. `CT` | `/:productId/queries/work-in-progress/ct` | `ftikets` por rango de producto | `EINV#8/23` → `EINV#42A` |
+| E.D.I. | `/:productId/queries/edi` | `fvsucursal`, `fedi`, `fcli` | `EINV#8/24` → `EINV#44` |
+| Habilitaciones pendientes | `/:productId/queries/pending-enablements` | `faxinv`, `fdoc`; `DPAR9 IN ('9NVO','9HAB')` | `EINV#8/25` → `EINV#51` |
+| Documentos | `/:productId/queries/documents` | No disponible: reutilizo el ultimo documento sin filtro de producto | `EINV#8/26` → `EINV#24` |
 
 ## Evidencia y adaptacion
+
+### Pedidos por cliente
+
+`EINV#8/2` abre `EINV#7`. Su procedimiento 240 arma la búsqueda por ISEQ
+y los filtros de pedidos, compañía y sesión. Después de cargar la lista
+ordena por `PEDESDE`. La variante `*` abre `EINV#7A`, CT abre `EINV#7AA`
+en el flujo normal y Cotizaciones abre `EINV#47`. El alcance de compañía
+de las consultas normal, CT y Cotizaciones se adaptó a la sesión capturada
+de México (`PEMULTICIA=1`). Véanse los SELECT de
+[Pedidos](product-buttons-capture.md#L3427),
+[CT](product-buttons-capture.md#L4199) y
+[Cotizaciones](product-buttons-capture.md#L3453).
+
+**Filtrar pedidos surtidos** ejecuta `EINV#7/12` y conserva únicamente las
+partidas con `PLSURT < PLCANT`. El GET del panel principal admite
+`excludeFulfilled=true`, aplica el filtro antes de paginar y devuelve
+`data.customerOrdersTotals` con el Total (`sum(PLCANT) - sum(PLSURT)`) y el
+Asignado (`sum(PLASIGNADO)`) del conjunto completo. Los cálculos de los
+campos 3 a 7 del diseño de `EINV#7` confirman también que Disponible es
+Stock menos Asignado y Faltante es el excedente del Total sobre Stock, con
+piso de cero. El SQL agregado adapta esas fórmulas a la paginación de Tuvansa.
+
+Los comandos inferiores tienen flujos separados. Asignar llama a
+`EINVAPP/100` desde `EINV#7/8`, Traspasar sólo modifica `FPENC.PEPAR9`
+en la rama `PFEIFER` de `EINV#7/11` e Imprimir formatea la lista y sus
+totales en `EINV#7/495` antes de llamar a `INICIO/38`.
+
+En la variante **Pedidos por `*`**, `EINV#7A/0` inicializa una lista vacía.
+Los botones `EINV#7A/11–19` eligen `CLIPAR1..9` y el procedimiento 240
+carga las partidas del producto para la compañía, incluyendo todos sus
+tipos. Resuelve cada código en `FAG.AGTNUM` y ordena primero por `PEDESDE`.
+El GET admite `classifier=1..9` y `sort=code|name|order|date` para los
+encabezados del panel. Sus totales usan todas las partidas del resultado.
+`Faltante` muestra Total menos Stock, incluido el valor negativo. Esta
+adaptación procede del código de Omnis 7. La apertura capturada de
+[Pedidos por `*`](product-buttons-capture.md#L4156) corresponde al estado
+inicial sin consulta de partidas.
 
 ### Ventana Auxiliar
 

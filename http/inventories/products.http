@@ -164,8 +164,14 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/ledger?w
 ### Consultas - Pedidos por cliente
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders?page=1&pageSize={{panelPageSize}}
 
+### Pedidos por cliente - Filtrar pedidos surtidos
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders?excludeFulfilled=true&page=1&pageSize={{panelPageSize}}
+
 ### Consultas - Pedidos por cliente asterisco
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/star?page=1&pageSize={{panelPageSize}}
+
+### Pedidos por * - Clasificador agente y ordenar por código
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/star?classifier=1&sort=code
 
 ### Consultas - Pedidos por cliente CT
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-orders/ct?page=1&pageSize={{panelPageSize}}

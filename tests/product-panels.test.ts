@@ -109,6 +109,33 @@ describe('Inventarios PT - botones laterales', () => {
       .rejects.toMatchObject({ code: 'NOT_FOUND', statusCode: 404 });
   });
 
+  it('excluye los pedidos surtidos antes de sumar y paginar la compañía activa', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ remaining: '602.375', assigned: '45.125' }], []])
+      .mockResolvedValueOnce([[{ id: 711, assignedPieces: 4 }], []]);
+
+    const response = await new GetProductPanel(new LegacyMysqlProductPanelsDataSource())
+      .execute(panel.product.id, 'customer-orders', 2, 500, { excludeFulfilled: true });
+
+    const [totalQuery, totalParams] = execute.mock.calls[1]!;
+    const [pageQuery, pageParams] = execute.mock.calls[2]!;
+    for (const query of [totalQuery, pageQuery]) {
+      expect(query).toEqual(expect.stringContaining('fpenc.PEMULTICIA = 1 AND PESPEDIDO = 1 AND PLSURT < PLCANT'));
+    }
+    expect(totalQuery).toEqual(expect.stringContaining('COALESCE(SUM(PLCANT), 0) - COALESCE(SUM(PLSURT), 0)'));
+    expect(totalQuery).toEqual(expect.stringContaining('SUM(PLASIGNADO)'));
+    expect(totalQuery).not.toEqual(expect.stringContaining('LIMIT'));
+    expect(totalParams).toEqual([panel.product.id]);
+    expect(pageQuery).toEqual(expect.stringContaining('ORDER BY PEDESDE, FPLIN.PLSEQ LIMIT ? OFFSET ?'));
+    expect(pageParams).toEqual([panel.product.id, 500, 500]);
+    expect(response.data).toMatchObject({
+      customerOrdersTotals: { remaining: 602.375, assigned: 45.125 },
+      items: [{ id: 711, assignedPieces: 4 }],
+    });
+  });
+
   it('permite documentar botones sin modulo sin inventar datos', async () => {
     const repository: ProductPanelsRepository = {
       getPanel: async () => ({
@@ -124,6 +151,44 @@ describe('Inventarios PT - botones laterales', () => {
     };
     const response = await new GetProductPanel(repository).execute(47087, 'photo', 1, 25);
     expect(response.data).toMatchObject({ available: false, items: [] });
+  });
+
+  it('abre pedidos por asterisco sin partidas hasta pulsar un clasificador', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute.mockResolvedValueOnce([[panel.product], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'customer-orders-star', { limit: 500, offset: 0 },
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      available: true, items: [], customerOrdersTotals: { remaining: 0, assigned: 0 },
+    });
+  });
+
+  it('carga pedidos por asterisco con el clasificador y el orden elegidos', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    const line = { id: 701, classifierCode: '9ABC', classifierName: 'Proyecto' };
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[line], []])
+      .mockResolvedValueOnce([[{ remaining: 10, assigned: 6 }], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'customer-orders-star',
+      { limit: 500, offset: 500, customerOrderClassifier: 9, customerOrderSort: 'name' },
+    );
+
+    const [query, params] = execute.mock.calls[1]!;
+    expect(query).toEqual(expect.stringContaining('fcli.CLIPAR9 AS classifierCode'));
+    expect(query).toEqual(expect.stringContaining('AGTNUM = fcli.CLIPAR9'));
+    expect(query).toEqual(expect.stringContaining('fpenc.PEMULTICIA = 1 ORDER BY classifierName'));
+    expect(query).not.toEqual(expect.stringContaining('PESPEDIDO'));
+    expect(params).toEqual([panel.product.id, 500, 500]);
+    expect(result).toMatchObject({
+      items: [line], customerOrdersTotals: { remaining: 10, assigned: 6 },
+    });
   });
 
   it('devuelve el estado confirmado al bloquear', async () => {

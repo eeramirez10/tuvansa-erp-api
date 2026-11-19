@@ -101,6 +101,33 @@ Las consultas aceptan `pageSize` hasta 500. El producto de verificación manual
 es `01300958` (`ISEQ=13288`) porque contiene movimiento suficiente para validar
 tablas, desplazamiento y totales con la base actual de desarrollo.
 
+### Consultas → Auxiliar
+
+| Control | Endpoint | Procedencia | Tablas |
+| --- | --- | --- | --- |
+| Inventarios P.T. → Consultas → Auxiliar | `GET /api/inventories/products/:productId/queries/ledger` | Adaptada del [SQL observado en MySQL](product-buttons-capture.md#L3401) | `FAXINV`, `FINV`, `FDOC`, `FLOTES` |
+
+Se conservan los filtros del flujo normal capturado (`AIMES=1`, `DEST=0` y
+`DMULTICIA=1`), con paginación por `FINV.ISEQ, FAXINV.AISEQ`. La proyección
+incluye Pzas (`pieces`), Ruta (`route`), Referencia ellos (`ellosReference`),
+el identificador del documento (`documentId`) y el usuario del documento
+(`documentUserId`). El usuario del movimiento sigue en `userId`.
+
+En código leído de Omnis 7, `EINV#8/1` abre `EINV#10`,
+`EINV#10/240` configura los filtros y `MSQL/276` arma la consulta.
+`EINV#10/239` recorre los movimientos en orden y acumula `AICANT` partiendo
+de `ISTKANT`. Esto corresponde al saldo progresivo de la ventana. La
+captura reportada de la versión reciente para `01300958` devolvió 1,240 filas.
+En la base de lectura de Tuvansa se comprobaron dos páginas consecutivas de
+500 filas para ese producto y el orden por identificador en el salto de página.
+
+En la biblioteca German de Omnis 7, `EINV#10/13` filtra la lista por el
+almacén del movimiento seleccionado y recalcula su saldo inicial con
+`EINV#10/241`. El procedimiento `EINV#10/14` conserva sólo los movimientos
+`AITIPMV='R'` y vuelve a calcular el saldo. Son reglas leídas del código de
+esta biblioteca. Los controles internos y las variantes de sesión aún se deben
+verificar en la versión reciente.
+
 ## Acciones reproducidas en frontend
 
 Los 14 controles de **Acciones** conservan el nombre visible de OMNIS y su
@@ -116,10 +143,9 @@ botón **Bloquear** consulta el estado mediante GET y confirma el cambio mediant
 `{ "blocked": boolean }`. Los demás botones internos de estas ventanas quedan
 visuales hasta capturar sus operaciones en una etapa posterior.
 
-La conexión MySQL configurada durante esta validación permite lectura pero
-rechaza `UPDATE finv`; por ello el contrato PATCH queda preparado y conectado,
-pero sólo podrá completar el cambio cuando la API use credenciales de escritura
-o el futuro repositorio PostgreSQL. La prueba fallida no alteró el producto.
+La frontera HTTP bloquea este PATCH mientras siga conectado al datasource
+heredado. Se habilitará cuando la operación de bloqueo y las lecturas que la
+reflejan estén conectadas al datasource PostgreSQL.
 
 ## Compras/Prod reproducido en frontend
 

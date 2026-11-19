@@ -1,10 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GetProductPanel } from '../src/modules/inventories/products/application/use-cases/get-product-panel.js';
 import { SetProductBlockStatus } from '../src/modules/inventories/products/application/use-cases/set-product-block-status.js';
+import { LegacyMysqlProductPanelsDataSource } from '../src/modules/inventories/products/infrastructure/datasources/legacy-mysql-product-panels-data-source.js';
+import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 import type {
   ProductPanelResult,
   ProductPanelsRepository,
 } from '../src/modules/inventories/products/domain/repositories/product-panels-repository.js';
+
+vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({
+  legacyMysqlPool: { execute: vi.fn() },
+}));
 
 const panel: ProductPanelResult = {
   product: { id: 47087, code: '004212899', description: 'Producto de prueba' },
@@ -17,6 +23,34 @@ const panel: ProductPanelResult = {
 };
 
 describe('Inventarios PT - botones laterales', () => {
+  it('pagina el auxiliar en orden de movimiento con la proyección del SQL capturado', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute);
+    execute.mockReset();
+    const movement = {
+      id: 702,
+      pieces: 12,
+      route: '01',
+      ellosReference: 'REF',
+      documentUserId: 7,
+      documentId: 200,
+    };
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[movement], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'ledger', { limit: 100, offset: 100 },
+    );
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    const [query, values] = execute.mock.calls[1]!;
+    expect(query).toEqual(expect.stringContaining('LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ'));
+    expect(query).toEqual(expect.stringContaining('WHERE finv.ISEQ = ? AND AIMES = 1 AND DEST = 0 AND DMULTICIA = 1'));
+    expect(query).toEqual(expect.stringContaining('ORDER BY finv.ISEQ, faxinv.AISEQ LIMIT ? OFFSET ?'));
+    expect(values).toEqual([panel.product.id, 100, 100]);
+    expect(result).toMatchObject({ button: 'Auxiliar', source: 'mysql', items: [movement] });
+  });
+
   it('conserva la correspondencia de boton y paginacion', async () => {
     const repository: ProductPanelsRepository = {
       getPanel: async (_productId, key, criteria) => ({

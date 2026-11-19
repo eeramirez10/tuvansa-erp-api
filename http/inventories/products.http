@@ -179,6 +179,9 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer
 ### Consultas - Cotizaciones por cliente
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-quotes?page=1&pageSize={{panelPageSize}}
 
+### Cotizaciones por cliente - Filtrar las partidas surtidas
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-quotes?excludeFulfilled=true&page=1&pageSize={{panelPageSize}}
+
 ### Consultas - Ventas por cliente
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales?page=1&pageSize={{panelPageSize}}
 

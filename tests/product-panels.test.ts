@@ -109,7 +109,10 @@ describe('Inventarios PT - botones laterales', () => {
       .rejects.toMatchObject({ code: 'NOT_FOUND', statusCode: 404 });
   });
 
-  it('excluye los pedidos surtidos antes de sumar y paginar la compañía activa', async () => {
+  it.each([
+    ['customer-orders', 1],
+    ['customer-quotes', 4],
+  ] as const)('excluye las partidas surtidas antes de sumar y paginar %s', async (key, documentType) => {
     const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
     execute
       .mockResolvedValueOnce([[panel.product], []])
@@ -117,12 +120,14 @@ describe('Inventarios PT - botones laterales', () => {
       .mockResolvedValueOnce([[{ id: 711, assignedPieces: 4 }], []]);
 
     const response = await new GetProductPanel(new LegacyMysqlProductPanelsDataSource())
-      .execute(panel.product.id, 'customer-orders', 2, 500, { excludeFulfilled: true });
+      .execute(panel.product.id, key, 2, 500, { excludeFulfilled: true });
 
     const [totalQuery, totalParams] = execute.mock.calls[1]!;
     const [pageQuery, pageParams] = execute.mock.calls[2]!;
     for (const query of [totalQuery, pageQuery]) {
-      expect(query).toEqual(expect.stringContaining('fpenc.PEMULTICIA = 1 AND PESPEDIDO = 1 AND PLSURT < PLCANT'));
+      expect(query).toEqual(expect.stringContaining(
+        `fpenc.PEMULTICIA = 1 AND PESPEDIDO = ${documentType} AND PLSURT < PLCANT`,
+      ));
     }
     expect(totalQuery).toEqual(expect.stringContaining('COALESCE(SUM(PLCANT), 0) - COALESCE(SUM(PLSURT), 0)'));
     expect(totalQuery).toEqual(expect.stringContaining('SUM(PLASIGNADO)'));

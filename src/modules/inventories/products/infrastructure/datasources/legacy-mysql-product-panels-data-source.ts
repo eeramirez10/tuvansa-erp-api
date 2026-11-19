@@ -322,8 +322,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       PLCANT AS quantity, PLSURT AS fulfilled, PLASIGNADO AS assigned,
       PEDESDE AS quotedAt, PENUM AS quoteNumber, PENUMELLOS AS externalNumber,
       PEALMACEN AS warehouse, PLASIGNPZAS AS assignedPieces
-      ${customerOrdersScope} AND PESPEDIDO = 4
-      ORDER BY PLSEQ`, parameterMode: 'id',
+      ${customerOrdersScope} AND PESPEDIDO = 4`, parameterMode: 'id',
   },
   'customer-sales': {
     section: 'queries', button: 'Ventas por cliente',
@@ -646,14 +645,14 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
 
     const ledger = panel === 'ledger' ? criteria.ledger : undefined;
     const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
-    const isCustomerOrders = panel === 'customer-orders';
-    const fulfillmentFilter = isCustomerOrders && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
+    const documentType = panel === 'customer-orders' ? 1 : panel === 'customer-quotes' ? 4 : undefined;
+    const fulfillmentFilter = documentType !== undefined && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
     const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ'
-      : isCustomerOrders ? ' ORDER BY PEDESDE, FPLIN.PLSEQ' : '';
+      : documentType !== undefined ? ' ORDER BY PEDESDE, FPLIN.PLSEQ' : '';
     const openingStock = ledger?.warehouse === undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
-    const customerOrdersTotals = isCustomerOrders
-      ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = 1${fulfillmentFilter}`)
+    const customerOrdersTotals = documentType !== undefined
+      ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
       : undefined;
     const params = panel === 'customer-orders-ct' ? await this.getCustomerOrderRootRange(product)
       : parametersFor(definition.parameterMode, product);

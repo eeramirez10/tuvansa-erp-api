@@ -196,7 +196,7 @@ export class ProductsController {
         response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, { ledger }));
         return;
       }
-      if (panel === 'customer-orders') {
+      if (panel === 'customer-orders' || panel === 'customer-quotes') {
         const { page, pageSize, excludeFulfilled } = customerOrdersQuerySchema.parse(request.query);
         response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, {
           excludeFulfilled: excludeFulfilled === 'true',

@@ -142,6 +142,14 @@ El GET agrega antes de paginar. Los controles de la matriz inferior
 corresponden a `EINV#7AA/241` y requieren el desglose por color y talla
 del pedido seleccionado.
 
+**Cotizaciones por cliente** abre `EINV#47`. Su carga (`/240`) usa
+`PESPEDIDO=4` y ordena la lista por `PEDESDE`. **Filtrar pedidos surtidos**
+(`/13`) conserva `PLSURT < PLCANT`. El GET admite el mismo filtro antes de
+paginar y agrega la lista completa de cotizaciones para el Total. El diseño
+de Omnis calcula el Total desde `LLISTA`, pero vincula Asignado, Disponible
+y Faltante con la lista global `#L1`. Por ello los otros valores dependen
+del contexto anterior de la sesión.
+
 ### Ventana Auxiliar
 
 La ventana visible se valido de nuevo en OMNIS con el producto `010193`. El

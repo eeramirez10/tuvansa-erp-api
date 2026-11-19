@@ -1,6 +1,6 @@
 ---
 name: proscai-rea
-description: Preparar o continuar la ingeniería inversa de PROSCAI/OMNIS y el traspaso de Tuvansa ERP a otra instalación, sin depender de OMNIS Studio ni del historial del chat.
+description: Continuar la migración de PROSCAI/OMNIS a Tuvansa ERP en otro servidor, mediante inspección de una biblioteca .LBS accesible en Studio u observación del runtime y su SQL.
 ---
 
 # Continuar REA de PROSCAI
@@ -10,7 +10,7 @@ Usar para incorporación a otro servidor, inventario de una versión o continuid
 1. Localiza ambos repositorios; sus nombres y rutas pueden cambiar. Lee los AGENTS.md aplicables y [REA-START-HERE](../../../docs/REA-START-HERE.md). Para elegir módulo y fuente de evidencia consulta [REA-MODULE-MAP](../../../docs/REA-MODULE-MAP.md), después sólo sus documentos pertinentes.
 2. Distingue revisión local, versión publicada y respaldo del ERP. Registra rama/SHA de los dos repositorios; un clon no contiene cambios sin commit/push, captures/, secretos ni archivos del escritorio. No presentes la ausencia de un log privado como falta de SQL capturado originalmente.
 3. Revisa únicamente los nombres de variables requeridas y configura credenciales localmente. Revalida host/base/versión/aislamiento del nuevo destino: autorizaciones y rutas del servidor anterior no se transfieren. Antes de lecturas de Pedidos con Neon configurado, revisa la inicialización automática descrita en la guía.
-4. Sin Studio, observa el runtime visible y el SQL en el servidor de base de datos. No intentes obtener bibliotecas, desbloquear licencias o editar código OMNIS. Una ruta interna de método en una captura no demuestra acceso al código fuente.
+4. Con Studio y una biblioteca accesible, sigue [REA-OMNIS-LBS](../../../docs/REA-OMNIS-LBS.md) para preparar REA, exportar una copia e inspeccionar clases y métodos. Si la biblioteca está privada o sólo hay runtime, sigue la ruta de pantalla y SQL. Una referencia en el Trace Log identifica un método de la traza. El método exportado permite leer su código.
 5. Elige la etapa necesaria:
    - Interfaz nativa: [proscai-desktop-rea](../proscai-desktop-rea/SKILL.md).
    - Captura de SQL: [proscai-sql-capture](../proscai-sql-capture/SKILL.md).

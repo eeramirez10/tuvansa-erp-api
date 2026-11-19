@@ -1,13 +1,16 @@
 # Continuar este proyecto en otro servidor
 
-Actualizado 2026-11-17. Punto de entrada para REA de una versión más reciente de PROSCAI/OMNIS, **sin necesitar OMNIS Studio**. El procedimiento usa el runtime visible, las consultas observadas en MySQL/MariaDB, la documentación y el código de ambos repositorios; no promete leer ni modificar código fuente OMNIS.
+Actualizado 2026-11-19. Punto de entrada para revisar PROSCAI/OMNIS y continuar el desarrollo de Tuvansa ERP en otro servidor.
+
+- Si Omnis Studio puede abrir una copia de `PROSCAI.LBS`, sigue la [guía de instalación de REA, exportación a JSON e inspección de clases](REA-OMNIS-LBS.md).
+- Si sólo tienes el runtime, sigue la [ruta de observación de pantallas y SQL](#primera-sesión-sin-studio).
 
 ## Qué revisar primero
 
 1. AGENTS.md de ambos repositorios: permisos, arquitectura, UI y flujo Git.
 2. Esta guía y [mapa de módulos y cobertura](REA-MODULE-MAP.md).
 3. El documento del módulo elegido en docs/modules/ y su equivalente frontend; para un cambio de interfaz, también el endpoint-map del frontend.
-4. [Runbook de captura SQL](REA-SQL-CAPTURE.md) sólo si vas a capturar. El [handoff histórico](PROSCAI-MIGRATION-HANDOFF.md) conserva contexto y ejercicios; las precisiones actuales de esta guía y el código vigente resuelven sus referencias antiguas.
+4. [Runbook de captura SQL](REA-SQL-CAPTURE.md) sólo si vas a capturar. Consulta el [handoff histórico](PROSCAI-MIGRATION-HANDOFF.md) para el contexto y los ejercicios, y comprueba las referencias contra esta guía y el código vigente.
 
 ## Skills del repositorio
 
@@ -20,11 +23,11 @@ Los archivos están dentro del repositorio para que se transporten con su versi�
 | [proscai-sql-capture](../.agents/skills/proscai-sql-capture/SKILL.md) | Hilo OMNIS, general_log, extracción y procedencia |
 | [proscai-feature-migration](../.agents/skills/proscai-feature-migration/SKILL.md) | Pasar una función observada a contratos, datasource y frontend |
 
-Si el cliente no las descubre en su catálogo, pedirle que abra el SKILL.md por su ruta. No es necesario instalar un plugin ni usar una skill personal que sólo existía en el servidor anterior. La automatización visual requiere Python, pywinauto y Pillow en Windows; el extractor de log usa sólo Python estándar. La API y el frontend siguen usando pnpm.
+Si el cliente no descubre las skills en su catálogo, pídele que abra el SKILL.md por su ruta. El conector REA se prepara por separado con los comandos de la [guía de bibliotecas](REA-OMNIS-LBS.md#conectar-rea). La misma guía incluye las dependencias de la automatización visual en Windows. El extractor de log usa Python estándar. La API y el frontend usan pnpm.
 
 ## Qué viaja con Git y qué no
 
-Un git clone sólo descarga commits publicados en la rama seleccionada. No incluye cambios locales, archivos sin seguimiento ni una rama que sólo existe en este servidor. Estas guías y skills se distribuyen en la rama `docs/proscai-rea-transfer` de ambos repositorios. No se ha autorizado mezclar/publicar main como parte de esta tarea.
+Un checkout contiene el contenido versionado del commit seleccionado. Las guías originales están en `docs/proscai-rea-transfer` de ambos repositorios. Para continuar desde una biblioteca accesible, sigue los [comandos de actualización para el servidor destino](REA-OMNIS-LBS.md#1-actualizar-los-repositorios).
 
 Viajan código, documentos, tests, scripts versionados y ejemplos .env sin secretos. No viajan .env, .env.capture.local, contraseñas, certificados privados, captures/, bases, scripts locales dentro de captures/, PDFs/Excel del escritorio ni sesiones del runtime. Tampoco la configuración Firebase local del frontend. Los datos de PostgreSQL/Neon no se transportan con el código.
 
@@ -35,8 +38,8 @@ Para comprobar qué versión llegó, ejecutar en **cada repositorio** git branch
 Clonar ambos repositorios preferiblemente como carpetas hermanas. Las rutas de este documento son relativas; no copiar rutas C:\Users\... de capturas antiguas.
 
 ```powershell
-git clone --branch docs/proscai-rea-transfer https://github.com/eeramirez10/tuvansa-erp-api.git
-git clone --branch docs/proscai-rea-transfer https://github.com/eeramirez10/tuvansa-erp-frontend.git
+git clone --branch docs/proscai-lbs-handoff https://github.com/eeramirez10/tuvansa-erp-api.git
+git clone --branch main https://github.com/eeramirez10/tuvansa-erp-frontend.git
 ```
 
 Seleccionar en ambos la rama publicada que contenga los cambios revisados; el nombre de una rama local no prueba que exista en origin. Verificar Node y pnpm contra package.json y packageManager de ambos proyectos. Instalar con pnpm install --frozen-lockfile desde cada raíz.
@@ -65,9 +68,9 @@ La ventana Windows necesita una sesión interactiva accesible. Se puede alojar l
 
 ## Estado y pendientes que no deben perderse
 
-La matriz de módulos refleja presencia de documentación/código, no certifica cobertura total. Pedidos tiene cambios recientes de tipo XA/P, Duplicar y búsqueda/precio por cliente; revisar los documentos específicos y que sus cambios estén en el commit descargado. La validación fiscal está preparada para un proveedor futuro y no debe anunciarse como integración real ya resuelta. La captura se ha hecho sin necesitar Studio.
+Consulta la matriz de módulos para encontrar la documentación y el código disponibles. Verifica en el commit descargado qué acciones de Pedidos están implementadas, en especial tipo XA/P, Duplicar y búsqueda y precio por cliente. El proveedor de validación fiscal sigue pendiente.
 
-Cancún tiene presentación/cálculos separados de México, pero la participación de 0%, 50% o 100% en Monto p/com sigue pendiente. La revisión adicional del PDF fue interrumpida; no se obtuvo otra regla confirmada. No completar ese dato con una suposición. El documento local `docs/modules/sales/collection-commissions-cancun.md` y los cambios funcionales siguen pendientes de publicación independiente; consultarlo sólo si existe en la rama descargada.
+Los cambios funcionales más recientes de Pedidos y del reporte de comisiones de Cancún permanecen locales en el servidor anterior. Consulta la [referencia de commits publicados](REA-OMNIS-LBS.md#1-actualizar-los-repositorios) antes de usar el comportamiento actual como punto de partida.
 
 Los documentos históricos pueden contener alcances superados. Priorizar la especificación más reciente verificada, los AGENTS.md y la composición/rutas actuales. Si el código y la documentación difieren, registrar la diferencia antes de cambiarla. Una captura antigua no prueba los botones o permisos de la versión nueva.
 
@@ -77,12 +80,12 @@ Usar [REA-WORK-RECORD](REA-WORK-RECORD.md) por acción. Datos sensibles y captur
 
 Backend: pnpm lint, pnpm build, pnpm test. Frontend: pnpm lint, pnpm typecheck, pnpm build. Extractor offline: python -m unittest discover -s tests/rea -p test_*.py. Verificar la interfaz web con pruebas que distingan mocks, lectura real y escrituras autorizadas de prueba. El hecho de que /health responda no verifica la base ni concede permisos para una prueba de escritura.
 
-## Texto para el agente del servidor nuevo
+## Texto para el agente cuando sólo hay runtime
 
 ```text
 Lee AGENTS.md de ambos repositorios y docs/REA-START-HERE.md del backend.
 Usa .agents/skills/proscai-rea/SKILL.md y la documentación del módulo que trabajemos.
-En este equipo existe PROSCAI/OMNIS Runtime más reciente, sin Studio.
+En este equipo trabajaremos con el runtime visible de PROSCAI/OMNIS.
 Primero identifica versión, ventana, conexiones y diferencias mediante lectura.
 No supongas que las rutas, usuarios, permisos, respaldos ni autorizaciones del
 servidor anterior siguen siendo válidos. No imprimas credenciales.
@@ -92,10 +95,12 @@ Al terminar verifica general_log OFF. Distingue SQL capturada/adaptada/derivada.
 No implementes ni publiques cambios si sólo te estoy pidiendo observar.
 ```
 
+Si el servidor tiene una biblioteca accesible desde Studio, usa el [mensaje inicial de la guía de bibliotecas](REA-OMNIS-LBS.md#mensaje-para-el-agente-del-otro-servidor).
+
 ## Validación de este paquete de continuidad
 
 Revisión 2026-11-17: cinco SKILL.md (cuatro backend y uno frontend) válidos con el validador de skill-creator; diez archivos Markdown de entrada/skills sin enlaces locales rotos en la organización actual de carpetas. El extractor pasó ocho pruebas con logs sintéticos (hilo/intervalo/zona, orden/repeticiones, SQL multilínea, formato/encoding, cero resultados y no sobreescritura), más una ejecución de su CLI. No se usó el log de una base real para validar esta herramienta nueva ni se probó todavía la automatización del runtime del servidor destino.
 
 Backend: pnpm lint, pnpm build y pnpm test correctos, 296 pruebas en 26 archivos. Frontend: pnpm lint, pnpm typecheck y pnpm build correctos. No se activó general_log, no se reinició MySQL y no se modificaron registros. Esto valida el paquete de continuidad y los checks actuales, no certifica la cobertura de cada consulta histórica ni la compatibilidad con una versión aún no inspeccionada.
 
-El paquete de continuidad se publica en la rama `docs/proscai-rea-transfer` de ambos repositorios. Sus commits incluyen las guías, skills y extractor; los cambios funcionales previos de Pedidos y Cancún permanecen locales y deben revisarse y publicarse por separado antes de transferirlos. No se mezcló ni publicó main.
+El paquete de continuidad original se publicó en `docs/proscai-rea-transfer` de ambos repositorios e incluye las guías, las skills y el extractor.

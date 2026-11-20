@@ -17,6 +17,7 @@ import { LegacyMysqlProductsDataSource } from './infrastructure/datasources/lega
 import { LegacyMysqlProductPanelsDataSource } from './infrastructure/datasources/legacy-mysql-product-panels-data-source.js';
 import { PostgresProductClassificationDataSource } from './infrastructure/datasources/postgres-product-classification-data-source.js';
 import { PostgresProductOtherDataSource } from './infrastructure/datasources/postgres-product-other-data-source.js';
+import { PostgresProductCatalogEditDataSource } from './infrastructure/datasources/postgres-product-catalog-edit-data-source.js';
 import { ProductClassificationRepositoryImpl } from './infrastructure/repositories/product-classification-repository-impl.js';
 import { ProductOtherDataRepositoryImpl } from './infrastructure/repositories/product-other-data-repository-impl.js';
 import { ProductPanelsRepositoryImpl } from './infrastructure/repositories/product-panels-repository-impl.js';
@@ -28,18 +29,23 @@ import { createProductsRouter } from './presentation/http/products-routes.js';
 
 export const createProductsModule = (): Router => {
   const dataSource = new LegacyMysqlProductsDataSource();
+  const editProducts = env.INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS;
+  const edits = new PostgresProductCatalogEditDataSource(editProducts);
   const classificationRepository = new ProductClassificationRepositoryImpl(
     new LegacyMysqlProductClassificationDataSource(),
-    new PostgresProductClassificationDataSource(env.INVENTORY_CLASSIFICATION_PILOT_PRODUCTS),
+    new PostgresProductClassificationDataSource(env.INVENTORY_CLASSIFICATION_PILOT_PRODUCTS, undefined, undefined, editProducts),
+    edits,
   );
   const otherDataRepository = new ProductOtherDataRepositoryImpl(
     new LegacyMysqlProductOtherDataSource(),
-    new PostgresProductOtherDataSource(env.INVENTORY_OTHER_DATA_PILOT_PRODUCTS),
+    new PostgresProductOtherDataSource(env.INVENTORY_OTHER_DATA_PILOT_PRODUCTS, undefined, undefined, editProducts),
+    edits,
   );
-  const repository = new ProductsRepositoryImpl(dataSource, classificationRepository, otherDataRepository);
+  const repository = new ProductsRepositoryImpl(dataSource, classificationRepository, otherDataRepository, edits);
   const panelsRepository = new ProductPanelsRepositoryImpl(
     new LegacyMysqlProductPanelsDataSource(),
     otherDataRepository,
+    edits,
   );
   const controller = new ProductsController(
     new GetProduct(repository),

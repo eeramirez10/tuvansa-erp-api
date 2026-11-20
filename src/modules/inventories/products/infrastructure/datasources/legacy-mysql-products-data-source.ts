@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { ProductsDataSource } from '../../domain/datasources/products-data-source.js';
+import type { ProductCatalogEditRules, ProductCatalogUnit } from '../../domain/datasources/product-catalog-edit-data-source.js';
 import { Product, type ProductProps, type ProductType } from '../../domain/entities/product.js';
 import type {
   DeleteProductResult,
@@ -69,6 +70,17 @@ interface CountRow extends RowDataPacket { total: number }
 interface ExistsRow extends RowDataPacket { found: number }
 interface IdCodeRow extends RowDataPacket { id: number; code: string }
 interface UnitRow extends RowDataPacket { code: string }
+interface CatalogUnitRow extends RowDataPacket, ProductCatalogUnit {}
+interface EditRulesRow extends RowDataPacket {
+  hideCosts: number;
+  hasComponents: number;
+  assemblyTypeOverride: number;
+  companyAlias: string;
+  rootLength: number;
+  colorLength: number;
+  linkedUnit: number | null;
+  [column: `UTALLA${number}`]: string | null;
+}
 
 const selectProductFields = `
   FINV.ISEQ AS id,
@@ -231,6 +243,7 @@ const columnByField: Omit<Record<keyof ProductWriteValues, string>, 'unitId'> = 
   description: 'IDESCR',
   type: 'ITIPO',
   familyCode: 'IFAM',
+  usesColorAndSize: 'ICT',
   hasPhoto: 'IFOTO',
   salePrice1: 'ILISTA1',
   salePrice2: 'ILISTA2',
@@ -251,6 +264,8 @@ const columnByField: Omit<Record<keyof ProductWriteValues, string>, 'unitId'> = 
   primaryAccount: 'ICTA',
   secondaryAccount: 'ICTADEV',
   costOfSalesAccount: 'ICTA3',
+  salesLastSixWeeks: 'IVTA',
+  inventoryDays: 'IDIASSTK',
 };
 
 type WriteField = Exclude<keyof ProductWriteValues, 'unitId'>;
@@ -303,15 +318,26 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
     return rows[0] === undefined ? null : toProduct(rows[0]);
   }
 
-  async search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
-    const searchCondition = criteria.query === undefined
-      ? ''
-      : ` AND (UPPER(ICOD) LIKE UPPER(?) OR UPPER(IDESCR) LIKE UPPER(?)
-        OR UPPER(IEAN) LIKE UPPER(?) OR UPPER(IUPC) LIKE UPPER(?))`;
+  async search(criteria: ProductSearchCriteria, overrides?: ReadonlyMap<number, ProductWriteValues>): Promise<ProductSearchResult> {
+    const parameters: Array<string | number> = [];
+    const match = (column: string, field?: 'description' | 'ean' | 'upc') => {
+      const edited: Array<[number, string]> = [];
+      if (field && overrides) {
+        for (const [id, values] of overrides) {
+          if (values[field] !== undefined) edited.push([id, values[field]]);
+        }
+      }
+      const value = edited.length
+        ? `CASE FINV.ISEQ ${edited.map(() => 'WHEN ? THEN ?').join(' ')} ELSE ${column} END`
+        : column;
+      for (const [id, value] of edited) parameters.push(id, value);
+      parameters.push(`%${criteria.query}%`);
+      return `UPPER(${value}) LIKE UPPER(?)`;
+    };
+    const searchCondition = criteria.query === undefined ? '' : ` AND (${[
+      match('ICOD'), match('IDESCR', 'description'), match('IEAN', 'ean'), match('IUPC', 'upc'),
+    ].join(' OR ')})`;
     const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}`;
-    const parameters = criteria.query === undefined
-      ? []
-      : Array(4).fill(`%${criteria.query}%`);
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ${selectProductFields}
        ${productSource}
@@ -367,6 +393,41 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
       [unitId],
     );
     return rows.length > 0;
+  }
+
+  async listUnits(): Promise<ProductCatalogUnit[]> {
+    const [rows] = await legacyMysqlPool.execute<CatalogUnitRow[]>(
+      `SELECT USEQ AS id, UCOD AS code, UDESCR AS description FROM funidad
+       WHERE USEQ > 0 ORDER BY UCOD, USEQ`,
+    );
+    return rows;
+  }
+
+  async getEditRules(code: string, unitId: number): Promise<ProductCatalogEditRules> {
+    const sizes = (start: number) => Array.from({ length: 8 }, (_, index) => `UTALLA${start + index}` as const);
+    const [sizesA, sizesB] = [sizes(11), sizes(19)];
+    const [rows] = await legacyMysqlPool.execute<EditRulesRow[]>(
+      `SELECT COALESCE(CIANOCOSTOS, 0) AS hideCosts,
+        EXISTS (SELECT 1 FROM fens WHERE EPRO = ?) AS hasComponents,
+        COALESCE(SUBSTRING(CIAPLUGS, 11, 1), '') <> 'X' AS assemblyTypeOverride,
+        CIAALIAS AS companyAlias, CIARAIZ AS rootLength, CIATALLA AS colorLength, u.USEQ AS linkedUnit,
+        ${[...sizesA, ...sizesB].map((column) => `u.${column}`).join(', ')}
+       FROM fcia LEFT JOIN funidad u ON u.USEQ = ? WHERE CIASEQ = 1`, [code, unitId],
+    );
+    const row = rows[0];
+    if (!row) return { hideCosts: false, hasComponents: false, assemblyTypeOverride: false };
+    const rootLength = Number(row.rootLength ?? 0);
+    const colorLength = Number(row.colorLength ?? 0);
+    const suffix = code.slice(rootLength + colorLength);
+    const matchesSize = (columns: typeof sizesA) => columns.some((column) => (row[column] ?? '') === suffix);
+    const rowCode = matchesSize(sizesA) ? 'A' : matchesSize(sizesB) ? 'B' : '';
+    return {
+      hideCosts: Boolean(row.hideCosts),
+      hasComponents: Boolean(row.hasComponents),
+      assemblyTypeOverride: Boolean(row.assemblyTypeOverride),
+      colorCode: rootLength === 0 || row.companyAlias === 'POLITEXTIL' ? '' : code.slice(rootLength, rootLength + colorLength),
+      ...(row.linkedUnit === null ? {} : { rowCode }),
+    };
   }
 
   async accountingAccountExists(account: string): Promise<boolean> {

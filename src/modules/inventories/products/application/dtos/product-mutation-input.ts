@@ -14,6 +14,7 @@ export interface ProductMutationInput {
     unitId: number;
     familyCode: string;
     hasPhoto: boolean;
+    usesColorAndSize: boolean;
   }> | undefined;
   prices?: {
     sale?: [
@@ -41,6 +42,7 @@ export interface ProductMutationInput {
       costOfSales: string;
     }>;
   }> | undefined;
+  accumulated?: OptionalValues<{ salesLastSixWeeks: number; inventoryDays: number }> | undefined;
 }
 
 export interface CreateProductInput extends ProductMutationInput {
@@ -48,7 +50,7 @@ export interface CreateProductInput extends ProductMutationInput {
   description: string;
 }
 
-export type UpdateProductInput = ProductMutationInput;
+export type UpdateProductInput = ProductMutationInput & { revision?: string };
 
 export const toProductWriteValues = (input: ProductMutationInput): ProductWriteValues => ({
   ...(input.code === undefined ? {} : { code: input.code }),
@@ -60,6 +62,8 @@ export const toProductWriteValues = (input: ProductMutationInput): ProductWriteV
     ? {} : { familyCode: input.classification.familyCode }),
   ...(input.classification?.hasPhoto === undefined
     ? {} : { hasPhoto: input.classification.hasPhoto }),
+  ...(input.classification?.usesColorAndSize === undefined
+    ? {} : { usesColorAndSize: input.classification.usesColorAndSize }),
   ...(input.prices?.sale?.[0].amount === undefined
     ? {} : { salePrice1: input.prices.sale[0].amount }),
   ...(input.prices?.sale?.[1].amount === undefined
@@ -92,6 +96,10 @@ export const toProductWriteValues = (input: ProductMutationInput): ProductWriteV
     ? {} : { secondaryAccount: input.warehouse.accounts.secondary }),
   ...(input.warehouse?.accounts?.costOfSales === undefined
     ? {} : { costOfSalesAccount: input.warehouse.accounts.costOfSales }),
+  ...(input.accumulated?.salesLastSixWeeks === undefined
+    ? {} : { salesLastSixWeeks: input.accumulated.salesLastSixWeeks }),
+  ...(input.accumulated?.inventoryDays === undefined
+    ? {} : { inventoryDays: input.accumulated.inventoryDays }),
 });
 
 export const toProductCreateValues = (input: CreateProductInput): ProductCreateValues => ({

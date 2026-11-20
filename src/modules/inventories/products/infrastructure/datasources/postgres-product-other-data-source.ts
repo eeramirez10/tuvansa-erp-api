@@ -28,13 +28,16 @@ export const migrateProductOtherData = (client: PostgresClient) =>
 // Derivada. PostgreSQL guarda los campos cambiados sobre el catálogo legado.
 export class PostgresProductOtherDataSource implements ProductOtherDataStorageDataSource {
   private readonly pilotProducts: ReadonlySet<number>;
+  private readonly readableProducts: ReadonlySet<number>;
 
   constructor(
     products: readonly number[],
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured: () => boolean = postgresConfigured,
+    readableProducts: readonly number[] = [],
   ) {
     this.pilotProducts = new Set(products);
+    this.readableProducts = new Set([...products, ...readableProducts]);
   }
 
   writable(productId: number) {
@@ -55,7 +58,7 @@ export class PostgresProductOtherDataSource implements ProductOtherDataStorageDa
   }
 
   async get(productId: number): Promise<StoredProductOtherData | null> {
-    if (!this.writable(productId)) return null;
+    if (!this.configured() || !this.readableProducts.has(productId)) return null;
     return this.connection(async (client) => {
       const { rows } = await client.query<StoredProductOtherData>(
         `SELECT ${resultColumns} FROM tuvansa.inventory_product_other_data WHERE product_id = $1`, [productId],

@@ -12,6 +12,11 @@ export interface ProductProps {
   description: string;
   isActive: boolean;
   deactivatedAt: string | null;
+  editing?: {
+    writable: boolean;
+    revision: string;
+    editableFields: readonly string[];
+  };
   classification: {
     type: ProductType;
     familyCode: string;

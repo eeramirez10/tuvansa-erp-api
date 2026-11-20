@@ -1,4 +1,3 @@
-import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { ProductsRepository } from '../../domain/repositories/products-repository.js';
 import {
@@ -12,13 +11,15 @@ export class UpdateProduct {
   constructor(private readonly repository: ProductsRepository) {}
 
   async execute(productId: number, input: UpdateProductInput): Promise<ProductResponse> {
-    if (input.code !== undefined && await this.repository.codeExists(input.code, productId)) {
-      throw new ConflictError('Ya existe un producto con ese codigo', 'PRODUCT_CODE_EXISTS');
-    }
     const values = toProductWriteValues(input);
     await validateProductValues(this.repository, values);
-    const product = await this.repository.update(productId, values);
+    const product = await this.repository.update(productId, values, input.revision);
     if (product === null) throw new NotFoundError('Producto');
     return toProductResponse(product);
+  }
+
+  async options(productId: number) {
+    if (await this.repository.findById(productId) === null) throw new NotFoundError('Producto');
+    return { units: await this.repository.listUnits?.() ?? [] };
   }
 }

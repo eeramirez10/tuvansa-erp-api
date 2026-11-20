@@ -88,7 +88,44 @@ SET IDESCR='captura sql producto editado', finv.USEQ=1
 WHERE ISEQ=63349;
 ```
 
-La API construye el `UPDATE` con lista blanca y parámetros enlazados.
+### Comportamiento comprobado en Omnis 7
+
+El papel con lápiz ejecuta `MCONTROL/7` → `MINV/26`. Omnis abre de nuevo
+`EINV#1` con el título **Cambio de producto** y habilita **OK** y **Cancelar**
+en la misma ficha. Las acciones laterales quedan ocultas durante la edición.
+En `Z26` se comprobó que **Vta 6s** y **Días Inv.** aceptan captura. Cancelar
+restauró ambos valores del registro.
+
+`MBASE/144` toma los valores iniciales de `FINV`. Después de **OK**,
+`MINV/26` guarda la unidad mediante el `UCOD` y su `USEQ`, prepara los
+campos modificados con `MBASE/148` y actualiza el producto. Revisa si el
+producto tiene componentes en `FENS` y asigna **Juego** cuando lo exige
+la configuración. El procedimiento registra la fecha y el operador.
+La fecha de la edición web se toma de PostgreSQL. El operador de Omnis
+se conserva hasta que la sesión web pueda identificarse con él.
+
+El cambio de código de Omnis también modifica las referencias de ensamble
+y las claves de almacén y llama a `MINV/125` para los efectos en lotes,
+producción en proceso y descuentos. En el piloto PostgreSQL **Código**
+es de sólo lectura mientras esas relaciones se consulten desde MySQL.
+
+El `UPDATE` mostrado arriba fue capturado en MySQL de la copia local.
+`PATCH /api/inventories/products/:productId` guarda la edición del piloto
+en PostgreSQL. Los cambios de familia y los campos compartidos con
+**Otros** se reflejan al abrir esos paneles. El guardado verifica la
+revisión de la ficha para detectar ediciones simultáneas.
+
+El GET de la ficha devuelve `editing.revision` y `editableFields` para
+los productos habilitados. `GET /api/inventories/products/:productId/edit-options`
+entrega las unidades. El PATCH recibe la revisión y los campos modificados
+del catálogo. Una revisión desactualizada devuelve `409`.
+
+La edición se habilita por producto en PostgreSQL de pruebas con
+`INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS` después de aplicar la migración.
+
+```powershell
+pnpm exec tsx scripts/migrate-postgres-inventory-product-edit.ts
+```
 
 ## Baja
 

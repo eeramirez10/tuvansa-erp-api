@@ -31,6 +31,7 @@ const envSchema = z.object({
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
   INVENTORY_CLASSIFICATION_PILOT_PRODUCTS: productPilots,
   INVENTORY_OTHER_DATA_PILOT_PRODUCTS: productPilots,
+  INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS: productPilots,
   LEGACY_DB_HOST: z.string().min(1).optional(),
   LEGACY_DB_PORT: z.coerce.number().int().positive().default(3306),
   LEGACY_DB_USER: z.string().min(1).optional(),

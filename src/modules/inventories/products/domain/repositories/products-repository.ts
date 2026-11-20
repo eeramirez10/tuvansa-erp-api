@@ -1,4 +1,5 @@
 import type { Product, ProductType } from '../entities/product.js';
+import type { ProductCatalogUnit } from '../datasources/product-catalog-edit-data-source.js';
 
 export interface ProductSearchCriteria {
   query?: string;
@@ -20,6 +21,7 @@ export interface ProductWriteValues {
   type?: ProductType;
   unitId?: number;
   familyCode?: string;
+  usesColorAndSize?: boolean;
   hasPhoto?: boolean;
   salePrice1?: number;
   salePrice2?: number;
@@ -40,6 +42,8 @@ export interface ProductWriteValues {
   primaryAccount?: string;
   secondaryAccount?: string;
   costOfSalesAccount?: string;
+  salesLastSixWeeks?: number;
+  inventoryDays?: number;
 }
 
 export interface ProductCreateValues extends ProductWriteValues {
@@ -61,9 +65,10 @@ export interface ProductsRepository {
     direction: ProductNavigationDirection,
   ): Promise<Product | null>;
   codeExists(code: string, excludingProductId?: number): Promise<boolean>;
+  listUnits?(): Promise<ProductCatalogUnit[]>;
   unitExists(unitId: number): Promise<boolean>;
   accountingAccountExists(account: string): Promise<boolean>;
   create(values: ProductCreateValues): Promise<Product>;
-  update(productId: number, values: ProductWriteValues): Promise<Product | null>;
+  update(productId: number, values: ProductWriteValues, revision?: string): Promise<Product | null>;
   delete(productId: number): Promise<DeleteProductResult>;
 }

@@ -1,6 +1,7 @@
 @baseUrl = http://localhost:3000
 @apiPrefix = /api
 @productId = 13288
+@editPilotProductId = 47087
 @panelPageSize = 500
 @temporaryProductCode = QAPI826
 
@@ -28,7 +29,7 @@ Accept: application/json
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/next
 Accept: application/json
 
-### Barra - alta temporal (ejecutar antes de cambio y baja)
+### Barra - alta temporal (producto de prueba)
 # @name createTemporaryProduct
 POST {{baseUrl}}{{apiPrefix}}/inventories/products
 Content-Type: application/json
@@ -63,13 +64,23 @@ Accept: application/json
   }
 }
 
-### Barra - cambio al producto temporal
-PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{createTemporaryProduct.response.body.$.data.id}}
+### Barra - consultar la revisión del producto habilitado para edición en PostgreSQL
+# @name editableProduct
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{editPilotProductId}}
+Accept: application/json
+
+### Barra - consultar las unidades de la edición en línea
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{editPilotProductId}}/edit-options
+Accept: application/json
+
+### Barra - OK en la ficha del producto habilitado para el piloto PostgreSQL
+PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{editPilotProductId}}
 Content-Type: application/json
 Accept: application/json
 
 {
-  "description": "Producto temporal editado desde API"
+  "revision": "{{editableProduct.response.body.$.data.editing.revision}}",
+  "description": "Descripción de prueba desde API"
 }
 
 ### Barra - baja del producto temporal

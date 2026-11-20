@@ -1,4 +1,5 @@
 import type { Product } from '../entities/product.js';
+import type { ProductCatalogEditRules, ProductCatalogUnit } from './product-catalog-edit-data-source.js';
 import type {
   DeleteProductResult,
   ProductCreateValues,
@@ -11,7 +12,9 @@ import type {
 export interface ProductsDataSource {
   findById(productId: number): Promise<Product | null>;
   findFirstActive(): Promise<Product | null>;
-  search(criteria: ProductSearchCriteria): Promise<ProductSearchResult>;
+  search(criteria: ProductSearchCriteria, overrides?: ReadonlyMap<number, ProductWriteValues>): Promise<ProductSearchResult>;
+  listUnits?(): Promise<ProductCatalogUnit[]>;
+  getEditRules?(code: string, unitId: number): Promise<ProductCatalogEditRules>;
   findAdjacent(
     productId: number,
     direction: ProductNavigationDirection,

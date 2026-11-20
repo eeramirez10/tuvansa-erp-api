@@ -15,6 +15,7 @@ export const createProductsRouter = (
   router.get('/first', controller.getFirstActive);
   router.get('/:productId/previous', controller.getPrevious);
   router.get('/:productId/next', controller.getNext);
+  router.get('/:productId/edit-options', controller.getEditOptions);
   router.get('/:productId/actions/warehouses', controller.panel('warehouses'));
   router.get('/:productId/actions/color-size-registration', controller.panel('color-size-registration'));
   router.get('/:productId/actions/block-status', controller.panel('block-status'));

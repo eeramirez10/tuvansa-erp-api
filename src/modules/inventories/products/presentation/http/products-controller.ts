@@ -101,7 +101,38 @@ const createProductBodySchema = z.object(mutationFields).strict().extend({
   description: z.string().trim().min(1).max(60),
 });
 
-const updateProductBodySchema = z.object(mutationFields).strict().refine(
+const saleAmount = z.number().min(0).max(Number.MAX_SAFE_INTEGER / 10_000).multipleOf(0.0001);
+const costAmount = z.number().min(-Number.MAX_SAFE_INTEGER / 10_000)
+  .max(Number.MAX_SAFE_INTEGER / 10_000).multipleOf(0.0001);
+const currency = z.number().int().min(0).max(2_147_483_647);
+const editablePriceSchema = z.object({ amount: saleAmount.optional(), currencyId: currency.optional() }).strict();
+
+const updateProductBodySchema = z.object({
+  ...mutationFields,
+  revision: z.string().max(32).regex(/^\d+:\d+:\d+$/),
+  classification: mutationFields.classification.unwrap().extend({
+    familyCode: z.string().trim().toUpperCase().max(16).optional(),
+    usesColorAndSize: z.boolean().optional(),
+  }).optional(),
+  prices: z.object({
+    sale: z.tuple([editablePriceSchema, editablePriceSchema, editablePriceSchema]).optional(),
+    costs: z.object({
+      average: costAmount.optional(), last: costAmount.optional(), previous: costAmount.optional(),
+      currencyId: currency.optional(), adValorem: nonnegativeNumber.multipleOf(0.01).optional(),
+    }).strict().optional(),
+  }).strict().optional(),
+  warehouse: mutationFields.warehouse.unwrap().extend({
+    minimum: nonnegativeNumber.int().optional(),
+    maximum: nonnegativeNumber.int().optional(),
+    location: z.string().trim().toUpperCase().max(30).optional(),
+    ean: z.string().trim().toUpperCase().max(30).optional(),
+    upc: z.string().trim().toUpperCase().max(13).optional(),
+  }).optional(),
+  accumulated: z.object({
+    salesLastSixWeeks: z.number().int().min(0).max(2_147_483_647).optional(),
+    inventoryDays: z.number().int().min(0).max(2_147_483_647).optional(),
+  }).strict().optional(),
+}).strict().refine(
   (body) => Object.keys(toProductWriteValues(body)).length > 0,
   { message: 'Debe proporcionar al menos un campo para modificar' },
 );
@@ -182,6 +213,15 @@ export class ProductsController {
       const { productId } = productParamsSchema.parse(request.params);
       const input = updateProductBodySchema.parse(request.body);
       response.json({ data: await this.updateProduct.execute(productId, input) });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getEditOptions: RequestHandler = async (request, response, next) => {
+    try {
+      const { productId } = productParamsSchema.parse(request.params);
+      response.json({ data: await this.updateProduct.options(productId) });
     } catch (error) {
       next(error);
     }

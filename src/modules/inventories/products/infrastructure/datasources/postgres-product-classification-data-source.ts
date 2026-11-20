@@ -27,13 +27,16 @@ export const migrateProductClassification = (client: PostgresClient) =>
 // Derivada. Guarda únicamente las decisiones del piloto y su revisión.
 export class PostgresProductClassificationDataSource implements ProductClassificationStorageDataSource {
   private readonly pilotProducts: ReadonlySet<number>;
+  private readonly readableProducts: ReadonlySet<number>;
 
   constructor(
     products: readonly number[],
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured: () => boolean = postgresConfigured,
+    readableProducts: readonly number[] = [],
   ) {
     this.pilotProducts = new Set(products);
+    this.readableProducts = new Set([...products, ...readableProducts]);
   }
 
   writable(productId: number) {
@@ -54,7 +57,7 @@ export class PostgresProductClassificationDataSource implements ProductClassific
   }
 
   async get(productId: number): Promise<StoredProductClassification | null> {
-    if (!this.writable(productId)) return null;
+    if (!this.configured() || !this.readableProducts.has(productId)) return null;
     return this.connection(async (client) => {
       const { rows } = await client.query<StoredProductClassification>(
         `SELECT revision, changes, family_code AS "familyCode"

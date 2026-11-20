@@ -18,11 +18,13 @@ export type ProductPanelKey =
 export interface ProductPanelFilters {
   ledger?: ProductLedgerFilters;
   excludeFulfilled?: boolean;
-  customerOrderClassifier?: number | undefined;
+  customerClassifier?: number | undefined;
   customerOrderSort?: ProductCustomerOrderSort | undefined;
+  customerSalesSort?: ProductCustomerSalesSort | undefined;
 }
 
 export type ProductCustomerOrderSort = 'code' | 'name' | 'order' | 'date';
+export type ProductCustomerSalesSort = 'code' | 'name' | 'quantity' | 'amount';
 
 export interface ProductPanelCriteria extends ProductPanelFilters {
   limit: number;
@@ -45,6 +47,7 @@ export interface ProductPanelResult {
   items: Array<Record<string, unknown>>;
   openingStock?: number;
   customerOrdersTotals?: { remaining: number; assigned: number };
+  customerSalesTotals?: { quantity: number; amount: number };
   reason?: string;
 }
 

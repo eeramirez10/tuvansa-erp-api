@@ -45,6 +45,12 @@ const classifiedOrdersQuerySchema = panelQuerySchema.extend({
   classifier: z.coerce.number().int().min(1).max(9).optional(),
   sort: z.enum(['code', 'name', 'order', 'date']).optional(),
 });
+const customerSalesQuerySchema = panelQuerySchema.extend({
+  sort: z.enum(['code', 'name', 'quantity', 'amount']).optional(),
+});
+const classifiedSalesQuerySchema = customerSalesQuerySchema.extend({
+  classifier: z.coerce.number().int().min(1).max(9).optional(),
+});
 
 const blockStatusBodySchema = z.object({ blocked: z.boolean() }).strict();
 
@@ -206,8 +212,21 @@ export class ProductsController {
       if (panel === 'customer-orders-star') {
         const { page, pageSize, classifier, sort } = classifiedOrdersQuerySchema.parse(request.query);
         response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, {
-          customerOrderClassifier: classifier,
+          customerClassifier: classifier,
           customerOrderSort: sort,
+        }));
+        return;
+      }
+      if (panel === 'customer-sales') {
+        const { page, pageSize, sort } = customerSalesQuerySchema.parse(request.query);
+        response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, { customerSalesSort: sort }));
+        return;
+      }
+      if (panel === 'customer-sales-star') {
+        const { page, pageSize, classifier, sort } = classifiedSalesQuerySchema.parse(request.query);
+        response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, {
+          customerClassifier: classifier,
+          customerSalesSort: sort,
         }));
         return;
       }

@@ -185,8 +185,14 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer
 ### Consultas - Ventas por cliente
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales?page=1&pageSize={{panelPageSize}}
 
+### Ventas por cliente - Ordenar por importe
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales?sort=amount&page=1&pageSize={{panelPageSize}}
+
 ### Consultas - Ventas por cliente asterisco
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/star?page=1&pageSize={{panelPageSize}}
+
+### Ventas por * - Clasificador agente
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/star?classifier=1&sort=amount
 
 ### Consultas - Ventas por cliente CT
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/customer-sales/ct?page=1&pageSize={{panelPageSize}}

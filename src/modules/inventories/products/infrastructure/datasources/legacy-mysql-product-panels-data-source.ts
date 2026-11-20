@@ -48,7 +48,7 @@ const customerOrdersScope = `FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
       LEFT JOIN fcli ON fplin.CLISEQ = fcli.CLISEQ
       LEFT JOIN fpenc ON fplin.PESEQ = fpenc.PESEQ
       WHERE finv.ISEQ = ? AND fcli.CLISEQ <> 0 AND fpenc.PEMULTICIA = 1`;
-const customerOrderClassifierFields = [
+const customerClassifierFields = [
   'fcli.CLIPAR1', 'fcli.CLIPAR2', 'fcli.CLIPAR3', 'fcli.CLIPAR4', 'fcli.CLIPAR5',
   'fcli.CLIPAR6', 'fcli.CLIPAR7', 'fcli.CLIPAR8', 'fcli.CLIPAR9',
 ] as const;
@@ -58,6 +58,17 @@ const classifiedOrderSortFields = {
   order: 'orderNumber',
   date: 'orderedAt',
 } as const;
+const customerSalesSortFields = {
+  code: 'customerCode',
+  name: 'customerName',
+  quantity: 'quantity',
+  amount: 'amount',
+} as const;
+const customerMovementScope = `FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ
+  LEFT JOIN fcli ON faxinv.CLISEQ = fcli.CLISEQ
+  LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ
+  WHERE finv.ISEQ = ? AND fcli.CLISEQ <> 0 AND DEST=0 AND DMULTICIA=1 AND AIMES=1`;
+const customerSalesScope = `${customerMovementScope} AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0`;
 
 const definitions: Record<ProductPanelKey, PanelDefinition> = {
   warehouses: {
@@ -326,36 +337,35 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'customer-sales': {
     section: 'queries', button: 'Ventas por cliente',
-    sql: `SELECT MIN(AISEQ) AS id, CLICOD AS customerCode, CLINOM AS customerName,
-      SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
-      LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ = ? AND fcli.CLISEQ <> 0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
-      GROUP BY fcli.CLISEQ, CLICOD, CLINOM ORDER BY CLICOD`, parameterMode: 'id',
+    sql: `WITH sales_lines AS (
+        SELECT faxinv.AISEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
+          SUM(AICANTF) OVER (PARTITION BY CLICOD) AS quantity,
+          SUM(AICANTF * AIPRECIO) OVER (PARTITION BY CLICOD) AS amount,
+          ROW_NUMBER() OVER (PARTITION BY CLICOD ORDER BY faxinv.AISEQ) AS rowNumber
+        ${customerSalesScope}
+      )
+      SELECT id, customerCode, customerName, quantity, amount
+      FROM sales_lines WHERE rowNumber = 1`, parameterMode: 'id',
   },
   'customer-sales-star': {
     section: 'queries', button: 'Ventas por cliente *',
-    sql: `SELECT MIN(AISEQ) AS id, CLICOD AS customerCode, CLINOM AS customerName,
-      SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
-      LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ = ? AND fcli.CLISEQ <> 0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
-      GROUP BY fcli.CLISEQ, CLICOD, CLINOM ORDER BY CLICOD`, parameterMode: 'id',
   },
   'customer-sales-ct': {
     section: 'queries', button: 'Ventas por cliente CT',
-    sql: `SELECT MIN(AISEQ) AS id, ICOD AS productCode,
-      IDESCR AS productDescription, SUM(AICANTF) AS quantity,
-      SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
-      LEFT JOIN finv ON faxinv.ISEQ=finv.ISEQ
-      LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE ICOD >= ? AND ICOD <= CONCAT(?, 'z') AND fcli.CLISEQ <> 0
-      AND DEST=0 AND DMULTICIA=1 AND AIMES=1 AND DOTROSTXT<>'POS'
-      AND DCONTROLPOS=0 GROUP BY finv.ISEQ, ICOD, IDESCR ORDER BY ICOD`,
-    parameterMode: 'code-range',
+    sql: `WITH sales_lines AS (
+        SELECT FAXINV.AISEQ AS id, ICOD AS productCode, IDESCR AS productDescription,
+          CLICOD AS customerCode, CLINOM AS customerName,
+          SUM(AICANTF) OVER (PARTITION BY CLICOD) AS quantity,
+          SUM(AICANTF * AIPRECIO) OVER (PARTITION BY CLICOD) AS amount,
+          ROW_NUMBER() OVER (PARTITION BY CLICOD ORDER BY ICOD, FAXINV.AISEQ) AS rowNumber
+        FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ
+        LEFT JOIN fcli ON faxinv.CLISEQ = fcli.CLISEQ
+        LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ
+        WHERE ICOD >= ? AND ICOD <= ? AND fcli.CLISEQ <> 0
+          AND DEST=0 AND DMULTICIA=1 AND AIMES=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
+      )
+      SELECT id, productCode, productDescription, customerCode, customerName, quantity, amount
+      FROM sales_lines WHERE rowNumber = 1 ORDER BY customerCode, id`,
   },
   'customer-sales-detail': {
     section: 'queries', button: 'Ventas desglosadas',
@@ -628,6 +638,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     if (product === undefined) return null;
 
     if (panel === 'customer-orders-star') return this.getClassifiedCustomerOrders(product, criteria);
+    if (panel === 'customer-sales-star') return this.getClassifiedCustomerSales(product, criteria);
 
     const definition = definitions[panel];
     if (definition.sql === undefined) {
@@ -647,14 +658,19 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
     const documentType = panel === 'customer-orders' ? 1 : panel === 'customer-quotes' ? 4 : undefined;
     const fulfillmentFilter = documentType !== undefined && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
+    const salesOrder = customerSalesSortFields[criteria.customerSalesSort ?? 'code'];
     const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ'
-      : documentType !== undefined ? ' ORDER BY PEDESDE, FPLIN.PLSEQ' : '';
+      : documentType !== undefined ? ' ORDER BY PEDESDE, FPLIN.PLSEQ'
+      : panel === 'customer-sales' ? ` ORDER BY ${salesOrder}, id` : '';
     const openingStock = ledger?.warehouse === undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
     const customerOrdersTotals = documentType !== undefined
       ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
       : undefined;
-    const params = panel === 'customer-orders-ct' ? await this.getCustomerOrderRootRange(product)
+    const customerSalesTotals = panel === 'customer-sales'
+      ? await this.getCustomerSalesTotals(product.id) : undefined;
+    const params = panel === 'customer-orders-ct' || panel === 'customer-sales-ct'
+      ? await this.getProductRootRange(product)
       : parametersFor(definition.parameterMode, product);
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
       `${definition.sql}${conditions.sql}${fulfillmentFilter}${order} LIMIT ? OFFSET ?`,
@@ -675,10 +691,54 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       items: rows.map((row) => ({ ...row })),
       ...(openingStock === undefined ? {} : { openingStock }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
+      ...(customerSalesTotals === undefined ? {} : { customerSalesTotals }),
     };
   }
 
-  private async getCustomerOrderRootRange(product: ProductHeaderRow): Promise<[string, string]> {
+  private async getCustomerSalesTotals(
+    productId: number,
+    scope = customerSalesScope,
+  ): Promise<NonNullable<ProductPanelResult['customerSalesTotals']>> {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { quantity: number; amount: number }>>(
+      `SELECT COALESCE(SUM(AICANTF), 0) AS quantity,
+        COALESCE(SUM(AICANTF * AIPRECIO), 0) AS amount ${scope}`,
+      [productId],
+    );
+    return { quantity: Number(rows[0]?.quantity ?? 0), amount: Number(rows[0]?.amount ?? 0) };
+  }
+
+  private async getClassifiedCustomerSales(
+    product: ProductHeaderRow,
+    criteria: ProductPanelCriteria,
+  ): Promise<ProductPanelResult> {
+    const { button, section } = definitions['customer-sales-star'];
+    const base = { product, button, section, key: 'customer-sales-star', available: true, source: 'mysql' } as const;
+    const classifier = customerClassifierFields[(criteria.customerClassifier ?? 0) - 1];
+    if (classifier === undefined) {
+      return { ...base, items: [], customerSalesTotals: { quantity: 0, amount: 0 } };
+    }
+
+    const orderBy = customerSalesSortFields[criteria.customerSalesSort ?? 'code'];
+    const [items] = await legacyMysqlPool.execute<PanelRow[]>(
+      `WITH classified_sales AS (
+        SELECT MIN(FAXINV.AISEQ) AS id, COALESCE(${classifier}, '') AS customerCode,
+          SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount
+        ${customerMovementScope} GROUP BY COALESCE(${classifier}, '')
+      )
+      SELECT id, customerCode,
+        COALESCE((SELECT AGDESCR FROM fag WHERE AGTNUM = customerCode ORDER BY AGSEQ LIMIT 1), '') AS customerName,
+        quantity, amount
+      FROM classified_sales ORDER BY ${orderBy}, id LIMIT ? OFFSET ?`,
+      [product.id, criteria.limit, criteria.offset],
+    );
+    return {
+      ...base,
+      items: items.map((row) => ({ ...row })),
+      customerSalesTotals: await this.getCustomerSalesTotals(product.id, customerMovementScope),
+    };
+  }
+
+  private async getProductRootRange(product: ProductHeaderRow): Promise<[string, string]> {
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { prefix: string }>>(
       'SELECT LEFT(?, CIARAIZ) AS prefix FROM fcia WHERE CIASEQ = 1',
       [product.code],
@@ -693,8 +753,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
   ): Promise<ProductPanelResult> {
     const { button, section } = definitions['customer-orders-star'];
     const base = { product, button, section, key: 'customer-orders-star', available: true, source: 'mysql' } as const;
-    const classifier = criteria.customerOrderClassifier === undefined
-      ? undefined : customerOrderClassifierFields[criteria.customerOrderClassifier - 1];
+    const classifier = customerClassifierFields[(criteria.customerClassifier ?? 0) - 1];
     if (classifier === undefined) {
       return { ...base, items: [], customerOrdersTotals: { remaining: 0, assigned: 0 } };
     }

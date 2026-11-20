@@ -73,9 +73,9 @@ origen, registros y paginacion.
 | Pedidos por cliente `*` | `/:productId/queries/customer-orders/star` | `fplin`, `finv`, `fpenc`, `fcli.CLIPAR1..9` y `fag` al elegir clasificador | `EINV#8/3` → `EINV#7A` |
 | Pedidos por cliente `CT` | `/:productId/queries/customer-orders/ct` | Rango de `finv.ICOD` según `FCIA.CIARAIZ`, con `FPLIN` agrupada por pedido | `EINV#8/4` → `EINV#7AA` |
 | Cotizaciones por cliente | `/:productId/queries/customer-quotes` | `fplin`, `fpenc`, `fcli`; `PESPEDIDO=4` | `EINV#8/5` → `EINV#47` |
-| Ventas por cliente | `/:productId/queries/customer-sales` | `faxinv`, `fdoc`, `fcli` | `EINV#8/6` → `EINV#6` |
-| Ventas por cliente `*` | `/:productId/queries/customer-sales/star` | Acumulados de `finv` usados por OMNIS | `EINV#8/7` → `EINV#6BA` |
-| Ventas por cliente `CT` | `/:productId/queries/customer-sales/ct` | Rango de `finv.ICOD` | `EINV#8/8` → `EINV#6AA` |
+| Ventas por cliente | `/:productId/queries/customer-sales` | `faxinv`, `finv`, `fdoc`, `fcli`, acumulados por `CLICOD` | `EINV#8/6` → `EINV#6` |
+| Ventas por cliente `*` | `/:productId/queries/customer-sales/star` | `faxinv`, `finv`, `fdoc`, `fcli.CLIPAR1..9`, `fag` al elegir clasificador | `EINV#8/7` → `EINV#6BA` |
+| Ventas por cliente `CT` | `/:productId/queries/customer-sales/ct` | Rango de `finv.ICOD` según `FCIA.CIARAIZ`, ventas agrupadas por cliente | `EINV#8/8` → `EINV#6AA` |
 | Ventas desglosadas | `/:productId/queries/customer-sales/detail` | `faxinv`, `fdoc`, `fcli` | `EINV#8/9` → `EINV#38` |
 | Ventas por sucursal | `/:productId/queries/sales/by-branch` | `faxinv.AISUCURSAL` | `EINV#8/10` → `EINV#30` |
 | Ventas anuales | `/:productId/queries/sales/annual` | `faxinv`, `fdoc`, `fcli` | `EINV#8/11` → `EINV2#2` |
@@ -167,6 +167,31 @@ paginacion y evita consultas de configuracion o permisos ajenas al resultado.
 Otros, Precios, Inv. CT, los botones `*` y Prepacks no emitieron un nuevo
 `SELECT`: OMNIS uso campos ya cargados al abrir la ficha. Los endpoints consultan
 esas mismas columnas y lo indican con `source: product-cache`.
+
+### Ventas por cliente
+
+`EINV#6/240` carga la lista por producto y excluye los documentos POS.
+Después la ordena por `CLICOD` y acumula `AICANTF` y
+`AICANTF * AIPRECIO` por ese código. El GET agrupa antes de paginar y
+conserva el nombre de la primera línea de cada cliente en el orden del
+Auxiliar. El agrupamiento SQL es una adaptación de la lista de Omnis 7.
+Los encabezados de `EINV#6/5–8` ordenan por código, cliente, cantidad o
+importe. El GET admite `sort=code|name|quantity|amount` y devuelve
+`data.customerSalesTotals` con el total de cantidad e importe de toda
+la consulta.
+
+**Ventas por `*`** inicia con la lista vacía. `EINV#6BA/8–16` elige
+`CLIPAR1..9`; su procedimiento 240 acumula los movimientos por el código
+del clasificador y busca su nombre en `FAG`. En esta variante el código
+conserva `AIMES=1`, estado y compañía, y utiliza todos los tipos de documento
+que los cumplan. El GET deja seleccionar `classifier=1..9` y el mismo
+orden que en Ventas por cliente. La consulta es adaptada del procedimiento,
+diferente del filtro de la ventana normal.
+
+**Ventas CT** usa `EINV#6AA/240`. Filtra por raíz configurada de producto,
+excluye POS y acumula cantidad e importe por `CLICOD`. Su listado superior
+presenta clientes. La matriz inferior es otro cálculo por color y talla
+(`EINV#6AA/37`) que se carga al seleccionar el cliente.
 
 ### Cambio de estado de Bloquear
 

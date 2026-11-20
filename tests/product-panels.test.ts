@@ -182,7 +182,7 @@ describe('Inventarios PT - botones laterales', () => {
 
     const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
       panel.product.id, 'customer-orders-star',
-      { limit: 500, offset: 500, customerOrderClassifier: 9, customerOrderSort: 'name' },
+      { limit: 500, offset: 500, customerClassifier: 9, customerOrderSort: 'name' },
     );
 
     const [query, params] = execute.mock.calls[1]!;
@@ -211,6 +211,55 @@ describe('Inventarios PT - botones laterales', () => {
     expect(root).toEqual([expect.stringContaining('LEFT(?, CIARAIZ)'), [panel.product.code]]);
     expect(range).toEqual([expect.stringContaining('SUM(PLCANT) OVER (PARTITION BY PENUM)'), ['00421', '00421z', 500, 0]]);
     expect(result?.items).toEqual([{ orderNumber: 'P200', quantity: 12, fulfilled: 5 }]);
+  });
+
+  it('agrupa las ventas por código y conserva los totales al ordenar páginas', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ quantity: 100, amount: 450 }], []])
+      .mockResolvedValueOnce([[{ customerCode: '001', quantity: 8, amount: 40 }], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'customer-sales', { limit: 10, offset: 20, customerSalesSort: 'amount' },
+    );
+
+    const [total, page] = execute.mock.calls.slice(1);
+    expect(total).toEqual([expect.stringContaining('SUM(AICANTF * AIPRECIO)'), [panel.product.id]]);
+    expect(page?.[0]).toEqual(expect.stringContaining('PARTITION BY CLICOD'));
+    expect(page?.[0]).toEqual(expect.stringContaining('ORDER BY amount, id LIMIT ? OFFSET ?'));
+    expect(page?.[1]).toEqual([panel.product.id, 10, 20]);
+    expect(result).toMatchObject({ customerSalesTotals: { quantity: 100, amount: 450 } });
+  });
+
+  it('ventas por asterisco permanece vacía hasta elegir y suma por clasificador', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    const datasource = new LegacyMysqlProductPanelsDataSource();
+    const criteria = { limit: 500, offset: 0 };
+    execute.mockResolvedValueOnce([[panel.product], []]);
+    expect(await datasource.getPanel(panel.product.id, 'customer-sales-star', criteria)).toMatchObject({
+      items: [], customerSalesTotals: { quantity: 0, amount: 0 },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    execute.mockClear();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ customerCode: '3', customerName: 'Sucursal' }], []])
+      .mockResolvedValueOnce([[{ quantity: 7, amount: 130 }], []]);
+
+    const response = await datasource.getPanel(panel.product.id, 'customer-sales-star', {
+      ...criteria, customerClassifier: 3, customerSalesSort: 'name',
+    });
+
+    const [query, params] = execute.mock.calls[1]!;
+    expect(query).toEqual(expect.stringContaining("GROUP BY COALESCE(fcli.CLIPAR3, '')"));
+    expect(query).toEqual(expect.stringContaining('ORDER BY customerName, id LIMIT'));
+    expect(query).not.toEqual(expect.stringContaining('DESFACT'));
+    expect(params).toEqual([panel.product.id, 500, 0]);
+    expect(response).toMatchObject({
+      items: [{ customerCode: '3', customerName: 'Sucursal' }],
+      customerSalesTotals: { quantity: 7, amount: 130 },
+    });
   });
 
   it('devuelve el estado confirmado al bloquear', async () => {

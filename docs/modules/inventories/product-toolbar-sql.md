@@ -16,6 +16,7 @@ no afecta la identificacion de los SQL.
 | 2 | Esfera/lupa | Buscar producto | `GET /api/inventories/products?q=...` |
 | 3 | Flecha derecha | Producto siguiente | `GET /api/inventories/products/:productId/next` |
 | 4 | Papel | Alta de productos | `POST /api/inventories/products` |
+| — | Código / Tab | Validar disponibilidad por coincidencia exacta | `GET /api/inventories/products/code-availability?code=...` |
 | 5 | Papel con marca | Baja de producto | `DELETE /api/inventories/products/:productId` |
 | 6 | Papel con lapiz | Cambio de producto | `PATCH /api/inventories/products/:productId` |
 
@@ -91,6 +92,13 @@ visible. El POST existente admite `classification.usesColorAndSize`,
 datasource MySQL mapea a `ICT`, `IVTA` e `IDIASSTK`.
 La API principal rechaza el POST de alta con `MODULE_WRITES_NOT_MIGRATED`
 hasta que la creación se implemente en PostgreSQL.
+
+El 20 de noviembre, en **German pruebas**, al salir del campo **Código**
+con `004212899` Omnis mostró «El Índice está duplicado». Al aceptar,
+dejó Código vacío y devolvió el foco al campo. El GET de disponibilidad
+devuelve `data.available` y reutiliza la consulta parametrizada por
+`FINV.ICOD`, adaptada de la comprobación capturada arriba. Incluye códigos
+activos y dados de baja.
 
 ## Cambio
 

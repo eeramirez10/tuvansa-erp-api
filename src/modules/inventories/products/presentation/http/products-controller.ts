@@ -16,6 +16,9 @@ const productParamsSchema = z.object({
   productId: z.coerce.number().int().positive(),
 });
 
+const productCodeSchema = z.string().trim().min(1).max(13);
+const codeAvailabilityQuerySchema = z.object({ code: productCodeSchema });
+
 const searchQuerySchema = z.object({
   q: z.string().trim().min(1).optional(),
   status: z.enum(['active', 'inactive', 'all']).default('all'),
@@ -64,7 +67,7 @@ const priceSchema = z.object({
 }).strict();
 
 const mutationFields = {
-  code: z.string().trim().min(1).max(13).optional(),
+  code: productCodeSchema.optional(),
   description: z.string().trim().min(1).max(60).optional(),
   classification: z.object({
     type: z.enum(['rawMaterial', 'finishedProduct', 'set', 'assembly', 'service']).optional(),
@@ -102,7 +105,7 @@ const mutationFields = {
 };
 
 const createProductBodySchema = z.object(mutationFields).strict().extend({
-  code: z.string().trim().min(1).max(13),
+  code: productCodeSchema,
   description: z.string().trim().min(1).max(60),
 });
 
@@ -194,6 +197,16 @@ export class ProductsController {
     try {
       const { productId } = productParamsSchema.parse(request.params);
       response.json({ data: await this.navigateProduct.execute(productId, 'next') });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getCodeAvailability: RequestHandler = async (request, response, next) => {
+    try {
+      const { code } = codeAvailabilityQuerySchema.parse(request.query);
+      const available = await this.createProduct.isCodeAvailable(code);
+      response.set('Cache-Control', 'no-store').json({ data: { available } });
     } catch (error) {
       next(error);
     }

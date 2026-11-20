@@ -29,6 +29,10 @@ Accept: application/json
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/next
 Accept: application/json
 
+### Alta de productos - validar código existente
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/code-availability?code=004212899
+Accept: application/json
+
 ### Barra - alta temporal (producto de prueba)
 # @name createTemporaryProduct
 POST {{baseUrl}}{{apiPrefix}}/inventories/products

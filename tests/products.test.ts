@@ -142,6 +142,20 @@ describe('Inventarios PT - Catalogo de productos', () => {
       .rejects.toMatchObject({ code: 'PRODUCT_CODE_EXISTS', statusCode: 409 });
   });
 
+  it('consulta la disponibilidad por código exacto, sin crear el producto', async () => {
+    const query = vi.spyOn(legacyMysqlPool, 'execute')
+      .mockResolvedValueOnce([[{ found: 1 }], []])
+      .mockResolvedValueOnce([[], []]);
+    const adapter = new ProductsRepositoryImpl(new LegacyMysqlProductsDataSource());
+    const useCase = new CreateProduct(adapter);
+
+    await expect(useCase.isCodeAvailable('004212899')).resolves.toBe(false);
+    await expect(useCase.isCodeAvailable('00421289')).resolves.toBe(true);
+    expect(query).toHaveBeenNthCalledWith(1, 'SELECT 1 AS found FROM finv WHERE ICOD = ? LIMIT 1', ['004212899']);
+    expect(query).toHaveBeenNthCalledWith(2, 'SELECT 1 AS found FROM finv WHERE ICOD = ? LIMIT 1', ['00421289']);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
   it('valida la unidad recibida al crear', async () => {
     const useCase = new CreateProduct(repository({ unitExists: async () => false }));
     await expect(useCase.execute({

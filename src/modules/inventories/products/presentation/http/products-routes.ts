@@ -12,6 +12,7 @@ export const createProductsRouter = (
 
   router.get('/', controller.search);
   router.post('/', controller.create);
+  router.get('/code-availability', controller.getCodeAvailability);
   router.get('/first', controller.getFirstActive);
   router.get('/:productId/previous', controller.getPrevious);
   router.get('/:productId/next', controller.getNext);

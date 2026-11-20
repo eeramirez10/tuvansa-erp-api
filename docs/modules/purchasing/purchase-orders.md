@@ -89,3 +89,35 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 - Exportaciones locales en `captures/ui/omnis7-developer-check/`. `20261120-EOC2-FIELDS.txt` contiene campos, orden y fórmulas; `20261120-EOC2-PROCEDURES.txt` contiene los eventos; `20261120-MOCOM-PROCEDURES.txt` contiene carga y navegación; `20261120-MBASE-122-OC.txt` contiene la fórmula de totales. Las ventanas de Acciones se exportaron por formato en el mismo directorio.
 - Capturas web REA. La orden `O000001` abierta por ID mostró **COTIZ** (`ev_91c54f3317e62541632aa3e012464b1bdf15a4cbed68c8ef9496a3464dceaa7b`). La entrada por `/ordenes-compra` mostró una tabla vacía para `185535` (`ev_1b5394f5d87a222e17b7adb0e05e9e40cca96981555c46bed840c8d6d58a7747`). El acceso directo al mismo ID mostró partidas (`ev_1f4fcd2fec01416acec70b89b944aa57a83df0036cf2c1bac835e8ff067fca78`).
 - Contraste en el código web. API `legacy-mysql-purchase-orders-data-source.ts` y `purchase-orders-routes.ts`. Frontend `purchase-orders-route.tsx`, `purchase-order-details.tsx`, `purchase-order-action-dialog.tsx` y `constants.ts` bajo `src/features/purchasing/purchase-orders/`.
+
+## REA de Editar en Omnis 7
+
+El lápiz de la barra corresponde a **Control → Cambio**. `MCONTROL/7` comprueba que el menú de Órdenes de compra esté activo y llama a `MOCOM/40`. El código de **Cambiar O.C.** abre el formato `EOC#3` encima de la ficha `EOC#2`. La acción **Comentarios** usa su propio formato `EOC#6`.
+
+En Omnis 7 se abrió **Cambio de orden de compra** con `O000001` de la compañía TUVANSA. La ventana tiene los campos de la partida seleccionada arriba, la lista de partidas debajo y **OK** y **Cancelar** al pie. El formato confirma este orden de captura:
+
+| Campo visible | Campo en `EOC#3` | Comportamiento |
+|---|---|---|
+| Producto | `ICOD` | Editable, con conversión a mayúsculas. |
+| Pedido | `#1` | Editable. Se mostró con tres decimales en la partida cargada. |
+| Unidad junto a Pedido | `MEMUC` | Editable. El cambio de unidad recalcula el factor y el precio ingresado. |
+| Descuento | `PLDESC` | Editable, condicionado por la configuración de compañía. |
+| Precio | `#2D5` | Editable, condicionado por la configuración. Se mostró con cinco decimales. |
+| Sucursal | `PLSUC` | Editable en la partida. |
+| Pzas. | `PLASIGNPZAS` | Editable. Es el mismo campo que la ficha muestra en **Obs.** |
+| Descripción | `IDESCR` | Texto del producto en sólo lectura. |
+
+`EOC#3/0` deshabilita **Descuento** y **Precio** cuando la posición 71 de `CIACOMPORTA` está activada. En el MySQL consultado, TUVANSA tiene `0` en esa posición. La edición observada fue un borrador de cantidad **5 → 6**, descartado con **Cancelar**. La ficha volvió a mostrar **5**. Al recargar apareció el aviso ODBC de `PLUMXXXX` documentado arriba y se descartó. No se pulsó **OK** del editor.
+
+| Paso | Comportamiento leído en PROSCAI_GERMAN - PRUEBAS |
+|---|---|
+| Entrar | `MOCOM/39–40` comprueba que la suma de `FPLIN.PLASIGNADO` sea cero y verifica el permiso `MOCOM40`. Para abrir `EOC#3` exige `PESPEDIDO=2` y `PEMULTICIA=LVCIA`. Hay reglas adicionales por alias de compañía. |
+| Cargar las partidas | Trabaja con la lista `#L2`. Convierte cantidad a `PLCANT / factor` y precio a `PLPRECI × factor`, con factor 1 cuando `PLFACTOR=0`. Conserva unidad, cantidad surtida y cantidad anterior. |
+| Capturar o cambiar producto | `MOCOM/41` valida `ICOD` con `INICIO/42`, resuelve el precio con `EOC#1/420`, valida producto con `MOCOM/43` y ajusta unidad y conversión con `MRECEP/70`. El control rechaza productos inactivos para compras. En TUVANSA se observó `CIACOMPORTA[97]=0` en el MySQL consultado. En el último campo de observaciones, Tab pasa a la siguiente partida o agrega un renglón vacío. |
+| Confirmar | `MOCOM/44` reconvierte cantidad y precio a la unidad almacenada. Omnis pregunta si debe retirar partidas con cantidad cero. `MOCOM/40` agrega renglones con `MBASE/121`, actualiza los existentes mediante `MBASE/69` y puede retirar partidas con código borrado o cantidad cero según la respuesta. |
+| Ajustar inventario | `MBASE/121` inserta `FPLIN`, suma la cantidad a `FINV.IPEDPRV` y `FPENC.PEPZAS`, y actualiza `FINV.IPROXRECEP` con `PEDESDE`. `MBASE/124` aplica deltas en `FPLIN`, ajusta `FINV.IPEDPRV` por el cambio en `max(PLCANT−PLSURT,0)` y modifica `FINV.ICONFIRMADO` sólo por el delta de confirmación. También actualiza los acumulados correspondientes en `FPENC`. |
+| Recalcular y salir | Después de aplicar cambios relee la orden y llama a `MBASE/122` para recalcular importes y a `MBASE/123` para actualizar `FCOMENT.COMLETRA` por `10000000+PESEQ`, creando el registro si falta. Cuando se cancela, omite el bloque de guardado y recarga la ficha con `MOCOM/28`. La integración posterior `MOCOM/403` termina de inmediato para TUVANSA. |
+
+Referencias locales bajo `captures/ui/omnis7-developer-check/`. `20261120-MCONTROL-EDITAR.txt` línea 266 identifica el evento. `20261120-EOC3-EDICION.txt` contiene los controles del editor. `20261120-MOCOM-PROCEDURES.txt` línea 902 contiene las condiciones de entrada, línea 921 el editor y el guardado, línea 1051 el teclado, línea 1136 las validaciones de producto y línea 1213 la conversión. Se exportaron también `20261120-MBASE-121-OC.txt`, `20261120-MBASE-123-OC.txt` y `20261120-MBASE-124-OC.txt`. Las capturas `20261120-oc-edicion-modal.png`, `20261120-oc-edicion-borrador.png` y `20261120-oc-edicion-restaurada.png` muestran el recorrido nativo.
+
+Las reglas de guardado provienen del código exportado. La ejecución de **OK** y la persistencia de **Pzas.** al agregar una partida quedan pendientes de una prueba de escritura. Tampoco se registró SQL literal de guardado. `general_log` se verificó en `OFF` en el MySQL consultado por la API. El botón de la web todavía está deshabilitado.

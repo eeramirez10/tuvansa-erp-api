@@ -1,5 +1,6 @@
-import type { Product } from '../../domain/entities/product.js';
+import { Product } from '../../domain/entities/product.js';
 import type { ProductsDataSource } from '../../domain/datasources/products-data-source.js';
+import type { ProductClassificationRepository } from '../../domain/repositories/product-classification-repository.js';
 import type {
   DeleteProductResult,
   ProductCreateValues,
@@ -11,25 +12,36 @@ import type {
 } from '../../domain/repositories/products-repository.js';
 
 export class ProductsRepositoryImpl implements ProductsRepository {
-  constructor(private readonly dataSource: ProductsDataSource) {}
+  constructor(
+    private readonly dataSource: ProductsDataSource,
+    private readonly classification?: Pick<ProductClassificationRepository, 'get'>,
+  ) {}
 
-  findById(productId: number): Promise<Product | null> {
-    return this.dataSource.findById(productId);
+  private async withClassification(product: Product | null): Promise<Product | null> {
+    if (!product || !this.classification) return product;
+    const details = product.toPrimitives();
+    const saved = await this.classification.get(details.id);
+    if (saved?.familyCode == null) return product;
+    return Product.create({ ...details, classification: { ...details.classification, familyCode: saved.familyCode } });
   }
 
-  findFirstActive(): Promise<Product | null> {
-    return this.dataSource.findFirstActive();
+  async findById(productId: number): Promise<Product | null> {
+    return this.withClassification(await this.dataSource.findById(productId));
+  }
+
+  async findFirstActive(): Promise<Product | null> {
+    return this.withClassification(await this.dataSource.findFirstActive());
   }
 
   search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
     return this.dataSource.search(criteria);
   }
 
-  findAdjacent(
+  async findAdjacent(
     productId: number,
     direction: ProductNavigationDirection,
   ): Promise<Product | null> {
-    return this.dataSource.findAdjacent(productId, direction);
+    return this.withClassification(await this.dataSource.findAdjacent(productId, direction));
   }
 
   codeExists(code: string, excludingProductId?: number): Promise<boolean> {

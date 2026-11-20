@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import type { ProductsController } from './products-controller.js';
+import type { ProductClassificationsController } from './product-classifications-controller.js';
 
-export const createProductsRouter = (controller: ProductsController): Router => {
+export const createProductsRouter = (controller: ProductsController, classifications: ProductClassificationsController): Router => {
   const router = Router();
 
   router.get('/', controller.search);
@@ -13,7 +14,8 @@ export const createProductsRouter = (controller: ProductsController): Router => 
   router.get('/:productId/actions/color-size-registration', controller.panel('color-size-registration'));
   router.get('/:productId/actions/block-status', controller.panel('block-status'));
   router.patch('/:productId/actions/block-status', controller.setBlockStatus);
-  router.get('/:productId/actions/classifications', controller.panel('classifications'));
+  router.get('/:productId/actions/classifications', classifications.get);
+  router.patch('/:productId/actions/classifications', classifications.save);
   router.get('/:productId/actions/extended-description', controller.panel('extended-description'));
   router.get('/:productId/actions/discounts/customers', controller.panel('customer-discounts'));
   router.get('/:productId/actions/discounts/suppliers', controller.panel('supplier-discounts'));

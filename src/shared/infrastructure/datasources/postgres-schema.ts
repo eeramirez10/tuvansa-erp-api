@@ -39,7 +39,10 @@ CREATE TABLE tuvansa.order_stock_deltas (
 CREATE INDEX order_stock_product ON tuvansa.order_stock_deltas(product_id,warehouse);
 ` }];
 
-export async function migratePostgres(client: PostgresClient): Promise<void> {
+export async function migratePostgres(
+  client: PostgresClient,
+  migrations: readonly { id: string; sql: string }[] = postgresMigrations,
+): Promise<void> {
   await client.query('BEGIN');
   try {
     // Transaction-scoped lock also works with a Neon transaction pooler.
@@ -47,7 +50,7 @@ export async function migratePostgres(client: PostgresClient): Promise<void> {
     await client.query('CREATE SCHEMA IF NOT EXISTS tuvansa');
     await client.query(`CREATE TABLE IF NOT EXISTS tuvansa.schema_migrations (
       id text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`);
-    for (const migration of postgresMigrations) {
+    for (const migration of migrations) {
       const checksum = createHash('sha256').update(migration.sql).digest('hex');
       const existing = await client.query<{checksum: string}>('SELECT checksum FROM tuvansa.schema_migrations WHERE id=$1', [migration.id]);
       if (existing.rows[0]) {

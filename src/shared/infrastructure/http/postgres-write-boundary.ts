@@ -15,6 +15,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const modify = ['PATCH','DELETE'].includes(req.method) && /^\/sales\/orders\/[1-9]\d*$/.test(path);
   const cancelInventory = env.INVENTORY_MOVEMENTS_SOURCE === 'postgres' &&
     req.method === 'DELETE' && /^\/inventories\/movements\/[1-9]\d*$/.test(path);
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory) { next(); return; }
+  const classifyProduct = env.INVENTORY_CLASSIFICATION_PILOT_PRODUCTS.length > 0 && env.NEON_DATABASE_URL !== '' &&
+    req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*\/actions\/classifications$/.test(path);
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

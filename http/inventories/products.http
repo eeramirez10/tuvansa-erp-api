@@ -102,7 +102,17 @@ Content-Type: application/json
 }
 
 ### Acciones - Clasificar
+# @name productClassifications
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/classifications
+
+### Acciones - Clasificar - Guardar en un producto habilitado para el piloto PostgreSQL
+PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/classifications
+Content-Type: application/json
+
+{
+  "revision": {{productClassifications.response.body.$.data.classification.revision}},
+  "changes": { "D": "D01" }
+}
 
 ### Acciones - Descripcion extendida
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/extended-description

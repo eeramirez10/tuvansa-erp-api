@@ -12,7 +12,7 @@ origen, registros y paginacion.
 | Almacenes | `/:productId/actions/warehouses` | `falm`, `falmcat` |
 | Alta CT | `/:productId/actions/color-size-registration` | No disponible: esta version no incluye Color y Talla |
 | Bloquear | GET/PATCH `/:productId/actions/block-status` | `finv.IBAJA`, `IUSEQ`, `IFECHACAMBIO` |
-| Clasificar | `/:productId/actions/classifications` | `finv.IFAM`, `IFAM1..9`; OMNIS consulta `ffam` por niveles |
+| Clasificar | GET/PATCH `/:productId/actions/classifications` | `FINV`, `FFAM`, `FYG`, `FCIA` para lectura. PostgreSQL para los cambios del piloto. |
 | Descr. ext. | `/:productId/actions/extended-description` | `finv2` |
 | % Descuentos clis | `/:productId/actions/discounts/customers` | `fdesctos.DESKEY2` por prefijo de producto |
 | % Descuentos prv | `/:productId/actions/discounts/suppliers` | `fdesctos.DESKEY2` por prefijo de producto |
@@ -42,7 +42,7 @@ origen, registros y paginacion.
 | Almacenes | Tabla horizontal por almacén, fila TOTAL, scroll XY y controles de localización/mínimos |
 | Alta CT | Aviso literal del módulo Color y Talla no incluido |
 | Bloquear | Confirmación No/Yes y cambio real de `finv.IBAJA` mediante PATCH |
-| Clasificar | Selector doble de familias con bloque SELECCIONADOS |
+| Clasificar | Selección de parámetros con dos listas, filtro por familia anterior, transferencia y Guardar |
 | Descr. ext. | Cuatro bloques de descripción y botón Cambiar |
 | % Descuentos clis/prv | Filtros superiores, tabla de descuentos y scroll XY |
 | Otros | Formulario vertical por secciones de empaque, opciones, precios, importación y producción |
@@ -52,6 +52,47 @@ origen, registros y paginacion.
 | Precios | Costo y listas 1..13 con moneda y plan POS |
 | SKUs | Tabla L/SKU y botones Cancelar/Aceptar |
 | Prepacks | Matriz horizontal, código del producto y botones OK/Cancelar/Reparte |
+
+### Clasificar
+
+El botón **Acciones → Clasificar** llama a `EINV#1/53`, que abre
+`EINV#25C`. `MBASE/92` lee los títulos de `FYG.ABITITFAM1`. Cuando esa
+entrada falta, recurre a `FCIA.CIAFAMPAR1..9` para las primeras categorías.
+`EINV#25C/240` arma las filas por posición (1–9 y A–K) con los valores
+`FINV.IFAM<posición>` y busca cada código completo en `FFAM.FAMTNUM`.
+La ventana muestra `FAMNUM` como código corto.
+
+La lista derecha abre vacía. Al seleccionar una categoría, `EINV#25C/242`
+consulta las opciones de `FFAM.FAMT`. A partir de la segunda fila acepta
+opciones con `FAMPADRE` vacío o igual al código corto de la fila anterior.
+La flecha y el doble clic llaman a `/230`, que pasan la opción al borrador
+sin cambiar las demás filas. **Guardar** ejecuta `/17` y cierra la ventana.
+`IFAM` se deriva de los códigos de los parámetros 1–9 cuando está activo
+el comportamiento 79 o se usa Shift al guardar. El comportamiento 79
+está activo en el origen configurado para TUVANSA.
+
+En Omnis 7, con `004212899` en la base local de pruebas, se recorrieron
+las trece categorías visibles. **Sucursal** pasó de `04` a `01` con la
+flecha y el cambio persistió al reabrir. **Material** pasó de `A01` a `A02`
+con doble clic. Después de guardar, **Familia** pasó de `CONRBUA0114009` a
+`CONRBUA0214009`. Se restauraron `04` y `A01` con su familia original.
+La lectura del catálogo se apoya en el marcador histórico
+[INV_ACTION_CLASIFICAR](product-buttons-capture.md#inv_action_clasificar).
+La escritura de la API en PostgreSQL se deriva de los procedimientos de
+Omnis y de la prueba funcional.
+
+El GET entrega `data.classification` con la revisión, la familia compuesta,
+los grupos, sus opciones y la disponibilidad de Guardar. PATCH recibe la
+revisión leída y un objeto `changes` con códigos completos `FAMTNUM` por
+grupo. Una revisión desactualizada devuelve `409`. Para habilitar Guardar
+en el ambiente de pruebas, aplica la migración de Clasificar y configura
+`INVENTORY_CLASSIFICATION_PILOT_PRODUCTS` con los ID autorizados para el
+piloto. La API usa PostgreSQL para esos cambios y refleja la familia
+compuesta en el detalle del catálogo.
+
+```powershell
+pnpm exec tsx scripts/migrate-postgres-inventory-classifications.ts
+```
 
 ### Presentación de las ventanas de Compras/Prod
 

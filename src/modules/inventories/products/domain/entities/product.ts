@@ -19,11 +19,13 @@ export interface ProductProps {
       id: number;
       code: string;
       description: string;
+      catalogOption?: { code: string; description: string } | null;
     };
     usesColorAndSize: boolean;
     hasPhoto: boolean;
   };
   prices: {
+    hasActiveOffer?: boolean;
     sale: [
       { amount: number; currencyId: number },
       { amount: number; currencyId: number },
@@ -64,6 +66,8 @@ export interface ProductProps {
     previousQuantity: number;
     accumulatedQuantity: number;
     pieceStock: number;
+    salesLastSixWeeks?: number;
+    /** @deprecated IVTA represents six weeks. Use salesLastSixWeeks. */
     salesLastSixMonths: number;
     inventoryDays: number;
   };

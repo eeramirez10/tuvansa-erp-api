@@ -21,8 +21,12 @@ interface ProductRow extends RowDataPacket {
   unitId: number;
   unitCode: string | null;
   unitDescription: string | null;
-  unitType: number | null;
+  catalogUnitCode: string | null;
+  catalogUnitDescription: string | null;
+  colorAndSize: number | null;
   hasPhoto: number;
+  offerFrom: string | null;
+  offerUntil: string | null;
   salePrice1: number;
   salePrice2: number;
   salePrice3: number;
@@ -56,7 +60,7 @@ interface ProductRow extends RowDataPacket {
   previousQuantity: number;
   accumulatedQuantity: number;
   pieceStock: number;
-  salesLastSixMonths: number;
+  salesLastSixWeeks: number;
   inventoryDays: number;
   createdAt: string | null;
 }
@@ -76,8 +80,12 @@ const selectProductFields = `
   FINV.USEQ AS unitId,
   FUNIDAD.UCOD AS unitCode,
   FUNIDAD.UDESCR AS unitDescription,
-  FUNIDAD.UTIPO AS unitType,
+  catalog_unit.UCOD AS catalogUnitCode,
+  catalog_unit.UDESCR AS catalogUnitDescription,
+  FINV.ICT AS colorAndSize,
   IFOTO AS hasPhoto,
+  NULLIF(IOFERDESDE, '1900-12-31') AS offerFrom,
+  NULLIF(IOFERHASTA, '1900-12-31') AS offerUntil,
   ILISTA1 AS salePrice1,
   ILISTA2 AS salePrice2,
   ILISTA3 AS salePrice3,
@@ -87,7 +95,7 @@ const selectProductFields = `
   ILISTA4 AS averageCost,
   ILISTA5 AS lastCost,
   ILISTA6 AS previousCost,
-  IMONEDA AS costCurrency,
+  IMONEDA6 AS costCurrency,
   IADVALOREM AS adValorem,
   IMINIMO AS minimum,
   IMAXIMO AS maximum,
@@ -105,16 +113,25 @@ const selectProductFields = `
   IPEDCOTIZ AS customerQuotes,
   IPEDPRV AS supplierOrders,
   IORDCOTIZ AS supplierQuotes,
-  ISTKACT AS currentStock,
+  CASE WHEN (SELECT CIAOTROSDESC = 99 AND CIAKYT = 0 FROM fcia WHERE CIASEQ = 1)
+    THEN 0 ELSE ISTKACT END AS currentStock,
   ISTKANT AS previousStock,
   ISTKACU AS accumulatedStock,
   ICANTAN AS previousQuantity,
   ICANTAC AS accumulatedQuantity,
   ISTKPZS AS pieceStock,
-  IVTA AS salesLastSixMonths,
+  IVTA AS salesLastSixWeeks,
   IDIASSTK AS inventoryDays,
   NULLIF(IALTA, '1900-12-31') AS createdAt
 `;
+
+// EINV#1 uses USEQ for the connected UCOD field and selects the dropdown by IUM in /239.
+const productSource = `FROM finv
+  LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
+  LEFT JOIN funidad AS catalog_unit ON catalog_unit.USEQ = (
+    SELECT candidate.USEQ FROM funidad AS candidate
+    WHERE candidate.UCOD = FINV.IUM ORDER BY candidate.USEQ LIMIT 1
+  )`;
 
 const typeFromId = (typeId: number): ProductType => {
   const types: ProductType[] = [
@@ -131,7 +148,11 @@ const typeToId: Record<Exclude<ProductType, 'unknown'>, number> = {
   service: 4,
 };
 
-const toProduct = (row: ProductRow): Product => {
+const businessDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+const toProduct = (row: ProductRow, today = businessDateFormatter.format(new Date())): Product => {
   const props: ProductProps = {
     id: row.id,
     code: row.code,
@@ -145,11 +166,17 @@ const toProduct = (row: ProductRow): Product => {
         id: row.unitId,
         code: row.unitCode ?? '',
         description: row.unitDescription ?? '',
+        catalogOption: row.catalogUnitCode == null ? null : {
+          code: row.catalogUnitCode,
+          description: row.catalogUnitDescription ?? '',
+        },
       },
-      usesColorAndSize: (row.unitType ?? 0) !== 0,
+      usesColorAndSize: (row.colorAndSize ?? 0) !== 0,
       hasPhoto: row.hasPhoto === 1,
     },
     prices: {
+      hasActiveOffer: row.offerFrom != null && row.offerUntil != null
+        && row.offerFrom <= today && row.offerUntil >= today,
       sale: [
         { amount: row.salePrice1, currencyId: row.saleCurrency1 },
         { amount: row.salePrice2, currencyId: row.saleCurrency2 },
@@ -190,7 +217,8 @@ const toProduct = (row: ProductRow): Product => {
       previousQuantity: row.previousQuantity,
       accumulatedQuantity: row.accumulatedQuantity,
       pieceStock: row.pieceStock,
-      salesLastSixMonths: row.salesLastSixMonths,
+      salesLastSixWeeks: row.salesLastSixWeeks,
+      salesLastSixMonths: row.salesLastSixWeeks,
       inventoryDays: row.inventoryDays,
     },
     createdAt: row.createdAt,
@@ -213,7 +241,7 @@ const columnByField: Omit<Record<keyof ProductWriteValues, string>, 'unitId'> = 
   averageCost: 'ILISTA4',
   lastCost: 'ILISTA5',
   previousCost: 'ILISTA6',
-  costCurrency: 'IMONEDA',
+  costCurrency: 'IMONEDA6',
   adValorem: 'IADVALOREM',
   minimum: 'IMINIMO',
   maximum: 'IMAXIMO',
@@ -256,8 +284,7 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
   async findById(productId: number): Promise<Product | null> {
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ${selectProductFields}
-       FROM finv
-       LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
+       ${productSource}
        WHERE FINV.ISEQ = ?
        LIMIT 1`,
       [productId],
@@ -268,8 +295,7 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
   async findFirstActive(): Promise<Product | null> {
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ${selectProductFields}
-       FROM finv
-       LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
+       ${productSource}
        WHERE IBAJA = '1900-12-31'
        ORDER BY ICOD, FINV.ISEQ
        LIMIT 1`,
@@ -288,8 +314,7 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
       : Array(4).fill(`%${criteria.query}%`);
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ${selectProductFields}
-       FROM finv
-       LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
+       ${productSource}
        WHERE ${where}
        ORDER BY ICOD
        LIMIT ? OFFSET ?`,
@@ -299,7 +324,8 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
       `SELECT COUNT(*) AS total FROM finv WHERE ${where}`,
       parameters,
     );
-    return { items: rows.map(toProduct), total: countRows[0]?.total ?? 0 };
+    const today = businessDateFormatter.format(new Date());
+    return { items: rows.map((row) => toProduct(row, today)), total: countRows[0]?.total ?? 0 };
   }
 
   async findAdjacent(
@@ -316,8 +342,7 @@ export class LegacyMysqlProductsDataSource implements ProductsDataSource {
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ${selectProductFields}
-       FROM finv
-       LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
+       ${productSource}
        WHERE ICOD ${operator} ?
        ORDER BY ICOD ${order}, FINV.ISEQ ${order}
        LIMIT 1`,

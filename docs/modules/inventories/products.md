@@ -45,17 +45,18 @@ colación de la base legacy sí lo hace.
 | --- | --- | --- | --- |
 | Catálogo | Código | `code` | `finv.ICOD` |
 | Catálogo | Descripción | `description` | `finv.IDESCR` |
-| Catálogo | Unidad | `classification.unit` | `finv.USEQ`, `funidad.UCOD`, `funidad.UDESCR` |
+| Catálogo | Unidad | `classification.unit` y `classification.unit.catalogOption` | Campo enlazado por `FINV.USEQ`. Desplegable por `FINV.IUM = FUNIDAD.UCOD`. |
 | Catálogo | Familia | `classification.familyCode` | `finv.IFAM` |
 | Catálogo | M.P./P.T./Juego/Ensamble/Servicio | `classification.type` | `finv.ITIPO` |
-| Catálogo | Color y talla | `classification.usesColorAndSize` | `funidad.UTIPO` |
+| Catálogo | Color y talla | `classification.usesColorAndSize` | `FINV.ICT` |
 | Catálogo | Foto | `classification.hasPhoto` | `finv.IFOTO` |
 | Precios de Venta | Precio 1..3 | `prices.sale[0..2].amount` | `finv.ILISTA1..3` |
 | Precios de Venta | Moneda | `prices.sale[0..2].currencyId` | `finv.IMONEDA1..3` |
+| Precios de Venta | `*` de oferta vigente | `prices.hasActiveOffer` | `FINV.IOFERDESDE`, `FINV.IOFERHASTA` |
 | Costos | Promedio 4 | `prices.costs.average` | `finv.ILISTA4` |
 | Costos | Último 5 | `prices.costs.last` | `finv.ILISTA5` |
 | Costos | Anterior 6 | `prices.costs.previous` | `finv.ILISTA6` |
-| Costos | Moneda | `prices.costs.currencyId` | `finv.IMONEDA` |
+| Costos | Moneda | `prices.costs.currencyId` | `FINV.IMONEDA6` |
 | Costos | Advalorem | `prices.costs.adValorem` | `finv.IADVALOREM` |
 | Cuentas / Info. Almacén | Mínimo / Máximo | `warehouse.minimum`, `warehouse.maximum` | `finv.IMINIMO`, `finv.IMAXIMO` |
 | Cuentas / Info. Almacén | Localización | `warehouse.location` | `finv.ILOCALIZ` |
@@ -67,11 +68,40 @@ colación de la base legacy sí lo hace.
 | Acumulados | Asignado / Confirmado | `accumulated.assigned`, `confirmed` | `finv.IASIGNADO`, `finv.ICONFIRMADO` |
 | Acumulados | Pedido/Cot | `accumulated.customerOrders`, `customerQuotes` | `finv.IPEDCLI`, `finv.IPEDCOTIZ` |
 | Acumulados | Ordenado/Cot | `accumulated.supplierOrders`, `supplierQuotes` | `finv.IPEDPRV`, `finv.IORDCOTIZ` |
-| Acumulados | Stock actual / Anterior / Acumulado | `accumulated.currentStock`, `previousStock`, `accumulatedStock` | `finv.ISTKACT`, `finv.ISTKANT`, `finv.ISTKACU` |
+| Acumulados | Stock actual / Anterior / Acumulado | `accumulated.currentStock`, `previousStock`, `accumulatedStock` | `FINV.ISTKACT`, `FINV.ISTKANT`, `FINV.ISTKACU`. Stock actual aplica la configuración de compañía. |
 | Acumulados | Anterior / Acumulado | `accumulated.previousQuantity`, `accumulatedQuantity` | `finv.ICANTAN`, `finv.ICANTAC` |
 | Acumulados | Stk. pzas | `accumulated.pieceStock` | `finv.ISTKPZS` |
 | Acumulados | Alta / Baja | `createdAt`, `deactivatedAt` | `finv.IALTA`, `finv.IBAJA` |
-| Acumulados | Vta 6s / Días Inv. | `accumulated.salesLastSixMonths`, `inventoryDays` | `finv.IVTA`, `finv.IDIASSTK` |
+| Acumulados | Vta 6s / Días Inv. | `accumulated.salesLastSixWeeks`, `inventoryDays` | `FINV.IVTA`, `FINV.IDIASSTK` |
+
+### Reglas de Omnis 7
+
+En `EINV#1` el cuadro de unidad muestra el `UCOD` enlazado. El
+procedimiento `/239` selecciona el desplegable buscando `UCOD=IUM` y lo
+deja sin selección cuando falta la coincidencia. La API conserva el ID
+y código enlazados y devuelve `catalogOption: null` en ese caso. En
+`Z25`, por ejemplo, el código enlazado es `UNO` y `IUM='1'` carece de
+entrada en el catálogo.
+
+El campo 71 muestra `*` cuando la fecha actual cae entre `IOFERDESDE` e
+`IOFERHASTA`, incluidos ambos límites. La API usa la fecha de Ciudad de
+México y omite las fechas vacías o de referencia `1900-12-31`. Los precios
+y costos de lista se muestran con cuatro decimales. Confirmado y las
+existencias se muestran con tres decimales.
+
+El campo 74 muestra la moneda de **Anterior 6**. En el piloto **Otros**,
+la moneda de Lista 6 actualiza este campo de la ficha. La moneda de origen
+conserva su significado propio en Otros.
+
+El campo 35 presenta Stock actual en cero cuando `CIAOTROSDESC=99` y
+`CIAKYT=0`. Omnis también aplica `CIACIAUSR=0` al total de la sesión.
+La API aplica la condición de compañía. Reproducir `CIACIAUSR` requiere
+vincular el alcance del usuario autenticado con la ficha.
+
+La rutina **SEMANAS INVENTARIO** llena `IVTA` con ventas de seis semanas
+y guarda `IDIASSTK` en días. El API lee los acumulados guardados. El alias
+`salesLastSixMonths` sigue devolviendo el mismo valor por compatibilidad.
+Los clientes nuevos deben usar `salesLastSixWeeks`.
 
 ## Arquitectura
 

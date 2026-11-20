@@ -39,7 +39,7 @@ export class ProductsRepositoryImpl implements ProductsRepository {
         average: typeof changes?.list4 === 'number' ? changes.list4 : costs.average,
         last: typeof changes?.list5 === 'number' ? changes.list5 : costs.last,
         previous: typeof changes?.list6 === 'number' ? changes.list6 : costs.previous,
-        currencyId: typeof changes?.baseCurrency === 'number' ? changes.baseCurrency : costs.currencyId,
+        currencyId: typeof changes?.currency6 === 'number' ? changes.currency6 : costs.currencyId,
       } },
     });
   }

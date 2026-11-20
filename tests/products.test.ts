@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CreateProduct } from '../src/modules/inventories/products/application/use-cases/create-product.js';
 import { DeleteProduct } from '../src/modules/inventories/products/application/use-cases/delete-product.js';
 import { GetFirstActiveProduct } from '../src/modules/inventories/products/application/use-cases/get-first-active-product.js';
 import { NavigateProduct } from '../src/modules/inventories/products/application/use-cases/navigate-product.js';
 import { Product } from '../src/modules/inventories/products/domain/entities/product.js';
 import type { ProductsRepository } from '../src/modules/inventories/products/domain/repositories/products-repository.js';
+import { LegacyMysqlProductsDataSource } from '../src/modules/inventories/products/infrastructure/datasources/legacy-mysql-products-data-source.js';
+import { ProductsRepositoryImpl } from '../src/modules/inventories/products/infrastructure/repositories/products-repository-impl.js';
+import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 
 const product = Product.create({
   id: 47087,
@@ -71,6 +74,53 @@ const repository = (overrides: Partial<ProductsRepository> = {}): ProductsReposi
 });
 
 describe('Inventarios PT - Catalogo de productos', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['2026-11-20', '2026-11-20', true],
+    ['2026-11-20', '2026-11-21', true],
+    ['2026-11-21', '2026-11-23', false],
+    ['2026-11-17', '2026-11-19', false],
+    [null, '2026-11-21', false],
+    ['2026-11-20', null, false],
+  ])('lee los campos de la ficha y evalúa la oferta de %s a %s', async (offerFrom, offerUntil, hasActiveOffer) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-21T02:00:00Z')); // 20 de noviembre en Ciudad de México.
+    const execute = vi.spyOn(legacyMysqlPool, 'execute').mockResolvedValueOnce([[
+      {
+        id: 12362, typeId: 1, colorAndSize: 0, unitType: 2, costCurrency: 0, offerFrom, offerUntil,
+        unitId: 10, unitCode: 'UNO', unitDescription: 'UNO', catalogUnitCode: null, salesLastSixWeeks: 12,
+      },
+    ], []]);
+    const result = await new LegacyMysqlProductsDataSource().findById(12362);
+
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('FINV.ICT AS colorAndSize'), [12362]);
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('IMONEDA6 AS costCurrency'), [12362]);
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('candidate.UCOD = FINV.IUM'), [12362]);
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('CIAOTROSDESC = 99 AND CIAKYT = 0'), [12362]);
+    expect(result?.toPrimitives()).toMatchObject({
+      classification: { usesColorAndSize: false, unit: { id: 10, code: 'UNO', catalogOption: null } },
+      prices: { costs: { currencyId: 0 }, hasActiveOffer },
+      accumulated: { salesLastSixWeeks: 12, salesLastSixMonths: 12 },
+    });
+  });
+
+  it('conserva la moneda de Lista 6 aunque Otros cambie la moneda de origen', async () => {
+    const values = { revision: 1, changes: { baseCurrency: 2 }, changedAt: '2026-11-20' };
+    const adapter = new ProductsRepositoryImpl(repository(), undefined, { get: async () => values });
+    const result = await adapter.findById(product.toPrimitives().id);
+    expect(result?.toPrimitives().prices.costs.currencyId).toBe(0);
+
+    const withList6 = new ProductsRepositoryImpl(repository(), undefined, {
+      get: async () => ({ ...values, changes: { ...values.changes, currency6: 3 } }),
+    });
+    const updated = await withList6.findById(product.toPrimitives().id);
+    expect(updated?.toPrimitives().prices.costs.currencyId).toBe(3);
+  });
+
   it('carga el primer producto activo sin ejecutar la búsqueda paginada', async () => {
     const useCase = new GetFirstActiveProduct(repository({
       search: async () => { throw new Error('No debe ejecutar search'); },

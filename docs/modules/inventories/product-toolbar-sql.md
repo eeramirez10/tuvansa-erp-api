@@ -76,6 +76,22 @@ El `INSERT` de OMNIS es dinámico. La API agrega únicamente campos de la ficha
 recibidos, más los defaults técnicos confirmados; no reproduce valores ocultos
 derivados del código como `IFAM1` o `IPRV`.
 
+### Captura en la ficha de Omnis 7
+
+`MCONTROL/5` llama a `MINV/24`. El papel activa **Alta de productos** en
+`EINV#1`, con foco en **Código**, tipo **M.P.**, unidad **1 UNO** y monedas
+en cero en la biblioteca de pruebas. **OK** y **Cancelar** están en la
+misma ficha. Se comprobó en un borrador que **Color y talla**, **Vta 6s**
+y **Días Inv.** admiten captura. El borrador se descartó con **Cancelar**.
+
+El alta web carga el catálogo de unidades con
+`GET /api/inventories/products/:productId/edit-options` desde el registro
+visible. El POST existente admite `classification.usesColorAndSize`,
+`accumulated.salesLastSixWeeks` y `accumulated.inventoryDays`, que el
+datasource MySQL mapea a `ICT`, `IVTA` e `IDIASSTK`.
+La API principal rechaza el POST de alta con `MODULE_WRITES_NOT_MIGRATED`
+hasta que la creación se implemente en PostgreSQL.
+
 ## Cambio
 
 Al escribir solamente la descripción:

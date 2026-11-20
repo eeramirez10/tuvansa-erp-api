@@ -41,14 +41,19 @@ Accept: application/json
   "classification": {
     "type": "rawMaterial",
     "unitId": 1,
-    "familyCode": ""
+    "familyCode": "",
+    "usesColorAndSize": false
   },
   "prices": {
     "sale": [
-      { "amount": 0, "currencyId": 1 },
+      { "amount": 0, "currencyId": 0 },
       { "amount": 0, "currencyId": 0 },
       { "amount": 0, "currencyId": 0 }
     ]
+  },
+  "accumulated": {
+    "salesLastSixWeeks": 0,
+    "inventoryDays": 0
   },
   "warehouse": {
     "minimum": 0,

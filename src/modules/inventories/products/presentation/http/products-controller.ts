@@ -71,6 +71,7 @@ const mutationFields = {
     unitId: z.number().int().positive().optional(),
     familyCode: z.string().trim().max(16).optional(),
     hasPhoto: z.boolean().optional(),
+    usesColorAndSize: z.boolean().optional(),
   }).strict().optional(),
   prices: z.object({
     sale: z.tuple([priceSchema, priceSchema, priceSchema]).optional(),
@@ -94,6 +95,10 @@ const mutationFields = {
       costOfSales: z.string().trim().max(16).optional(),
     }).strict().optional(),
   }).strict().optional(),
+  accumulated: z.object({
+    salesLastSixWeeks: z.number().int().min(0).max(2_147_483_647).optional(),
+    inventoryDays: z.number().int().min(0).max(2_147_483_647).optional(),
+  }).strict().optional(),
 };
 
 const createProductBodySchema = z.object(mutationFields).strict().extend({
@@ -112,7 +117,6 @@ const updateProductBodySchema = z.object({
   revision: z.string().max(32).regex(/^\d+:\d+:\d+$/),
   classification: mutationFields.classification.unwrap().extend({
     familyCode: z.string().trim().toUpperCase().max(16).optional(),
-    usesColorAndSize: z.boolean().optional(),
   }).optional(),
   prices: z.object({
     sale: z.tuple([editablePriceSchema, editablePriceSchema, editablePriceSchema]).optional(),
@@ -128,10 +132,6 @@ const updateProductBodySchema = z.object({
     ean: z.string().trim().toUpperCase().max(30).optional(),
     upc: z.string().trim().toUpperCase().max(13).optional(),
   }).optional(),
-  accumulated: z.object({
-    salesLastSixWeeks: z.number().int().min(0).max(2_147_483_647).optional(),
-    inventoryDays: z.number().int().min(0).max(2_147_483_647).optional(),
-  }).strict().optional(),
 }).strict().refine(
   (body) => Object.keys(toProductWriteValues(body)).length > 0,
   { message: 'Debe proporcionar al menos un campo para modificar' },

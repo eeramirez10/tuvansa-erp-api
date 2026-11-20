@@ -13,7 +13,7 @@ import { SetProductBlockStatus } from './application/use-cases/set-product-block
 import { env } from '../../../config/env.js';
 import { LegacyMysqlProductClassificationDataSource } from './infrastructure/datasources/legacy-mysql-product-classification-data-source.js';
 import { LegacyMysqlProductOtherDataSource } from './infrastructure/datasources/legacy-mysql-product-other-data-source.js';
-import { LegacyMysqlProductsDataSource } from './infrastructure/datasources/legacy-mysql-products-data-source.js';
+import { ProductsWithPurchaseOrderPendingDataSource } from './infrastructure/datasources/products-with-purchase-order-pending-data-source.js';
 import { LegacyMysqlProductPanelsDataSource } from './infrastructure/datasources/legacy-mysql-product-panels-data-source.js';
 import { PostgresProductClassificationDataSource } from './infrastructure/datasources/postgres-product-classification-data-source.js';
 import { PostgresProductOtherDataSource } from './infrastructure/datasources/postgres-product-other-data-source.js';
@@ -28,7 +28,7 @@ import { ProductOtherDataController } from './presentation/http/product-other-da
 import { createProductsRouter } from './presentation/http/products-routes.js';
 
 export const createProductsModule = (): Router => {
-  const dataSource = new LegacyMysqlProductsDataSource();
+  const dataSource = new ProductsWithPurchaseOrderPendingDataSource();
   const editProducts = env.INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS;
   const edits = new PostgresProductCatalogEditDataSource(editProducts);
   const classificationRepository = new ProductClassificationRepositoryImpl(

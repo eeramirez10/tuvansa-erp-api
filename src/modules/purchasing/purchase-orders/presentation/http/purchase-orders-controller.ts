@@ -6,6 +6,7 @@ import type { GetPurchaseOrder } from '../../application/use-cases/get-purchase-
 import type { NavigatePurchaseOrder } from '../../application/use-cases/navigate-purchase-order.js';
 import type { SearchPurchaseOrders } from '../../application/use-cases/search-purchase-orders.js';
 import type { UpdatePurchaseOrderClassifications } from '../../application/use-cases/update-purchase-order-classifications.js';
+import type { EditPurchaseOrder } from '../../application/use-cases/edit-purchase-order.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
 const idParamsSchema = z.object({ purchaseOrderId: z.coerce.number().int().positive() });
@@ -15,6 +16,27 @@ const classificationSchema = z.object({
   current: z.array(z.string().max(16)).length(9),
   revision: z.number().int().min(0).max(2147483647),
 }).strict();
+const scaledNumber = (decimals: number) => z.number().refine((value) => {
+  const scaled = value * 10 ** decimals;
+  return Number.isSafeInteger(Math.round(scaled)) &&
+    Math.abs(scaled - Math.round(scaled)) <= Math.max(1, Math.abs(scaled)) * Number.EPSILON * 4;
+}, `Se esperan hasta ${decimals} decimales en un rango seguro.`);
+const editSchema = z.object({
+  revision: z.number().int().min(0).max(2147483647),
+  legacyVersion: z.string().regex(/^[0-9a-f]{64}$/),
+  removeZero: z.boolean(),
+  lines: z.array(z.object({
+    id: z.number().int().positive().nullable(),
+    productCode: z.string().trim().max(13).toUpperCase(),
+    quantity: scaledNumber(3),
+    unit: z.string().trim().max(3).toUpperCase(),
+    discount: scaledNumber(2),
+    price: scaledNumber(5),
+    branch: z.number().int().min(-2147483648).max(2147483647),
+    pieces: z.string().max(1000),
+  }).strict()),
+}).strict();
+const productQuery = z.object({ q: z.string().trim().min(1).max(60) });
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   orderNumber: z.string().trim().min(1).max(15).optional(),
@@ -36,6 +58,7 @@ export class PurchaseOrdersController {
     private readonly navigatePurchaseOrder: NavigatePurchaseOrder,
     private readonly getPanel: GetPurchaseOrderPanel,
     private readonly updateClassifications: UpdatePurchaseOrderClassifications,
+    private readonly editOrder: EditPurchaseOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -95,6 +118,28 @@ export class PurchaseOrdersController {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json(await this.updateClassifications.execute(purchaseOrderId, classificationSchema.parse(request.body)));
+    } catch (error) { next(error); }
+  };
+
+  getEditor: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.editOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  searchEditorProducts: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      const { q } = productQuery.parse(request.query);
+      response.json({ data: await this.editOrder.products(purchaseOrderId, q) });
+    } catch (error) { next(error); }
+  };
+
+  saveEdition: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.editOrder.save(purchaseOrderId, editSchema.parse(request.body)) });
     } catch (error) { next(error); }
   };
 }

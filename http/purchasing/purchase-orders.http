@@ -1,6 +1,9 @@
 @baseUrl = http://localhost:3000/api
 @purchaseOrderId = 218451
 @purchaseOrderNumber = OH00205
+@editOrderId = 93984
+@editRevision = 0
+@legacyVersion = copiar-del-GET-edit
 
 ### Buscar órdenes de compra (modal Buscar)
 GET {{baseUrl}}/purchasing/purchase-orders?orderNumber=OH&page=1&pageSize=25
@@ -37,6 +40,35 @@ GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/ct
 
 ### Acción: Piezas
 GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/pieces
+
+### Lápiz: abrir Cambio de orden de compra
+GET {{baseUrl}}/purchasing/purchase-orders/{{editOrderId}}/edit
+
+### Cambio de orden de compra: validar el producto o buscar por descripción
+GET {{baseUrl}}/purchasing/purchase-orders/{{editOrderId}}/edit/products?q=01202259
+
+### Cambio de orden de compra: OK (PostgreSQL)
+# Copia la revisión, legacyVersion y las partidas del GET edit. El ejemplo conserva O000001.
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{editOrderId}}
+Content-Type: application/json
+
+{
+  "revision": {{editRevision}},
+  "legacyVersion": "{{legacyVersion}}",
+  "removeZero": false,
+  "lines": [
+    {
+      "id": 364375,
+      "productCode": "01202259",
+      "quantity": 5,
+      "unit": "PZ",
+      "discount": 0,
+      "price": 0,
+      "branch": 0,
+      "pieces": ""
+    }
+  ]
+}
 
 ### Acción: Guardar Clasificar (PostgreSQL de pruebas)
 # El ejemplo conserva los valores de la orden OH00205 con revisión 0 del ejemplo.

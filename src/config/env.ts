@@ -28,6 +28,7 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   // Optional: without Neon, the API stays available for legacy reads only.
   NEON_DATABASE_URL: z.string().trim().default(''),
+  PURCHASE_ORDER_EDIT_COMPANY_ID: z.coerce.number().int().min(1).max(255).default(1),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
   INVENTORY_CLASSIFICATION_PILOT_PRODUCTS: productPilots,
   INVENTORY_OTHER_DATA_PILOT_PRODUCTS: productPilots,

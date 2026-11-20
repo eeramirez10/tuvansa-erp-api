@@ -1,4 +1,5 @@
 import type { PurchaseOrder } from '../entities/purchase-order.js';
+import type { PurchaseOrderEditSnapshot } from './purchase-order-edit-data-source.js';
 import type {
   PurchaseOrderNavigationDirection,
   PurchaseOrderPanelKey,
@@ -23,7 +24,7 @@ export interface PurchaseOrdersDataSource {
 
 export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataSource, 'getPanel' | 'search' | 'saveClassifications'> {
   search(criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[]): Promise<PurchaseOrderSearchResult>;
-  getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>): Promise<PurchaseOrderPanelResult | null>;
+  getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[]): Promise<PurchaseOrderPanelResult | null>;
 }
 
 export type PurchaseOrderAgentOverride = PurchaseOrderIdentity & { matches: boolean };

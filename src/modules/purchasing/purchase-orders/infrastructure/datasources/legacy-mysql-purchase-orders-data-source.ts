@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride } from '../../domain/datasources/purchase-orders-data-source.js';
+import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type {
   PurchaseOrderNavigationDirection,
@@ -135,7 +136,7 @@ const toPurchaseOrder = (row: HeaderRow, lines: PurchaseOrderLine[]): PurchaseOr
 const rowsToItems = (rows: RowDataPacket[]): Array<Record<string, unknown>> =>
   rows.map((row) => ({ ...row }));
 
-interface ColorSizeRow extends RowDataPacket {
+interface ColorSizeEntry {
   root: string;
   description: string;
   color: string;
@@ -143,11 +144,24 @@ interface ColorSizeRow extends RowDataPacket {
   ordered: number;
   fulfilled: number;
 }
+type ColorSizeRow = RowDataPacket & ColorSizeEntry;
 
 const sizes = Array.from({ length: 16 }, (_, index) => 11 + index);
 
 // Adaptación de EOC#6AA/240–241. La matriz sólo incluye las tallas configuradas.
-async function readColorSize(id: number) {
+async function colorSizeEntries(id: number, edited?: PurchaseOrderLine[]): Promise<ColorSizeEntry[]> {
+  if (edited) {
+    const [rows] = await legacyMysqlPool.query<(RowDataPacket & { rootLength: number; colorLength: number })[]>(
+      'SELECT CIARAIZ AS rootLength, CIATALLA AS colorLength FROM FCIA WHERE CIASEQ=1',
+    );
+    const { rootLength, colorLength } = rows[0] ?? { rootLength: 0, colorLength: 0 };
+    return edited.toSorted((left, right) => left.productCode.localeCompare(right.productCode) || left.id - right.id)
+      .map((line) => ({
+        root: line.productCode.slice(0, rootLength), color: line.productCode.slice(rootLength, rootLength + colorLength),
+        size: line.productCode.slice(rootLength + colorLength), description: line.description,
+        ordered: line.ordered, fulfilled: line.fulfilled,
+      }));
+  }
   const [lines] = await legacyMysqlPool.execute<ColorSizeRow[]>(
     `SELECT COALESCE(LEFT(FINV.ICOD, FCIA.CIARAIZ), '') AS root,
       COALESCE(FINV.IDESCR, '') AS description,
@@ -159,6 +173,11 @@ async function readColorSize(id: number) {
      WHERE FPLIN.PESEQ = ? ORDER BY FINV.ICOD, FPLIN.PLSEQ`,
     [id],
   );
+  return lines;
+}
+
+async function readColorSize(id: number, edited?: PurchaseOrderLine[]) {
+  const lines = await colorSizeEntries(id, edited);
   const groups = new Map<string, {
     root: string; description: string; ordered: number; fulfilled: number; remaining: number;
     sizes: string[];
@@ -353,7 +372,7 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
     };
   }
 
-  async getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>): Promise<PurchaseOrderPanelResult | null> {
+  async getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[]): Promise<PurchaseOrderPanelResult | null> {
     const identity = await this.identity(id);
     if (identity === undefined) return null;
 
@@ -370,7 +389,7 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
       );
       items = rowsToItems(rows);
     } else if (key === 'ct') {
-      const result = await readColorSize(id);
+      const result = await readColorSize(id, edits?.find((edit) => edit.number === identity.number)?.lines);
       items = result.items;
       summary = result.summary;
     } else if (key === 'pieces') {

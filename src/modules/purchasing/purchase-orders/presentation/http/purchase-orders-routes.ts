@@ -13,6 +13,9 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.get('/:purchaseOrderId/actions/comments', controller.panel('comments'));
   router.get('/:purchaseOrderId/actions/ct', controller.panel('ct'));
   router.get('/:purchaseOrderId/actions/pieces', controller.panel('pieces'));
+  router.get('/:purchaseOrderId/edit', controller.getEditor);
+  router.get('/:purchaseOrderId/edit/products', controller.searchEditorProducts);
+  router.patch('/:purchaseOrderId', controller.saveEdition);
   router.get('/:purchaseOrderId', controller.getById);
   return router;
 };

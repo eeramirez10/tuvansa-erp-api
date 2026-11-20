@@ -13,6 +13,9 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Abrir por número | `GET /by-number/:number` | `FPENC + FPRV` |
 | Flecha anterior | `GET /:purchaseOrderId/previous` | Orden por `PENUM` |
 | Flecha siguiente | `GET /:purchaseOrderId/next` | Orden por `PENUM` |
+| Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
+| Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
+| Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
 
 El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor, Fecha, Vencimiento, Agente y Tipo**.
 
@@ -120,4 +123,12 @@ En Omnis 7 se abrió **Cambio de orden de compra** con `O000001` de la compañí
 
 Referencias locales bajo `captures/ui/omnis7-developer-check/`. `20261120-MCONTROL-EDITAR.txt` línea 266 identifica el evento. `20261120-EOC3-EDICION.txt` contiene los controles del editor. `20261120-MOCOM-PROCEDURES.txt` línea 902 contiene las condiciones de entrada, línea 921 el editor y el guardado, línea 1051 el teclado, línea 1136 las validaciones de producto y línea 1213 la conversión. Se exportaron también `20261120-MBASE-121-OC.txt`, `20261120-MBASE-123-OC.txt` y `20261120-MBASE-124-OC.txt`. Las capturas `20261120-oc-edicion-modal.png`, `20261120-oc-edicion-borrador.png` y `20261120-oc-edicion-restaurada.png` muestran el recorrido nativo.
 
-Las reglas de guardado provienen del código exportado. La ejecución de **OK** y la persistencia de **Pzas.** al agregar una partida quedan pendientes de una prueba de escritura. Tampoco se registró SQL literal de guardado. `general_log` se verificó en `OFF` en el MySQL consultado por la API. El botón de la web todavía está deshabilitado.
+Las reglas de guardado provienen del código exportado. El recorrido de Omnis fue de lectura y cancelación de un borrador. El guardado de esta implementación se prueba en PostgreSQL. `general_log` se verificó en `OFF` en el MySQL consultado por la API.
+
+### Edición web y persistencia
+
+- El editor adapta `EOC#3` y `MOCOM/39–44`. La compañía activa se resuelve en el servidor mediante `PURCHASE_ORDER_EDIT_COMPANY_ID`, con México (`1`) como valor predeterminado. La versión de MySQL y la revisión de PostgreSQL se validan al guardar. Dos guardados de la misma revisión producen un éxito y un conflicto `409`.
+- La API recibe los campos de la unidad visible. Convierte a la unidad almacenada con su factor antes de recalcular. `MRECEP/70` usa la unidad base cuando `CIACOMPORTA[56]` está apagado y las equivalencias de `FUNIDAD` cuando está activo. La configuración consultada de TUVANSA tiene la conversión de proveedor desactivada. Se conserva el factor guardado en partidas históricas que conservan su unidad.
+- **Pzas.** guarda `PLASIGNPZAS` en partidas existentes. Al agregar, `MOCOM/40 → MBASE/121 → /71` no incluye el campo en los datos del alta y la columna tiene valor predeterminado vacío. En la web se habilita una vez que la partida tiene identificador. Una partida existente se retira al borrar su código o al aceptar la confirmación de cantidad cero. La ruta nativa de alta admite un código nuevo aun con cantidad cero.
+- La migración de PostgreSQL guarda el documento editado y los deltas de pendiente en la misma transacción. Aplica las reglas de `MBASE/121–124`: pendiente por producto, totales, importe con letra y fecha prevista al agregar un producto. Ficha, búsqueda, flechas, CT y Comentarios proyectan la revisión guardada. El acumulado **Ordenado a proveedor** del catálogo de Inventarios incorpora los deltas. La consulta histórica de partidas de proveedor de Inventarios mantiene su lectura heredada.
+- La edición para TUVANSA usa las reglas consultadas del catálogo. La autorización de usuarios `MOCOM40` y las variantes especiales nativas de matriz color/talla y EDI todavía corresponden a Omnis. Esta etapa usa selección directa de SKU y no escribe en MySQL.

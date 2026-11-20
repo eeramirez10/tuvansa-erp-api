@@ -75,4 +75,8 @@ export class PurchaseOrder {
   withClassifications(classifications: string[]): PurchaseOrder {
     return PurchaseOrder.create({ ...this.props, classifications });
   }
+
+  withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'>, includeLines: boolean): PurchaseOrder {
+    return PurchaseOrder.create({ ...this.props, totals: edit.totals, lines: includeLines ? edit.lines : [] });
+  }
 }

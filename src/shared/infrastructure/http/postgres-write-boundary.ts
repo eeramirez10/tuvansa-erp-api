@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { env } from '../../../config/env.js';
 import { ApplicationError } from '../../domain/errors/application-error.js';
 
 // Explicit allowlist: only modules wired to PostgreSQL can receive mutations.
@@ -12,6 +13,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const orderAction = req.method==='POST' && /^\/sales\/orders\/[1-9]\d*\/actions\/(quote-conversion|authorization|assignment)$/.test(path);
   const orderComments = req.method==='PATCH' && /^\/sales\/orders\/[1-9]\d*\/actions\/comments$/.test(path);
   const modify = ['PATCH','DELETE'].includes(req.method) && /^\/sales\/orders\/[1-9]\d*$/.test(path);
-  if (readOnlyCalculation || create || orderAction || orderComments || modify) { next(); return; }
+  const cancelInventory = env.INVENTORY_MOVEMENTS_SOURCE === 'postgres' &&
+    req.method === 'DELETE' && /^\/inventories\/movements\/[1-9]\d*$/.test(path);
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

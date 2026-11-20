@@ -9,3 +9,10 @@ Accept: application/json
 ### Consultas → Documentos → Abrir resultado por el identificador de Búsqueda
 GET {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}
 Accept: application/json
+
+### Consultas → Documentos → Cancelar. Ejecutar sólo sobre un folio de prueba cargado en PostgreSQL.
+DELETE {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}
+
+### Consultas → Documentos → Volver a consultar las partidas anuladas
+GET {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}
+Accept: application/json

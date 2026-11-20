@@ -24,6 +24,7 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   // Optional: without Neon, the API stays available for legacy reads only.
   NEON_DATABASE_URL: z.string().trim().default(''),
+  INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
   LEGACY_DB_HOST: z.string().min(1).optional(),
   LEGACY_DB_PORT: z.coerce.number().int().positive().default(3306),
   LEGACY_DB_USER: z.string().min(1).optional(),

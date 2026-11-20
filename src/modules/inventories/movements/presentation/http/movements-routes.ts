@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { CancelInventoryMovement } from '../../application/use-cases/cancel-inventory-movement.js';
 import type { ReadInventoryMovements } from '../../application/use-cases/read-inventory-movements.js';
 
 const textFilter = z.string().trim().min(1).max(64).optional();
@@ -17,7 +18,10 @@ const searchSchema = z.object({
 
 const idParamsSchema = z.object({ id: z.coerce.number().int().positive() });
 
-export const createMovementsRouter = (movements: ReadInventoryMovements): Router => {
+export const createMovementsRouter = (
+  movements: ReadInventoryMovements,
+  cancellation?: CancelInventoryMovement,
+): Router => {
   const router = Router();
   router.get('/', async (request, response) => {
     response.json(await movements.search(searchSchema.parse(request.query)));
@@ -26,5 +30,12 @@ export const createMovementsRouter = (movements: ReadInventoryMovements): Router
     const { id } = idParamsSchema.parse(request.params);
     response.json(await movements.getById(id));
   });
+  if (cancellation !== undefined) {
+    router.delete('/:id', async (request, response) => {
+      const { id } = idParamsSchema.parse(request.params);
+      await cancellation.execute(id);
+      response.status(204).send();
+    });
+  }
   return router;
 };

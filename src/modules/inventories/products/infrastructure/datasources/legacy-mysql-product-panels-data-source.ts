@@ -369,15 +369,12 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'customer-sales-detail': {
     section: 'queries', button: 'Ventas desglosadas',
-    sql: `SELECT AISEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
+    sql: `SELECT faxinv.AISEQ AS id, CLICOD AS customerCode, CLINOM AS customerName,
       AICANTF AS quantity, AIPRECIO AS price, DNUM AS document, DFECHA AS date,
-      DTIPOC2 AS documentType, DREFERELLOS AS externalReference,
+      DTIPOC2 AS documentType, DTIPOC2 AS exchangeRate,
+      AIPRECIO / NULLIF(DTIPOC2, 0) AS priceUsd, DREFERELLOS AS externalReference,
       AIDESCTO AS discount, AIOTROS AS otherAmount, DSUCURSAL AS branch
-      FROM faxinv LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ=? AND fcli.CLISEQ<>0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
-      ORDER BY AISEQ`, parameterMode: 'id',
+      ${customerSalesScope} ORDER BY finv.ISEQ, faxinv.AISEQ`, parameterMode: 'id',
   },
   'sales-by-branch': {
     section: 'queries', button: 'Ventas por sucursal',
@@ -667,7 +664,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const customerOrdersTotals = documentType !== undefined
       ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
       : undefined;
-    const customerSalesTotals = panel === 'customer-sales'
+    const customerSalesTotals = panel === 'customer-sales' || panel === 'customer-sales-detail'
       ? await this.getCustomerSalesTotals(product.id) : undefined;
     const params = panel === 'customer-orders-ct' || panel === 'customer-sales-ct'
       ? await this.getProductRootRange(product)

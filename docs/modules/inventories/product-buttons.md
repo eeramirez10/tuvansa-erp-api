@@ -193,6 +193,14 @@ excluye POS y acumula cantidad e importe por `CLICOD`. Su listado superior
 presenta clientes. La matriz inferior es otro cálculo por color y talla
 (`EINV#6AA/37`) que se carga al seleccionar el cliente.
 
+**Ventas desglosadas** carga la lista por producto en `EINV#38/240`.
+La captura literal proyecta `DTIPOC2` y `AIOTROS` por separado. En el diseño
+de la ventana, el campo 19 calcula Precio US como `AIPRECIO / DTIPOC2`.
+El GET presenta los dos valores como `priceUsd` y `exchangeRate`, y
+devuelve `priceUsd: null` si el tipo de cambio es nulo o cero. El total
+inferior suma `AICANTF` en toda la consulta.
+[SQL histórico](product-buttons-capture.md#L3517)
+
 ### Cambio de estado de Bloquear
 
 `PATCH /:productId/actions/block-status` recibe `{ "blocked": true }` o

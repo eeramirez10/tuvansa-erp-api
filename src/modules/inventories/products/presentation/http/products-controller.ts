@@ -51,6 +51,9 @@ const customerSalesQuerySchema = panelQuerySchema.extend({
 const classifiedSalesQuerySchema = customerSalesQuerySchema.extend({
   classifier: z.coerce.number().int().min(1).max(9).optional(),
 });
+const branchSalesQuerySchema = panelQuerySchema.extend({
+  sort: z.enum(['branch', 'code', 'name', 'quantity', 'amount']).optional(),
+});
 
 const blockStatusBodySchema = z.object({ blocked: z.boolean() }).strict();
 
@@ -217,8 +220,9 @@ export class ProductsController {
         }));
         return;
       }
-      if (panel === 'customer-sales') {
-        const { page, pageSize, sort } = customerSalesQuerySchema.parse(request.query);
+      if (panel === 'customer-sales' || panel === 'sales-by-branch') {
+        const { page, pageSize, sort } = (panel === 'sales-by-branch'
+          ? branchSalesQuerySchema : customerSalesQuerySchema).parse(request.query);
         response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, { customerSalesSort: sort }));
         return;
       }

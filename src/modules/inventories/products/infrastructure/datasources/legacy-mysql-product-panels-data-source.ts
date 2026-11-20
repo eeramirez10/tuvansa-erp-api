@@ -59,6 +59,7 @@ const classifiedOrderSortFields = {
   date: 'orderedAt',
 } as const;
 const customerSalesSortFields = {
+  branch: 'branch',
   code: 'customerCode',
   name: 'customerName',
   quantity: 'quantity',
@@ -378,14 +379,16 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'sales-by-branch': {
     section: 'queries', button: 'Ventas por sucursal',
-    sql: `SELECT MIN(AISEQ) AS id, AISUCURSAL AS branch,
-      CLICOD AS customerCode, CLINOM AS customerName,
-      SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount
-      FROM faxinv LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ=? AND fcli.CLISEQ<>0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 GROUP BY AISUCURSAL, fcli.CLISEQ, CLICOD, CLINOM
-      ORDER BY AISUCURSAL, CLICOD`, parameterMode: 'id',
+    sql: `WITH branch_sales AS (
+        SELECT FAXINV.AISEQ AS id, AISUCURSAL AS branch,
+          CLICOD AS customerCode, CLINOM AS customerName,
+          SUM(AICANTF) OVER (PARTITION BY AISUCURSAL, CLICOD) AS quantity,
+          SUM(AICANTF * AIPRECIO) OVER (PARTITION BY AISUCURSAL, CLICOD) AS amount,
+          ROW_NUMBER() OVER (PARTITION BY AISUCURSAL, CLICOD ORDER BY FAXINV.AISEQ) AS rowNumber
+        ${customerMovementScope}
+      )
+      SELECT id, branch, customerCode, customerName, quantity, amount
+      FROM branch_sales WHERE rowNumber = 1`, parameterMode: 'id',
   },
   'annual-sales': {
     section: 'queries', button: 'Ventas anuales',
@@ -655,17 +658,19 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
     const documentType = panel === 'customer-orders' ? 1 : panel === 'customer-quotes' ? 4 : undefined;
     const fulfillmentFilter = documentType !== undefined && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
-    const salesOrder = customerSalesSortFields[criteria.customerSalesSort ?? 'code'];
+    const salesOrder = customerSalesSortFields[criteria.customerSalesSort ?? (panel === 'sales-by-branch' ? 'branch' : 'code')];
+    const salesTie = salesOrder === 'branch' ? 'customerCode, id' : 'id';
     const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ'
       : documentType !== undefined ? ' ORDER BY PEDESDE, FPLIN.PLSEQ'
-      : panel === 'customer-sales' ? ` ORDER BY ${salesOrder}, id` : '';
+      : panel === 'customer-sales' || panel === 'sales-by-branch' ? ` ORDER BY ${salesOrder}, ${salesTie}` : '';
     const openingStock = ledger?.warehouse === undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
     const customerOrdersTotals = documentType !== undefined
       ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
       : undefined;
-    const customerSalesTotals = panel === 'customer-sales' || panel === 'customer-sales-detail'
-      ? await this.getCustomerSalesTotals(product.id) : undefined;
+    const customerSalesTotals = panel === 'customer-sales' || panel === 'customer-sales-detail' || panel === 'sales-by-branch'
+      ? await this.getCustomerSalesTotals(product.id, panel === 'sales-by-branch' ? customerMovementScope : customerSalesScope)
+      : undefined;
     const params = panel === 'customer-orders-ct' || panel === 'customer-sales-ct'
       ? await this.getProductRootRange(product)
       : parametersFor(definition.parameterMode, product);

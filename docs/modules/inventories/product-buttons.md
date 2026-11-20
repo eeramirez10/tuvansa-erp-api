@@ -201,6 +201,12 @@ devuelve `priceUsd: null` si el tipo de cambio es nulo o cero. El total
 inferior suma `AICANTF` en toda la consulta.
 [SQL histórico](product-buttons-capture.md#L3517)
 
+**Ventas por sucursal** se abre desde `EINV#8/10`. `EINV#30/240`
+acumula por `AISUCURSAL` y `CLICOD`, usa todos los tipos de movimiento
+vigentes y ordena inicialmente por sucursal. El GET permite
+`sort=branch|code|name|quantity|amount` y devuelve los totales de toda
+la consulta. [SQL histórico](product-buttons-capture.md#L3555)
+
 ### Cambio de estado de Bloquear
 
 `PATCH /:productId/actions/block-status` recibe `{ "blocked": true }` o

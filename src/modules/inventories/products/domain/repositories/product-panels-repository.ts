@@ -24,7 +24,7 @@ export interface ProductPanelFilters {
 }
 
 export type ProductCustomerOrderSort = 'code' | 'name' | 'order' | 'date';
-export type ProductCustomerSalesSort = 'code' | 'name' | 'quantity' | 'amount';
+export type ProductCustomerSalesSort = 'branch' | 'code' | 'name' | 'quantity' | 'amount';
 
 export interface ProductPanelCriteria extends ProductPanelFilters {
   limit: number;

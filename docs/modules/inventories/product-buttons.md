@@ -78,8 +78,8 @@ origen, registros y paginacion.
 | Ventas por cliente `CT` | `/:productId/queries/customer-sales/ct` | Rango de `finv.ICOD` según `FCIA.CIARAIZ`, ventas agrupadas por cliente | `EINV#8/8` → `EINV#6AA` |
 | Ventas desglosadas | `/:productId/queries/customer-sales/detail` | `faxinv`, `fdoc`, `fcli` | `EINV#8/9` → `EINV#38` |
 | Ventas por sucursal | `/:productId/queries/sales/by-branch` | `faxinv.AISUCURSAL` | `EINV#8/10` → `EINV#30` |
-| Ventas anuales | `/:productId/queries/sales/annual` | `faxinv`, `fdoc`, `fcli` | `EINV#8/11` → `EINV2#2` |
-| Ventas anuales resumen | `/:productId/queries/sales/annual-summary` | `faxinv`, `fdoc` | `EINV#8/12` → `EINV2#20` |
+| Ventas anuales | `/:productId/queries/sales/annual` | `faxinv`, `fdoc`, `fcli`, o `fvanu2` según `fcia` | `EINV#8/11` → `EINV2#2` |
+| Ventas anuales resumen | `/:productId/queries/sales/annual-summary` | `faxinv`, `fdoc`, o `fvanu2` según `fcia` | `EINV#8/12` → `EINV2#20` |
 | Ordenado a proveedor | `/:productId/queries/supplier-orders` | `fplin`, `fpenc`, `fprv`; `PESPEDIDO IN (2,3)` | `EINV#8/13` → `EINV#12` |
 | Ordenado a proveedor `CT` | `/:productId/queries/supplier-orders/ct` | Rango de `finv.ICOD` | `EINV#8/14` → `EINV#12A` |
 | Cotizado a proveedores | `/:productId/queries/supplier-quotes` | `fplin`, `fpenc`, `fprv`; `PESPEDIDO=5` | `EINV#8/15` → `EINV#12B` |
@@ -206,6 +206,16 @@ acumula por `AISUCURSAL` y `CLICOD`, usa todos los tipos de movimiento
 vigentes y ordena inicialmente por sucursal. El GET permite
 `sort=branch|code|name|quantity|amount` y devuelve los totales de toda
 la consulta. [SQL histórico](product-buttons-capture.md#L3555)
+
+**Ventas anuales** y **Ventas anuales resumen** usan el procedimiento 121
+de `EINV2#2` y `EINV2#20`. Según la posición 30 de `FCIA.CIACOMPORTA`,
+el procedimiento 127 carga movimientos vigentes desde `CIAVANUALDEL`, o el
+124 carga las cantidades mensuales de `FVANU2`. Esta última calcula el año
+como `1900 + VAANO`. Ambos GET devuelven los totales mensuales y el total
+global en `annualSalesDetails`. La fecha de inicio se informa sólo en el
+modo de movimientos. La sesión capturada usó
+[movimientos en Ventas anuales](product-buttons-capture.md#L3593) y
+[movimientos en el resumen](product-buttons-capture.md#L3631).
 
 ### Cambio de estado de Bloquear
 

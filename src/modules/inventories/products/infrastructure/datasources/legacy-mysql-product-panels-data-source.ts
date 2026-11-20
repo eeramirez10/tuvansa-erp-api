@@ -70,6 +70,14 @@ const customerMovementScope = `FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.
   LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ
   WHERE finv.ISEQ = ? AND fcli.CLISEQ <> 0 AND DEST=0 AND DMULTICIA=1 AND AIMES=1`;
 const customerSalesScope = `${customerMovementScope} AND DESFACT=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0`;
+const annualMonths = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+] as const;
+const annualSalesTotals = [
+  ...annualMonths.map((month, index) => `COALESCE(SUM(IF(saleMonth = ${index + 1}, quantity, 0)), 0) AS ${month}`),
+  'COALESCE(SUM(quantity), 0) AS total',
+].join(', ');
 
 const definitions: Record<ProductPanelKey, PanelDefinition> = {
   warehouses: {
@@ -390,50 +398,8 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       SELECT id, branch, customerCode, customerName, quantity, amount
       FROM branch_sales WHERE rowNumber = 1`, parameterMode: 'id',
   },
-  'annual-sales': {
-    section: 'queries', button: 'Ventas anuales',
-    sql: `SELECT MIN(AISEQ) AS id, CLICOD AS customerCode,
-      CLINOM AS customerName, YEAR(DFECHA) AS year,
-      SUM(IF(MONTH(DFECHA)=1,AICANTF,0)) AS january,
-      SUM(IF(MONTH(DFECHA)=2,AICANTF,0)) AS february,
-      SUM(IF(MONTH(DFECHA)=3,AICANTF,0)) AS march,
-      SUM(IF(MONTH(DFECHA)=4,AICANTF,0)) AS april,
-      SUM(IF(MONTH(DFECHA)=5,AICANTF,0)) AS may,
-      SUM(IF(MONTH(DFECHA)=6,AICANTF,0)) AS june,
-      SUM(IF(MONTH(DFECHA)=7,AICANTF,0)) AS july,
-      SUM(IF(MONTH(DFECHA)=8,AICANTF,0)) AS august,
-      SUM(IF(MONTH(DFECHA)=9,AICANTF,0)) AS september,
-      SUM(IF(MONTH(DFECHA)=10,AICANTF,0)) AS october,
-      SUM(IF(MONTH(DFECHA)=11,AICANTF,0)) AS november,
-      SUM(IF(MONTH(DFECHA)=12,AICANTF,0)) AS december,
-      SUM(AICANTF) AS total FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      LEFT JOIN fcli ON faxinv.CLISEQ=fcli.CLISEQ
-      WHERE faxinv.ISEQ=? AND DESFACT=1 AND AIMES=1 AND DEST=0
-      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
-      GROUP BY fcli.CLISEQ, CLICOD, CLINOM, YEAR(DFECHA)
-      ORDER BY CLICOD, year`, parameterMode: 'id',
-  },
-  'annual-sales-summary': {
-    section: 'queries', button: 'Ventas anuales resumen',
-    sql: `SELECT MIN(AISEQ) AS id, YEAR(DFECHA) AS year,
-      SUM(IF(MONTH(DFECHA)=1,AICANTF,0)) AS january,
-      SUM(IF(MONTH(DFECHA)=2,AICANTF,0)) AS february,
-      SUM(IF(MONTH(DFECHA)=3,AICANTF,0)) AS march,
-      SUM(IF(MONTH(DFECHA)=4,AICANTF,0)) AS april,
-      SUM(IF(MONTH(DFECHA)=5,AICANTF,0)) AS may,
-      SUM(IF(MONTH(DFECHA)=6,AICANTF,0)) AS june,
-      SUM(IF(MONTH(DFECHA)=7,AICANTF,0)) AS july,
-      SUM(IF(MONTH(DFECHA)=8,AICANTF,0)) AS august,
-      SUM(IF(MONTH(DFECHA)=9,AICANTF,0)) AS september,
-      SUM(IF(MONTH(DFECHA)=10,AICANTF,0)) AS october,
-      SUM(IF(MONTH(DFECHA)=11,AICANTF,0)) AS november,
-      SUM(IF(MONTH(DFECHA)=12,AICANTF,0)) AS december,
-      SUM(AICANTF) AS total
-      FROM faxinv LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ=? AND DESFACT=1 AND AIMES=1 AND DEST=0
-      AND DOTROSTXT<>'POS' AND DCONTROLPOS=0
-      GROUP BY YEAR(DFECHA) ORDER BY year`, parameterMode: 'id',
-  },
+  'annual-sales': { section: 'queries', button: 'Ventas anuales' },
+  'annual-sales-summary': { section: 'queries', button: 'Ventas anuales resumen' },
   'supplier-orders': {
     section: 'queries', button: 'Ordenado a proveedor',
     sql: `SELECT PLSEQ AS id, PRVCOD AS supplierCode, PRVNOM AS supplierName,
@@ -639,6 +605,9 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
 
     if (panel === 'customer-orders-star') return this.getClassifiedCustomerOrders(product, criteria);
     if (panel === 'customer-sales-star') return this.getClassifiedCustomerSales(product, criteria);
+    if (panel === 'annual-sales' || panel === 'annual-sales-summary') {
+      return this.getAnnualSales(product, panel, criteria);
+    }
 
     const definition = definitions[panel];
     if (definition.sql === undefined) {
@@ -694,6 +663,69 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       ...(openingStock === undefined ? {} : { openingStock }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
       ...(customerSalesTotals === undefined ? {} : { customerSalesTotals }),
+    };
+  }
+
+  private async getAnnualSales(
+    product: ProductHeaderRow,
+    panel: 'annual-sales' | 'annual-sales-summary',
+    criteria: ProductPanelCriteria,
+  ): Promise<ProductPanelResult> {
+    const [companyRows] = await legacyMysqlPool.execute<Array<RowDataPacket & {
+      movements: string; fromDate: string; state: number;
+    }>>(
+      `SELECT SUBSTRING(CIACOMPORTA, 30, 1) AS movements, CIAVANUALDEL AS fromDate,
+        CIAKYT AS state FROM fcia WHERE CIASEQ = 1`,
+    );
+    const company = companyRows[0];
+    const useMovements = company === undefined || company.movements === '1';
+    const detailed = panel === 'annual-sales';
+    const groupCustomer = detailed || !useMovements;
+    const fromDate = useMovements ? (company?.fromDate ?? '1900-12-31') : null;
+    const state = company?.state ?? 0;
+    const salesRows = useMovements
+      ? `SELECT faxinv.AISEQ AS sequenceId, COALESCE(CLICOD, '') AS customerCode,
+          YEAR(DFECHA) AS saleYear, MONTH(DFECHA) AS saleMonth, AICANTF AS quantity
+         FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ
+         LEFT JOIN fdoc ON faxinv.DSEQ = fdoc.DSEQ
+         LEFT JOIN fcli ON faxinv.CLISEQ = fcli.CLISEQ
+         WHERE finv.ISEQ = ? AND DFECHA >= ? AND DEST = ?
+           AND DESFACT=1 AND AIMES=1 AND DOTROSTXT<>'POS' AND DCONTROLPOS=0`
+      : `SELECT fvanu2.VASEQ AS sequenceId, COALESCE(CLICOD, '') AS customerCode,
+          (1900 + VAANO) AS saleYear, VAMES AS saleMonth, VACANT AS quantity
+         FROM fvanu2 LEFT JOIN fcli ON fvanu2.CLISEQ = fcli.CLISEQ
+         WHERE fvanu2.ISEQ = ? AND VAKT = ?`;
+    const params = useMovements ? [product.id, fromDate, state] : [product.id, state];
+    const grouping = groupCustomer ? 'customerCode, saleYear' : 'saleYear';
+    const customer = detailed
+      ? `sales_summary.customerCode, COALESCE((SELECT CLINOM FROM fcli
+           WHERE fcli.CLICOD = sales_summary.customerCode ORDER BY CLISEQ LIMIT 1), '') AS customerName,`
+      : '';
+    const [totals] = await legacyMysqlPool.execute<Array<RowDataPacket & Record<string, number>>>(
+      `SELECT ${annualSalesTotals} FROM (${salesRows}) AS all_sales`,
+      params,
+    );
+    const [items] = await legacyMysqlPool.execute<PanelRow[]>(
+      `WITH sales_summary AS (
+         SELECT MIN(sequenceId) AS id, ${grouping}, ${annualSalesTotals}
+         FROM (${salesRows}) AS sales GROUP BY ${grouping}
+       )
+       SELECT ${customer} saleYear AS year, id, ${annualMonths.join(', ')}, total
+       FROM sales_summary ORDER BY ${grouping}, id LIMIT ? OFFSET ?`,
+      [...params, criteria.limit, criteria.offset],
+    );
+    return {
+      product,
+      key: panel,
+      section: 'queries',
+      button: definitions[panel].button,
+      available: true,
+      source: 'mysql',
+      items: items.map((row) => ({ ...row })),
+      annualSalesDetails: {
+        fromDate,
+        totals: Object.fromEntries([...annualMonths, 'total'].map((month) => [month, Number(totals[0]?.[month] ?? 0)])),
+      },
     };
   }
 

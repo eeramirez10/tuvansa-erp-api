@@ -262,6 +262,30 @@ describe('Inventarios PT - botones laterales', () => {
     });
   });
 
+  it.each([
+    { movements: '1', query: 'DFECHA >= ? AND DEST = ?', params: [47087, '2020-01-01', 0] },
+    { movements: '0', query: 'FROM fvanu2', params: [47087, 0] },
+  ])('selecciona el origen de ventas anuales según la compañía ($movements)', async ({ movements, query, params }) => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ movements, fromDate: '2020-01-01', state: 0 }], []])
+      .mockResolvedValueOnce([[{ january: 40, total: 50 }], []])
+      .mockResolvedValueOnce([[{ year: 2020, january: 10, total: 10 }], []]);
+
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'annual-sales-summary', { offset: 5, limit: 5 },
+    );
+
+    const [total, page] = execute.mock.calls.slice(2);
+    expect(total).toEqual([expect.stringContaining(query), params]);
+    expect(page).toEqual([expect.stringContaining(query), [...params, 5, 5]]);
+    expect(result).toMatchObject({
+      items: [{ year: 2020, total: 10 }],
+      annualSalesDetails: { fromDate: movements === '1' ? '2020-01-01' : null, totals: { january: 40, total: 50 } },
+    });
+  });
+
   it('devuelve el estado confirmado al bloquear', async () => {
     const repository: ProductPanelsRepository = {
       getPanel: async () => panel,

@@ -48,6 +48,7 @@ export interface ProductPanelResult {
   openingStock?: number;
   customerOrdersTotals?: { remaining: number; assigned: number };
   customerSalesTotals?: { quantity: number; amount: number };
+  annualSalesDetails?: { fromDate: string | null; totals: Record<string, number> };
   reason?: string;
 }
 

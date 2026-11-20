@@ -16,7 +16,7 @@ origen, registros y paginacion.
 | Descr. ext. | `/:productId/actions/extended-description` | `finv2` |
 | % Descuentos clis | `/:productId/actions/discounts/customers` | `fdesctos.DESKEY2` por prefijo de producto |
 | % Descuentos prv | `/:productId/actions/discounts/suppliers` | `fdesctos.DESKEY2` por prefijo de producto |
-| Otros | `/:productId/actions/other-data` | Campos adicionales de `finv` |
+| Otros | GET/PATCH `/:productId/actions/other-data` | `FINV`, `FALMCAT` y `FCIA` para lectura. PostgreSQL para los cambios del piloto. |
 | Especificaciones | `/:productId/actions/specifications` | `finv2` |
 | Foto | `/:productId/actions/photo` | No hubo consulta MySQL para el contenido |
 | Inv. CT | `/:productId/actions/ct-inventory` | `falm` |
@@ -45,7 +45,7 @@ origen, registros y paginacion.
 | Clasificar | Selección de parámetros con dos listas, filtro por familia anterior, transferencia y Guardar |
 | Descr. ext. | Cuatro bloques de descripción y botón Cambiar |
 | % Descuentos clis/prv | Filtros superiores, tabla de descuentos y scroll XY |
-| Otros | Formulario vertical por secciones de empaque, opciones, precios, importación y producción |
+| Otros | Cambio, OK y Cancelar con secciones de empaque, opciones, precios, importación, producción, compras y varios |
 | Especificaciones | Lista vertical de descripciones y botón Cambiar |
 | Foto | Visor con modos Normal, Boceto, Boceto 2, Color y Completo |
 | Inv. CT | Matriz por almacén y selector visual de Stock/Pedido/Disponible/etc. |
@@ -92,6 +92,47 @@ compuesta en el detalle del catálogo.
 
 ```powershell
 pnpm exec tsx scripts/migrate-postgres-inventory-classifications.ts
+```
+
+### Otros
+
+**Acciones → Otros** entra por `EINV#1/57` y abre `EINV2#1` en TUVANSA.
+La ventana muestra **Dimensiones y empaque**, **Opciones Varias**, **Precios**,
+**Datos de importación**, **Datos de producción**, **Información de compras**
+y **Varios**. El diseño identifica los campos editables, sus decimales y
+controles de sólo lectura. Los grupos de radio comparten un campo y guardan
+su posición desde cero. [Referencia de controles de Omnis](https://www.omnis.net/developers/resources/onlinedocs/Programming/11wincomps.html#radio-groups-and-buttons)
+
+**Cambio** entra por `EINV2#1/145`. `/240` carga los aranceles de `FALMCAT`
+con `CATTIPO='ARA'`. `/100` copia el código elegido al arancel y toma el
+porcentaje entre `*` y `%` en la descripción, cuando está presente. El
+catálogo de aranceles de TUVANSA consultado está vacío. El campo Arancel
+permite la captura manual.
+
+`EINV2#1/401` toma una copia de los campos editables con `MBASE/146`.
+**OK** obtiene los cambios con `MBASE/148` y actualiza `FINV` mediante
+`MBASE/69`. El procedimiento registra fecha y usuario. La API usa la
+fecha de la escritura en PostgreSQL y conserva el último usuario del
+origen mientras la sesión web carezca de un operador de Omnis asociado.
+La Lista 6 se deriva de precio de compra / factor si está activo el
+comportamiento 56 y el factor es distinto de cero. El comportamiento 56
+está apagado en el origen de TUVANSA revisado.
+
+**Cancelar** vuelve a cargar el producto y deja la ventana abierta en
+consulta. En la prueba con `004212899`, Omnis convirtió `prueba-otros` en
+`PRUEBA-OTROS` en Localización y restauró el valor original al cancelar.
+El marcador histórico [INV_ACTION_OTROS_RETRY](product-buttons-capture.md#inv_action_otros_retry)
+registra la apertura. El guardado en PostgreSQL se deriva del diseño y el
+código de los procedimientos.
+
+GET entrega `data.otherData` con los valores, los campos editables y la
+revisión. PATCH recibe `{ revision, changes }` y rechaza revisiones
+desactualizadas con `409`. El guardado se habilita por producto mediante
+`INVENTORY_OTHER_DATA_PILOT_PRODUCTS` después de aplicar la migración en
+la instancia de PostgreSQL de pruebas.
+
+```powershell
+pnpm exec tsx scripts/migrate-postgres-inventory-other-data.ts
 ```
 
 ### Presentación de las ventanas de Compras/Prod

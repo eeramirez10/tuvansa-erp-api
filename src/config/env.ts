@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+const productPilots = z.string().default('')
+  .transform((value) => value.trim() === '' ? [] : value.split(',').map((id) => id.trim()))
+  .pipe(z.array(z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.int().positive())));
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   HOST: z.string().min(1).default('0.0.0.0'),
@@ -25,9 +29,8 @@ const envSchema = z.object({
   // Optional: without Neon, the API stays available for legacy reads only.
   NEON_DATABASE_URL: z.string().trim().default(''),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
-  INVENTORY_CLASSIFICATION_PILOT_PRODUCTS: z.string().default('')
-    .transform((value) => value.trim() === '' ? [] : value.split(',').map((id) => id.trim()))
-    .pipe(z.array(z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.int().positive()))),
+  INVENTORY_CLASSIFICATION_PILOT_PRODUCTS: productPilots,
+  INVENTORY_OTHER_DATA_PILOT_PRODUCTS: productPilots,
   LEGACY_DB_HOST: z.string().min(1).optional(),
   LEGACY_DB_PORT: z.coerce.number().int().positive().default(3306),
   LEGACY_DB_USER: z.string().min(1).optional(),

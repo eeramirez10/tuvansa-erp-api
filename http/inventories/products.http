@@ -124,7 +124,17 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/discount
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/discounts/suppliers
 
 ### Acciones - Otros
+# @name productOtherData
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/other-data
+
+### Acciones - Otros - OK en un producto habilitado para el piloto PostgreSQL
+PATCH {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/other-data
+Content-Type: application/json
+
+{
+  "revision": {{productOtherData.response.body.$.data.otherData.revision}},
+  "changes": { "location": "A-01" }
+}
 
 ### Acciones - Especificaciones
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/specifications

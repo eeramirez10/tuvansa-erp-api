@@ -1,8 +1,13 @@
 import { Router } from 'express';
 import type { ProductsController } from './products-controller.js';
 import type { ProductClassificationsController } from './product-classifications-controller.js';
+import type { ProductOtherDataController } from './product-other-data-controller.js';
 
-export const createProductsRouter = (controller: ProductsController, classifications: ProductClassificationsController): Router => {
+export const createProductsRouter = (
+  controller: ProductsController,
+  classifications: ProductClassificationsController,
+  otherData: ProductOtherDataController,
+): Router => {
   const router = Router();
 
   router.get('/', controller.search);
@@ -19,7 +24,8 @@ export const createProductsRouter = (controller: ProductsController, classificat
   router.get('/:productId/actions/extended-description', controller.panel('extended-description'));
   router.get('/:productId/actions/discounts/customers', controller.panel('customer-discounts'));
   router.get('/:productId/actions/discounts/suppliers', controller.panel('supplier-discounts'));
-  router.get('/:productId/actions/other-data', controller.panel('other-data'));
+  router.get('/:productId/actions/other-data', otherData.get);
+  router.patch('/:productId/actions/other-data', otherData.save);
   router.get('/:productId/actions/specifications', controller.panel('specifications'));
   router.get('/:productId/actions/photo', controller.panel('photo'));
   router.get('/:productId/actions/ct-inventory', controller.panel('ct-inventory'));

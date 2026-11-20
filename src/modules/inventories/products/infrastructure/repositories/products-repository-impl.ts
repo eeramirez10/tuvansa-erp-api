@@ -1,6 +1,7 @@
 import { Product } from '../../domain/entities/product.js';
 import type { ProductsDataSource } from '../../domain/datasources/products-data-source.js';
 import type { ProductClassificationRepository } from '../../domain/repositories/product-classification-repository.js';
+import type { ProductOtherDataRepository } from '../../domain/repositories/product-other-data-repository.js';
 import type {
   DeleteProductResult,
   ProductCreateValues,
@@ -15,22 +16,40 @@ export class ProductsRepositoryImpl implements ProductsRepository {
   constructor(
     private readonly dataSource: ProductsDataSource,
     private readonly classification?: Pick<ProductClassificationRepository, 'get'>,
+    private readonly otherData?: Pick<ProductOtherDataRepository, 'get'>,
   ) {}
 
-  private async withClassification(product: Product | null): Promise<Product | null> {
-    if (!product || !this.classification) return product;
+  private async withPilotValues(product: Product | null): Promise<Product | null> {
+    if (!product) return null;
     const details = product.toPrimitives();
-    const saved = await this.classification.get(details.id);
-    if (saved?.familyCode == null) return product;
-    return Product.create({ ...details, classification: { ...details.classification, familyCode: saved.familyCode } });
+    const [classification, otherData] = await Promise.all([
+      this.classification?.get(details.id), this.otherData?.get(details.id),
+    ]);
+    const changes = otherData?.changes;
+    const familyCode = classification?.familyCode;
+    if (familyCode == null && !changes) return product;
+
+    const costs = details.prices.costs;
+    return Product.create({
+      ...details,
+      classification: { ...details.classification, familyCode: familyCode ?? details.classification.familyCode },
+      warehouse: { ...details.warehouse, location: typeof changes?.location === 'string' ? changes.location : details.warehouse.location },
+      prices: { ...details.prices, costs: {
+        ...costs,
+        average: typeof changes?.list4 === 'number' ? changes.list4 : costs.average,
+        last: typeof changes?.list5 === 'number' ? changes.list5 : costs.last,
+        previous: typeof changes?.list6 === 'number' ? changes.list6 : costs.previous,
+        currencyId: typeof changes?.baseCurrency === 'number' ? changes.baseCurrency : costs.currencyId,
+      } },
+    });
   }
 
   async findById(productId: number): Promise<Product | null> {
-    return this.withClassification(await this.dataSource.findById(productId));
+    return this.withPilotValues(await this.dataSource.findById(productId));
   }
 
   async findFirstActive(): Promise<Product | null> {
-    return this.withClassification(await this.dataSource.findFirstActive());
+    return this.withPilotValues(await this.dataSource.findFirstActive());
   }
 
   search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
@@ -41,7 +60,7 @@ export class ProductsRepositoryImpl implements ProductsRepository {
     productId: number,
     direction: ProductNavigationDirection,
   ): Promise<Product | null> {
-    return this.withClassification(await this.dataSource.findAdjacent(productId, direction));
+    return this.withPilotValues(await this.dataSource.findAdjacent(productId, direction));
   }
 
   codeExists(code: string, excludingProductId?: number): Promise<boolean> {

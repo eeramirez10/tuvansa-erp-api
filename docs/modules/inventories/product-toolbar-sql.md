@@ -93,8 +93,9 @@ WHERE ISEQ=63349;
 El papel con lápiz ejecuta `MCONTROL/7` → `MINV/26`. Omnis abre de nuevo
 `EINV#1` con el título **Cambio de producto** y habilita **OK** y **Cancelar**
 en la misma ficha. Las acciones laterales quedan ocultas durante la edición.
-En `Z26` se comprobó que **Vta 6s** y **Días Inv.** aceptan captura. Cancelar
-restauró ambos valores del registro.
+En `Z26` se comprobó que **Vta 6s** y **Días Inv.** aceptan captura. La
+prueba terminó con **Cancelar**. `MINV/26` sólo llama al guardado cuando
+la captura se confirma con **OK**.
 
 `MBASE/144` toma los valores iniciales de `FINV`. Después de **OK**,
 `MINV/26` guarda la unidad mediante el `UCOD` y su `USEQ`, prepara los

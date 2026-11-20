@@ -47,6 +47,7 @@ export interface ProductPanelResult {
   items: Array<Record<string, unknown>>;
   openingStock?: number;
   customerOrdersTotals?: { remaining: number; assigned: number };
+  supplierOrdersTotals?: { remaining: number };
   customerSalesTotals?: { quantity: number; amount: number };
   annualSalesDetails?: { fromDate: string | null; totals: Record<string, number> };
   reason?: string;

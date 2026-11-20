@@ -48,6 +48,11 @@ const customerOrdersScope = `FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
       LEFT JOIN fcli ON fplin.CLISEQ = fcli.CLISEQ
       LEFT JOIN fpenc ON fplin.PESEQ = fpenc.PESEQ
       WHERE finv.ISEQ = ? AND fcli.CLISEQ <> 0 AND fpenc.PEMULTICIA = 1`;
+const supplierOrderScope = `FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
+  LEFT JOIN fprv ON fplin.PRVSEQ = fprv.PRVSEQ
+  LEFT JOIN fpenc ON fplin.PESEQ = fpenc.PESEQ
+  WHERE finv.ISEQ = ? AND fprv.PRVSEQ <> 0 AND fpenc.PEMULTICIA = 1 AND PESPEDIDO IN (2,3)
+    AND (PESPEDIDO = 2 OR COALESCE((SELECT CIAOTROSDESC = 99 AND CIAKYT = 0 FROM fcia WHERE CIASEQ = 1), 0) = 0)`;
 const customerClassifierFields = [
   'fcli.CLIPAR1', 'fcli.CLIPAR2', 'fcli.CLIPAR3', 'fcli.CLIPAR4', 'fcli.CLIPAR5',
   'fcli.CLIPAR6', 'fcli.CLIPAR7', 'fcli.CLIPAR8', 'fcli.CLIPAR9',
@@ -407,11 +412,12 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       PEDESDE AS orderedAt, PEFECHA AS date, PEDATE2 AS secondDate,
       PLFACTOR AS factor, PLUNIDAD AS unit, PENUMELLOS AS externalNumber,
       PLASIGNADO AS assigned, PEALMACEN AS warehouse, PESPEDIDO AS orderType,
-      PLPRECI AS price, PLSUC AS branch, PEOBS AS observations FROM fplin
-      LEFT JOIN fprv ON fplin.PRVSEQ=fprv.PRVSEQ
-      LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
-      WHERE fplin.ISEQ=? AND fprv.PRVSEQ<>0 AND PESPEDIDO IN (2,3)
-      ORDER BY PLSEQ`, parameterMode: 'id',
+      PLPRECI AS price, PLSUC AS branch,
+      CASE WHEN PESPEDIDO = 2 THEN COALESCE((
+        SELECT COML4 FROM fcoment WHERE COMSEQFACT = 10000000 + fpenc.PESEQ ORDER BY COMSEQ LIMIT 1
+      ), '') ELSE PEOBS END AS observations
+      ${supplierOrderScope}`,
+    parameterMode: 'id',
   },
   'supplier-orders-ct': {
     section: 'queries', button: 'Ordenado a proveedor CT',
@@ -626,16 +632,21 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const ledger = panel === 'ledger' ? criteria.ledger : undefined;
     const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
     const documentType = panel === 'customer-orders' ? 1 : panel === 'customer-quotes' ? 4 : undefined;
-    const fulfillmentFilter = documentType !== undefined && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
+    const hasFulfillmentFilter = documentType !== undefined || panel === 'supplier-orders';
+    const fulfillmentFilter = hasFulfillmentFilter && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
     const salesOrder = customerSalesSortFields[criteria.customerSalesSort ?? (panel === 'sales-by-branch' ? 'branch' : 'code')];
     const salesTie = salesOrder === 'branch' ? 'customerCode, id' : 'id';
     const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ'
       : documentType !== undefined ? ' ORDER BY PEDESDE, FPLIN.PLSEQ'
+      : panel === 'supplier-orders' ? ' ORDER BY finv.ISEQ, FPLIN.PLSEQ'
       : panel === 'customer-sales' || panel === 'sales-by-branch' ? ` ORDER BY ${salesOrder}, ${salesTie}` : '';
     const openingStock = ledger?.warehouse === undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
     const customerOrdersTotals = documentType !== undefined
-      ? await this.getCustomerOrdersTotals(product.id, ` AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
+      ? await this.getOrderTotals(product.id, `${customerOrdersScope} AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
+      : undefined;
+    const supplierOrdersTotals = panel === 'supplier-orders'
+      ? await this.getOrderTotals(product.id, `${supplierOrderScope}${fulfillmentFilter}`)
       : undefined;
     const customerSalesTotals = panel === 'customer-sales' || panel === 'customer-sales-detail' || panel === 'sales-by-branch'
       ? await this.getCustomerSalesTotals(product.id, panel === 'sales-by-branch' ? customerMovementScope : customerSalesScope)
@@ -662,6 +673,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       items: rows.map((row) => ({ ...row })),
       ...(openingStock === undefined ? {} : { openingStock }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
+      ...(supplierOrdersTotals === undefined ? {} : { supplierOrdersTotals: { remaining: supplierOrdersTotals.remaining } }),
       ...(customerSalesTotals === undefined ? {} : { customerSalesTotals }),
     };
   }
@@ -804,20 +816,20 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     return {
       ...base,
       items: items.map((row) => ({ ...row })),
-      customerOrdersTotals: await this.getCustomerOrdersTotals(product.id, ''),
+      customerOrdersTotals: await this.getOrderTotals(product.id, customerOrdersScope),
     };
   }
 
-  private async getCustomerOrdersTotals(
+  private async getOrderTotals(
     productId: number,
-    filters: string,
+    scope: string,
   ): Promise<NonNullable<ProductPanelResult['customerOrdersTotals']>> {
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & {
       remaining: number | string; assigned: number | string;
     }>>(
       `SELECT COALESCE(SUM(PLCANT), 0) - COALESCE(SUM(PLSURT), 0) AS remaining,
         COALESCE(SUM(PLASIGNADO), 0) AS assigned
-       ${customerOrdersScope}${filters}`,
+       ${scope}`,
       [productId],
     );
     return {

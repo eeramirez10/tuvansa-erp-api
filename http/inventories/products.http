@@ -212,6 +212,9 @@ GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/sales/an
 ### Consultas - Ordenado a proveedor
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders?page=1&pageSize={{panelPageSize}}
 
+### Ordenado a proveedor - Filtrar pedidos surtidos
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders?excludeFulfilled=true&page=1&pageSize={{panelPageSize}}
+
 ### Consultas - Ordenado a proveedor CT
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/queries/supplier-orders/ct?page=1&pageSize={{panelPageSize}}
 

@@ -38,7 +38,7 @@ const ledgerQuerySchema = panelQuerySchema.extend({
   { message: 'El tipo para el saldo inicial requiere filtrar por almacén y por tipo.' },
 );
 
-const customerOrdersQuerySchema = panelQuerySchema.extend({
+const fulfillmentQuerySchema = panelQuerySchema.extend({
   excludeFulfilled: z.enum(['true', 'false']).optional(),
 });
 const classifiedOrdersQuerySchema = panelQuerySchema.extend({
@@ -205,8 +205,8 @@ export class ProductsController {
         response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, { ledger }));
         return;
       }
-      if (panel === 'customer-orders' || panel === 'customer-quotes') {
-        const { page, pageSize, excludeFulfilled } = customerOrdersQuerySchema.parse(request.query);
+      if (panel === 'customer-orders' || panel === 'customer-quotes' || panel === 'supplier-orders') {
+        const { page, pageSize, excludeFulfilled } = fulfillmentQuerySchema.parse(request.query);
         response.json(await this.getProductPanel.execute(productId, panel, page, pageSize, {
           excludeFulfilled: excludeFulfilled === 'true',
         }));

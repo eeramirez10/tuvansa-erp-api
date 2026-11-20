@@ -217,6 +217,17 @@ modo de movimientos. La sesión capturada usó
 [movimientos en Ventas anuales](product-buttons-capture.md#L3593) y
 [movimientos en el resumen](product-buttons-capture.md#L3631).
 
+**Ordenado a proveedor** usa `EINV#12/240`; la sesión capturada limita a la
+compañía 1 y permite `PESPEDIDO=2` y `3`. El código conserva sólo tipo 2
+si `CIAOTROSDESC=99` y `CIAKYT=0`. Para tipo 2, Observaciones lee
+`FCOMENT.COML4` mediante `10000000 + PESEQ`. El tipo 3 tiene una referencia
+separada, `LVCOMPENC + PESEQ`, pendiente de contrastar. El GET acepta
+`excludeFulfilled=true`, que conserva `PLSURT < PLCANT` conforme a
+`EINV#12/4`. Pedido, Surtido y Resta de cada fila se presentan divididos
+entre `PLFACTOR`. Por llegar usa la suma sin convertir de toda la consulta
+(`supplierOrdersTotals.remaining`) y Total la agrega al stock.
+[SQL histórico](product-buttons-capture.md#L3669)
+
 ### Cambio de estado de Bloquear
 
 `PATCH /:productId/actions/block-status` recibe `{ "blocked": true }` o

@@ -286,6 +286,30 @@ describe('Inventarios PT - botones laterales', () => {
     });
   });
 
+  it('limita los pedidos a proveedor a la compañía y calcula Por llegar con cantidades sin convertir', async () => {
+    const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    execute
+      .mockResolvedValueOnce([[panel.product], []])
+      .mockResolvedValueOnce([[{ remaining: 40, assigned: 10 }], []])
+      .mockResolvedValueOnce([[{ id: 33, quantity: 20, fulfilled: 0, factor: 10 }], []]);
+    const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
+      panel.product.id, 'supplier-orders', { limit: 10, offset: 20, excludeFulfilled: true },
+    );
+
+    const [total, page] = execute.mock.calls.slice(1);
+    for (const query of [total?.[0], page?.[0]]) {
+      expect(query).toEqual(expect.stringContaining('fpenc.PEMULTICIA = 1'));
+      expect(query).toEqual(expect.stringContaining('AND PLSURT < PLCANT'));
+    }
+    expect(total?.[0]).toEqual(expect.stringContaining('SUM(PLCANT), 0) - COALESCE(SUM(PLSURT)'));
+    expect(page?.[0]).toEqual(expect.stringContaining('SELECT COML4 FROM fcoment'));
+    expect(page?.[1]).toEqual([panel.product.id, 10, 20]);
+    expect(result).toMatchObject({
+      supplierOrdersTotals: { remaining: 40 },
+      items: [{ quantity: 20, factor: 10 }],
+    });
+  });
+
   it('devuelve el estado confirmado al bloquear', async () => {
     const repository: ProductPanelsRepository = {
       getPanel: async () => panel,

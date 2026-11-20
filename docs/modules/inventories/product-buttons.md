@@ -94,7 +94,7 @@ origen, registros y paginacion.
 | W.I.P. `CT` | `/:productId/queries/work-in-progress/ct` | `ftikets` por rango de producto | `EINV#8/23` → `EINV#42A` |
 | E.D.I. | `/:productId/queries/edi` | `fvsucursal`, `fedi`, `fcli` | `EINV#8/24` → `EINV#44` |
 | Habilitaciones pendientes | `/:productId/queries/pending-enablements` | `faxinv`, `fdoc`; `DPAR9 IN ('9NVO','9HAB')` | `EINV#8/25` → `EINV#51` |
-| Documentos | `/:productId/queries/documents` | No disponible: reutilizo el ultimo documento sin filtro de producto | `EINV#8/26` → `EINV#24` |
+| Documentos | [`/api/inventories/movements`](movement-documents.md) | Búsqueda y detalle de movimientos independientes del producto | `EINV#8/26` → `EINV#24` |
 
 ## Evidencia y adaptacion
 

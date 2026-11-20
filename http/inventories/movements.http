@@ -1,0 +1,11 @@
+@baseUrl = http://localhost:3000/api
+@document = EI1000
+
+### Consultas → Documentos → Búsqueda (independiente del producto)
+# @name movementSearch
+GET {{baseUrl}}/inventories/movements?document={{document}}&page=1&pageSize=25
+Accept: application/json
+
+### Consultas → Documentos → Abrir resultado por el identificador de Búsqueda
+GET {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}
+Accept: application/json

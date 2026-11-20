@@ -7,6 +7,7 @@ import { env } from './config/env.js';
 import { createClientsModule } from './modules/accounts-receivable/clients/clients-module.js';
 import { createSuppliersModule } from './modules/accounts-payable/suppliers/suppliers-module.js';
 import { createAccountingPoliciesModule } from './modules/accounting/policies/accounting-policies-module.js';
+import { createMovementsModule } from './modules/inventories/movements/movements-module.js';
 import { createProductsModule } from './modules/inventories/products/products-module.js';
 import { createInventoryReportsModule } from './modules/inventories/reports/inventory-reports-module.js';
 import { createPurchaseOrdersModule } from './modules/purchasing/purchase-orders/purchase-orders-module.js';
@@ -39,6 +40,7 @@ export const createApp = (): Express => {
   app.use(`${env.API_PREFIX}/accounting/policies`, createAccountingPoliciesModule());
   app.use(`${env.API_PREFIX}/accounting/reports`, createAccountingReportsModule());
   app.use(`${env.API_PREFIX}/inventories/products`, createProductsModule());
+  app.use(`${env.API_PREFIX}/inventories/movements`, createMovementsModule());
   app.use(`${env.API_PREFIX}/inventories/reports`, createInventoryReportsModule());
   app.use(`${env.API_PREFIX}/purchasing/purchase-orders`, createPurchaseOrdersModule());
   app.use(`${env.API_PREFIX}/purchasing/purchase-receptions`, createPurchaseReceptionsModule());

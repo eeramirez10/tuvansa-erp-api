@@ -5,11 +5,16 @@ import type { GetPurchaseOrderPanel } from '../../application/use-cases/get-purc
 import type { GetPurchaseOrder } from '../../application/use-cases/get-purchase-order.js';
 import type { NavigatePurchaseOrder } from '../../application/use-cases/navigate-purchase-order.js';
 import type { SearchPurchaseOrders } from '../../application/use-cases/search-purchase-orders.js';
+import type { UpdatePurchaseOrderClassifications } from '../../application/use-cases/update-purchase-order-classifications.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
 const idParamsSchema = z.object({ purchaseOrderId: z.coerce.number().int().positive() });
 const numberParamsSchema = z.object({ purchaseOrderNumber: z.string().trim().min(1).max(15) });
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const classificationSchema = z.object({
+  current: z.array(z.string().max(16)).length(9),
+  revision: z.number().int().min(0).max(2147483647),
+}).strict();
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   orderNumber: z.string().trim().min(1).max(15).optional(),
@@ -30,6 +35,7 @@ export class PurchaseOrdersController {
     private readonly searchPurchaseOrders: SearchPurchaseOrders,
     private readonly navigatePurchaseOrder: NavigatePurchaseOrder,
     private readonly getPanel: GetPurchaseOrderPanel,
+    private readonly updateClassifications: UpdatePurchaseOrderClassifications,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -82,6 +88,13 @@ export class PurchaseOrdersController {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json(await this.getPanel.execute(purchaseOrderId, key));
+    } catch (error) { next(error); }
+  };
+
+  classify: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json(await this.updateClassifications.execute(purchaseOrderId, classificationSchema.parse(request.body)));
     } catch (error) { next(error); }
   };
 }

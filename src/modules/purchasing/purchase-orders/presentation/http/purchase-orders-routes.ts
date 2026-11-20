@@ -9,7 +9,10 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.get('/:purchaseOrderId/next', controller.next);
   router.get('/:purchaseOrderId/actions/auxiliar', controller.panel('receipts'));
   router.get('/:purchaseOrderId/actions/classifications', controller.panel('classifications'));
+  router.patch('/:purchaseOrderId/actions/classifications', controller.classify);
   router.get('/:purchaseOrderId/actions/comments', controller.panel('comments'));
+  router.get('/:purchaseOrderId/actions/ct', controller.panel('ct'));
+  router.get('/:purchaseOrderId/actions/pieces', controller.panel('pieces'));
   router.get('/:purchaseOrderId', controller.getById);
   return router;
 };

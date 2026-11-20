@@ -1,6 +1,6 @@
 # Órdenes de compra
 
-Módulo de sólo lectura capturado desde la ventana **Órdenes de compra** de OMNIS. La ruta base es:
+Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 
 `/api/purchasing/purchase-orders`
 
@@ -21,20 +21,26 @@ El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor
 | Botón OMNIS | Endpoint | SQL capturado/adaptado |
 |---|---|---|
 | Auxiliar | `GET /:id/actions/auxiliar` | `FDOC`, `DREFER=PENUM`, `DEST=0`, `DMULTICIA=1` |
-| Clasificar | `GET /:id/actions/classifications` | Valores `PEPAR1..PEPAR9`; opciones `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)` |
-| Comentarios | `GET /:id/actions/comments` | `FCOMENT`, `COMSEQFACT=10000000+PESEQ` |
+| Clasificar | `GET /:id/actions/classifications` | Valores de `PEPAR1..PEPAR9` y PostgreSQL cuando existe una revisión local. Opciones `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)`, orden `AGNUM`. `MBASE/91` lee los rótulos de `FYG.YGKEY='ABITITPAR2'`, con respaldo de `FCIA.CIAPAR1..9` si falta esa entrada. |
+| Comentarios | `GET /:id/actions/comments` | `FCOMENT`, `COMSEQFACT=10000000+PESEQ`. Lectura adaptada según `EOC#6` para el encabezado y `FTIPMV.TICOML1..5` para los rótulos. |
+| CT | `GET /:id/actions/ct` | Consulta derivada de `EOC#6AA/240–241`. `FPLIN` por `PESEQ`, raíz y color según `FCIA`, tallas de producto raíz en `FUNIDAD`. Devuelve Pedido, Surtido y Resta por raíz y por celda. |
+| Piezas | `GET /:id/actions/pieces` | Consulta derivada de `EOC#18/240`. `FCAJAS.CAJFACTURA=PENUM`, producto de `FINV` y suma de `CAJCANT`. |
 
-## Acciones deliberadamente sin escritura
+## Escritura de Clasificar en PostgreSQL
 
-La interfaz conserva: Alta Piezas, Autorizar, Cambia Prv, Confirmar todo, Cotiz, CT, Div. Sucursal, Duplicar, Etiquetas, Gen %, Imprimir, Imprimir Conf., Piezas, Sucursal y Split.
+`PATCH /:id/actions/classifications` recibe `{ current: string[], revision: number }`. La lista contiene los nueve valores en orden. Los cambios deben ser un `AGTNUM` del clasificador correspondiente o vacío. Un valor histórico ausente del catálogo se puede conservar sin cambiarlo. Una revisión desactualizada devuelve `409`.
 
-No se publican endpoints de mutación en esta etapa. Durante la captura se comprobó que **Comentarios** y **Cotiz** pueden ejecutar `UPDATE`/`INSERT` automáticos aun al parecer ventanas de consulta. La API evita ese comportamiento y sólo ejecuta `SELECT`.
+La persistencia derivada usa `tuvansa.purchase_order_classifications` en el PostgreSQL configurado por `NEON_DATABASE_URL`. La tabla se crea mediante migración al guardar por primera vez. Los GET conservan MySQL como fuente de catálogo y partidas y aplican los nueve valores locales donde hay una revisión guardada, incluida la búsqueda por Agente. MySQL permanece en lectura.
+
+**Comentarios** es de consulta. Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas se conservan deshabilitados. Los demás botones de Acciones conservan el marcador de esta etapa, incluido **Cotiz**, cuyo procedimiento nativo cambia el estado.
+
+La verificación web cubrió acceso directo, menú, buscador, flechas y apertura de los cinco paneles. En Neon de pruebas se guardaron dos revisiones desde el flujo de Clasificar y se comprobó la consulta posterior, la búsqueda por agente y el rechazo de una revisión obsoleta. Se retiró el registro de prueba de PostgreSQL y se verificó el valor original en MySQL. La lectura de Piezas con filas y la cuadrícula de CT con tallas configuradas también se verifican con pruebas de datos simulados.
 
 ## Diferencia conocida del legado
 
 La biblioteca OMNIS intenta consultar `FPLIN.PLUMXXXX`, columna que no existe en la base actual, y produce un error ODBC. La API usa `PLUNIDAD`/`FINV.IUM`, que sí existen, por lo que no replica ese defecto.
 
-## Validación con Omnis 7 del 20 de noviembre de 2026
+## Auditoría previa a la implementación del 20 de noviembre de 2026
 
 Biblioteca `PROSCAI_GERMAN - PRUEBAS`, compañía TUVANSA, ventana `EOC#2`. Referencias web revisadas: API `8d7bf96` y frontend `ce81c29`. Las referencias `formato/procedimiento` y las fórmulas provienen del editor de Omnis. Se contrastaron la pantalla nativa, la aplicación web y muestras de MySQL de sólo lectura. La sección anterior conserva las referencias a las capturas históricas de SQL. Esta revisión no generó una nueva captura literal, no ejecutó mutaciones y verificó `general_log=OFF`.
 

@@ -14,6 +14,7 @@ export interface PurchaseOrderLine {
   price: number;
   discount: number;
   currencyId: number;
+  currencyName: string;
   confirmed: boolean;
   observations: string;
   assigned: number;
@@ -29,12 +30,15 @@ export interface PurchaseOrderProps {
   supplier: { id: number; code: string; name: string };
   documentKind: PurchaseOrderDocumentKind;
   status: string;
+  received: { quantity: number; pieces: number };
   branch: number;
   department: string;
   dates: { orderedAt: string | null; from: string | null; dueAt: string | null };
   warehouse: string;
   initial: boolean;
   taxPercentage: number;
+  discountPercentages: [number, number, number];
+  otherLabel: string;
   classifications: string[];
   totals: {
     assigned: number;
@@ -60,7 +64,15 @@ export class PurchaseOrder {
     return new PurchaseOrder(props);
   }
 
+  get identity(): { id: number; number: string } {
+    return { id: this.props.id, number: this.props.number };
+  }
+
   toPrimitives(): PurchaseOrderProps {
     return structuredClone(this.props);
+  }
+
+  withClassifications(classifications: string[]): PurchaseOrder {
+    return PurchaseOrder.create({ ...this.props, classifications });
   }
 }

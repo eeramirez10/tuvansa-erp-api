@@ -1,30 +1,40 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
-import type { PurchaseOrdersDataSource } from '../../domain/datasources/purchase-orders-data-source.js';
+import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride } from '../../domain/datasources/purchase-orders-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type {
   PurchaseOrderNavigationDirection,
+  PurchaseOrderClassificationPanel,
+  PurchaseOrderClassifier,
   PurchaseOrderPanelKey,
   PurchaseOrderPanelResult,
   PurchaseOrderSearchCriteria,
   PurchaseOrderSearchResult,
 } from '../../domain/repositories/purchase-orders-repository.js';
 
-interface HeaderRow extends RowDataPacket {
-  id: number; number: string; supplierOrderNumber: string; supplierId: number;
+interface IdentityRow extends RowDataPacket {
+  id: number;
+  number: string;
+}
+
+interface HeaderRow extends IdentityRow {
+  supplierOrderNumber: string; supplierId: number;
   supplierCode: string | null; supplierName: string | null; documentType: number;
   status: string; branch: number; department: string; orderedAt: string;
   fromDate: string; dueAt: string; warehouse: string; initial: number;
+  received: number; receivedPieces: number;
   taxPercentage: number; subtotal: number; discount: number; exciseTax: number;
   freight: number; insurance: number; other: number; tax: number; total: number;
-  classification1: string; classification2: string; classification3: string;
-  classification4: string; classification5: string; classification6: string;
-  classification7: string; classification8: string; classification9: string;
+  discount1: number; discount2: number; discount3: number; otherLabel: string;
 }
 
 interface LineRow extends RowDataPacket, PurchaseOrderLine {}
 interface CountRow extends RowDataPacket { total: number }
-interface IdentityRow extends RowDataPacket { id: number; number: string; supplierId: number }
+
+const positions = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const currencyNames = Array.from({ length: 10 }, (_, index) => `FCIA.CIAPDD${index}`).join(', ');
+const currencyName = (id: string) => `COALESCE(ELT((${id}) + 1, ${currencyNames}), '')`;
+const classificationsFrom = (row: RowDataPacket) => positions.map((index) => String(row[`classification${index}`] ?? ''));
 
 const selectHeader = `
   FPENC.PESEQ AS id,
@@ -42,6 +52,8 @@ const selectHeader = `
   PEVENCE AS dueAt,
   PEALMACEN AS warehouse,
   PEINICIAL AS initial,
+  PESURT AS received,
+  PEPZASSURT AS receivedPieces,
   PEPORCIVA AS taxPercentage,
   PEBRUTO AS subtotal,
   PEDESC AS discount,
@@ -49,17 +61,13 @@ const selectHeader = `
   PEFLETE AS freight,
   PESEGURO AS insurance,
   PEOTRO AS other,
+  PEOTROTXT AS otherLabel,
   PEIVA AS tax,
   PECANT AS total,
-  PEPAR1 AS classification1,
-  PEPAR2 AS classification2,
-  PEPAR3 AS classification3,
-  PEPAR4 AS classification4,
-  PEPAR5 AS classification5,
-  PEPAR6 AS classification6,
-  PEPAR7 AS classification7,
-  PEPAR8 AS classification8,
-  PEPAR9 AS classification9
+  PDESC1 AS discount1,
+  PDESC2 AS discount2,
+  PDESC3 AS discount3,
+  ${positions.map((index) => `PEPAR${index} AS classification${index}`).join(', ')}
 `;
 
 const selectLines = `
@@ -75,18 +83,20 @@ const selectLines = `
   PLSUC AS branch,
   PLPRECI AS price,
   PLDESC AS discount,
-  PLMONEDA AS currencyId,
-  (COALESCE(FINV.ICONFIRMADO, 0) <> 0) AS confirmed,
-  COALESCE(FINV.ICODPRV, '') AS observations,
+  COALESCE(NULLIF(FPENC.PEMONEDA, 0), FINV.IMONEDA, 0) AS currencyId,
+  ${currencyName('COALESCE(NULLIF(FPENC.PEMONEDA, 0), FINV.IMONEDA, 0)')} AS currencyName,
+  (PLASIGNADO <> 0) AS confirmed,
+  COALESCE(PLASIGNPZAS, '') AS observations,
   PLASIGNADO AS assigned,
   PLASIGNPZAS AS piecesAssignment,
   PLFACTOR AS factor,
   COALESCE(FINV.ICODPRV, '') AS supplierProductCode
 `;
 
-const nullableDate = (value: string): string | null => value === '1900-12-31' ? null : value;
+const nullableDate = (value: string | null): string | null =>
+  !value || /^(1900-12-31|0000-00-00)/.test(value) ? null : value;
 const documentKind = (value: number): PurchaseOrderProps['documentKind'] =>
-  value === 5 ? 'order' : value === 2 ? 'quote' : 'unknown';
+  value === 2 ? 'order' : value === 5 ? 'quote' : 'unknown';
 
 const toPurchaseOrder = (row: HeaderRow, lines: PurchaseOrderLine[]): PurchaseOrder => PurchaseOrder.create({
   id: row.id,
@@ -95,6 +105,7 @@ const toPurchaseOrder = (row: HeaderRow, lines: PurchaseOrderLine[]): PurchaseOr
   supplier: { id: row.supplierId, code: row.supplierCode ?? '', name: row.supplierName ?? '' },
   documentKind: documentKind(row.documentType),
   status: row.status,
+  received: { quantity: Number(row.received), pieces: Number(row.receivedPieces) },
   branch: Number(row.branch),
   department: row.department,
   dates: {
@@ -105,11 +116,9 @@ const toPurchaseOrder = (row: HeaderRow, lines: PurchaseOrderLine[]): PurchaseOr
   warehouse: row.warehouse,
   initial: row.initial === 1,
   taxPercentage: Number(row.taxPercentage),
-  classifications: [
-    row.classification1, row.classification2, row.classification3,
-    row.classification4, row.classification5, row.classification6,
-    row.classification7, row.classification8, row.classification9,
-  ],
+  discountPercentages: [Number(row.discount1), Number(row.discount2), Number(row.discount3)],
+  otherLabel: row.otherLabel ?? '',
+  classifications: classificationsFrom(row),
   totals: {
     assigned: lines.reduce((total, line) => total + Number(line.assigned), 0),
     ordered: lines.reduce((total, line) => total + Number(line.ordered), 0),
@@ -126,18 +135,98 @@ const toPurchaseOrder = (row: HeaderRow, lines: PurchaseOrderLine[]): PurchaseOr
 const rowsToItems = (rows: RowDataPacket[]): Array<Record<string, unknown>> =>
   rows.map((row) => ({ ...row }));
 
+interface ColorSizeRow extends RowDataPacket {
+  root: string;
+  description: string;
+  color: string;
+  size: string;
+  ordered: number;
+  fulfilled: number;
+}
+
+const sizes = Array.from({ length: 16 }, (_, index) => 11 + index);
+
+// Adaptación de EOC#6AA/240–241. La matriz sólo incluye las tallas configuradas.
+async function readColorSize(id: number) {
+  const [lines] = await legacyMysqlPool.execute<ColorSizeRow[]>(
+    `SELECT COALESCE(LEFT(FINV.ICOD, FCIA.CIARAIZ), '') AS root,
+      COALESCE(FINV.IDESCR, '') AS description,
+      COALESCE(SUBSTRING(FINV.ICOD, FCIA.CIARAIZ + 1, FCIA.CIATALLA), '') AS color,
+      COALESCE(SUBSTRING(FINV.ICOD, FCIA.CIARAIZ + FCIA.CIATALLA + 1), '') AS size,
+      PLCANT AS ordered, PLSURT AS fulfilled
+     FROM FPLIN LEFT JOIN FINV ON FINV.ISEQ = FPLIN.ISEQ
+     LEFT JOIN FCIA ON FCIA.CIASEQ = 1
+     WHERE FPLIN.PESEQ = ? ORDER BY FINV.ICOD, FPLIN.PLSEQ`,
+    [id],
+  );
+  const groups = new Map<string, {
+    root: string; description: string; ordered: number; fulfilled: number; remaining: number;
+    sizes: string[];
+    colors: Array<{ color: string; ordered: number[]; fulfilled: number[]; remaining: number[] }>;
+  }>();
+  if (lines.length === 0) return { items: [], summary: { totals: { ordered: 0, fulfilled: 0, remaining: 0 } } };
+
+  const roots = [...new Set(lines.map((line) => line.root))];
+  const [configured] = await legacyMysqlPool.execute<RowDataPacket[]>(
+    `SELECT FINV.ICOD AS root, ${sizes.map((number) => `FUNIDAD.UTALLA${number}`).join(', ')}
+     FROM FINV LEFT JOIN FUNIDAD ON FUNIDAD.USEQ = FINV.USEQ
+     WHERE FINV.ICOD IN (${roots.map(() => '?').join(', ')}) ORDER BY FINV.ISEQ`,
+    roots,
+  );
+  const sizesByRoot = new Map<string, string[]>();
+  for (const row of configured) {
+    if (!sizesByRoot.has(row.root)) {
+      sizesByRoot.set(row.root, sizes.map((number) => String(row[`UTALLA${number}`] ?? '').trim()).filter(Boolean));
+    }
+  }
+  const totals = { ordered: 0, fulfilled: 0, remaining: 0 };
+  for (const line of lines) {
+    let group = groups.get(line.root);
+    if (!group) {
+      group = {
+        root: line.root, description: line.description,
+        ordered: 0, fulfilled: 0, remaining: 0, sizes: sizesByRoot.get(line.root) ?? [], colors: [],
+      };
+      groups.set(line.root, group);
+    }
+    const remaining = line.ordered - line.fulfilled;
+    group.ordered += line.ordered;
+    group.fulfilled += line.fulfilled;
+    group.remaining += remaining;
+    totals.ordered += line.ordered;
+    totals.fulfilled += line.fulfilled;
+    totals.remaining += remaining;
+
+    const sizeIndex = group.sizes.indexOf(line.size);
+    if (sizeIndex === -1) continue;
+    let color = group.colors.find((entry) => entry.color === line.color);
+    if (!color) {
+      color = { color: line.color, ordered: group.sizes.map(() => 0), fulfilled: group.sizes.map(() => 0), remaining: group.sizes.map(() => 0) };
+      group.colors.push(color);
+    }
+    color.ordered[sizeIndex] = (color.ordered[sizeIndex] ?? 0) + line.ordered;
+    color.fulfilled[sizeIndex] = (color.fulfilled[sizeIndex] ?? 0) + line.fulfilled;
+    color.remaining[sizeIndex] = (color.remaining[sizeIndex] ?? 0) + remaining;
+  }
+  return { items: [...groups.values()], summary: { totals } };
+}
+
 const panelMetadata: Record<PurchaseOrderPanelKey, { button: string }> = {
   receipts: { button: 'Auxiliar' },
   classifications: { button: 'Clasificar' },
   comments: { button: 'Comentarios' },
+  ct: { button: 'CT' },
+  pieces: { button: 'Piezas' },
 };
 
-export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSource {
+export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrdersDataSource {
   private async lines(id: number): Promise<PurchaseOrderLine[]> {
     const [rows] = await legacyMysqlPool.execute<LineRow[]>(
       `SELECT ${selectLines}
        FROM FPLIN
+       JOIN FPENC ON FPLIN.PESEQ = FPENC.PESEQ
        LEFT JOIN FINV ON FPLIN.ISEQ = FINV.ISEQ
+       LEFT JOIN FCIA ON FCIA.CIASEQ = 1
        WHERE FPLIN.PESEQ = ?
        ORDER BY FPLIN.PLSEQ`,
       [id],
@@ -166,7 +255,7 @@ export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSo
     return this.header('FPENC.PENUM = ?', [number]);
   }
 
-  async search(criteria: PurchaseOrderSearchCriteria): Promise<PurchaseOrderSearchResult> {
+  async search(criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = []): Promise<PurchaseOrderSearchResult> {
     const conditions = ['PESPEDIDO IN (2, 5)'];
     const parameters: Array<string | number> = [];
     if (criteria.query !== undefined) {
@@ -178,7 +267,18 @@ export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSo
     if (criteria.supplierCode !== undefined) { conditions.push('PRVCOD LIKE ?'); parameters.push(`${criteria.supplierCode}%`); }
     if (criteria.orderedAt !== undefined) { conditions.push('PEFECHA = ?'); parameters.push(criteria.orderedAt); }
     if (criteria.dueAt !== undefined) { conditions.push('PEVENCE = ?'); parameters.push(criteria.dueAt); }
-    if (criteria.agent !== undefined) { conditions.push('PEPAR1 LIKE ?'); parameters.push(`${criteria.agent}%`); }
+    if (criteria.agent !== undefined) {
+      const matching = agents.filter((order) => order.matches);
+      const excluded = agents.filter((order) => !order.matches);
+      const orderPairs = (orders: PurchaseOrderAgentOverride[]) => orders.map(() => '(?, ?)').join(', ');
+      const originalAgent = excluded.length === 0
+        ? 'PEPAR1 LIKE ?'
+        : `(PEPAR1 LIKE ? AND (FPENC.PESEQ, PENUM) NOT IN (${orderPairs(excluded)}))`;
+      conditions.push(matching.length === 0
+        ? originalAgent
+        : `(${originalAgent} OR (FPENC.PESEQ, PENUM) IN (${orderPairs(matching)}))`);
+      parameters.push(`${criteria.agent}%`, ...[...excluded, ...matching].flatMap((order) => [order.id, order.number]));
+    }
     if (criteria.documentType !== undefined) { conditions.push('PESPEDIDO = ?'); parameters.push(criteria.documentType); }
     const where = conditions.join(' AND ');
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
@@ -200,16 +300,12 @@ export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSo
   }
 
   async findAdjacent(id: number, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
-    const [currentRows] = await legacyMysqlPool.execute<IdentityRow[]>(
-      'SELECT PESEQ AS id, PENUM AS number, PRVSEQ AS supplierId FROM FPENC WHERE PESEQ = ? AND PESPEDIDO IN (2, 5) LIMIT 1',
-      [id],
-    );
-    const current = currentRows[0];
+    const current = await this.identity(id);
     if (current === undefined) return null;
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
-      `SELECT PESEQ AS id, PENUM AS number, PRVSEQ AS supplierId
+      `SELECT PESEQ AS id, PENUM AS number
        FROM FPENC
        WHERE PESPEDIDO IN (2, 5) AND PENUM ${operator} ?
        ORDER BY PENUM ${order}, PESEQ ${order} LIMIT 1`,
@@ -218,12 +314,47 @@ export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSo
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
 
-  async getPanel(id: number, key: PurchaseOrderPanelKey): Promise<PurchaseOrderPanelResult | null> {
-    const [identityRows] = await legacyMysqlPool.execute<IdentityRow[]>(
-      'SELECT PESEQ AS id, PENUM AS number, PRVSEQ AS supplierId FROM FPENC WHERE PESEQ = ? AND PESPEDIDO IN (2, 5) LIMIT 1',
+  private async identity(id: number): Promise<IdentityRow | undefined> {
+    const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
+      'SELECT PESEQ AS id, PENUM AS number FROM FPENC WHERE PESEQ = ? AND PESPEDIDO IN (2, 5) LIMIT 1',
       [id],
     );
-    const identity = identityRows[0];
+    return rows[0];
+  }
+
+  async getClassifications(id: number): Promise<PurchaseOrderClassificationPanel | null> {
+    const [orders] = await legacyMysqlPool.execute<IdentityRow[]>(
+      `SELECT PESEQ AS id, PENUM AS number,
+        ${positions.map((index) => `PEPAR${index} AS classification${index}`).join(', ')},
+        ${positions.map((index) => `FCIA.CIAPAR${index} AS label${index}`).join(', ')},
+        (SELECT YGDAT FROM FYG WHERE YGKEY = 'ABITITPAR2' LIMIT 1) AS configuredLabels
+       FROM FPENC LEFT JOIN FCIA ON FCIA.CIASEQ = 1
+       WHERE PESEQ = ? AND PESPEDIDO IN (2, 5)`,
+      [id],
+    );
+    const order = orders[0];
+    if (!order) return null;
+    const configuredLabels = typeof order.configuredLabels === 'string' ? order.configuredLabels.split(',') : null;
+    const [options] = await legacyMysqlPool.execute<(RowDataPacket & PurchaseOrderClassifier)[]>(
+      `SELECT CAST(AGT AS UNSIGNED) AS classifier, AGNUM AS code, AGDESCR AS description, AGTNUM AS compositeCode
+       FROM FAG WHERE AGT IN ('1','2','3','4','5','6','7','8','9') AND AGTIPO IN (0, 2)
+       ORDER BY AGT, AGNUM, AGSEQ`,
+    );
+    return {
+      purchaseOrder: { id, number: order.number },
+      key: 'classifications', section: 'actions', button: 'Clasificar', source: 'mysql',
+      items: options.map((option) => ({ ...option })),
+      summary: {
+        labels: positions.map((index) => configuredLabels
+          ? configuredLabels[index - 1] ?? ''
+          : String(order[`label${index}`] ?? '')),
+        current: classificationsFrom(order), revision: 0, canWrite: false,
+      },
+    };
+  }
+
+  async getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>): Promise<PurchaseOrderPanelResult | null> {
+    const identity = await this.identity(id);
     if (identity === undefined) return null;
 
     let items: Array<Record<string, unknown>>;
@@ -238,16 +369,20 @@ export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSo
         [identity.number],
       );
       items = rowsToItems(rows);
-    } else if (key === 'classifications') {
-      const purchaseOrder = await this.findById(id);
+    } else if (key === 'ct') {
+      const result = await readColorSize(id);
+      items = result.items;
+      summary = result.summary;
+    } else if (key === 'pieces') {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
-        `SELECT AGT AS classifier, AGNUM AS code, AGDESCR AS description, AGTNUM AS compositeCode
-         FROM FAG
-         WHERE AGT BETWEEN '1' AND '9' AND AGTIPO IN (0, 2)
-         ORDER BY AGT, FAG.AGSEQ`,
+        `SELECT CAJSEQ AS id, FINV.ICOD AS productCode, CAJSERIE AS serial, CAJPZAS AS pieces,
+          CAJCANT AS quantity, CAJALM AS warehouse, CAJFACTURA AS document, CAJRECEPCION AS receipt
+         FROM FCAJAS LEFT JOIN FINV ON FINV.ISEQ = FCAJAS.ISEQ
+         WHERE CAJFACTURA = ? ORDER BY CAJSEQ`,
+        [identity.number],
       );
       items = rowsToItems(rows);
-      summary = { current: purchaseOrder?.toPrimitives().classifications ?? [] };
+      summary = { totalQuantity: rows.reduce((total, row) => total + Number(row.quantity), 0) };
     } else {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
         `SELECT FCOMENT.COMSEQ AS id, COMSEQFACT AS sequenceReference,
@@ -262,8 +397,29 @@ export class LegacyMysqlPurchaseOrdersDataSource implements PurchaseOrdersDataSo
         [id],
       );
       items = rowsToItems(rows);
-      const purchaseOrder = await this.findById(id);
-      summary = { ...(purchaseOrder?.toPrimitives() ?? {}) };
+      const [headers] = await legacyMysqlPool.execute<RowDataPacket[]>(
+        `SELECT PEPLAZO AS terms, FPENC.PETIPOC AS exchangeRate, PEMONEDA AS currencyId,
+          ${currencyName('PEMONEDA')} AS currencyName, FPENC.PEDATE2 AS createdAt, FPENC.PEDATE3 AS modifiedAt,
+          PEUSRALTA AS createdBy, PEUSRAUT AS authorizedBy, PECAMBIOS AS changesCount,
+          TICOML1 AS label1, TICOML2 AS label2, TICOML3 AS label3, TICOML4 AS label4, TICOML5 AS label5
+         FROM FPENC LEFT JOIN FCIA ON FCIA.CIASEQ = 1
+         LEFT JOIN FTIPMV ON FTIPMV.TISEQ = (
+           SELECT TISEQ FROM FTIPMV WHERE TICLA = LEFT(FPENC.PENUM, 1) ORDER BY TISEQ LIMIT 1
+         )
+         WHERE PESEQ = ?`,
+        [id],
+      );
+      const header = headers[0];
+      if (header) {
+        const purchaseOrder = await this.findById(id);
+        summary = {
+          ...purchaseOrder?.toPrimitives(),
+          ...header,
+          createdAt: nullableDate(header.createdAt),
+          modifiedAt: nullableDate(header.modifiedAt),
+          labels: [header.label1, header.label2, header.label3, header.label4, header.label5],
+        };
+      }
     }
 
     return {

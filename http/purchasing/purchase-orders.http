@@ -31,3 +31,20 @@ GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/classific
 
 ### Acción: Comentarios
 GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/comments
+
+### Acción: CT (consulta de color y talla)
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/ct
+
+### Acción: Piezas
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/pieces
+
+### Acción: Guardar Clasificar (PostgreSQL de pruebas)
+# El ejemplo conserva los valores de la orden OH00205 con revisión 0 del ejemplo.
+# Para guardar otro cambio toma current y revision del GET y cambia sólo el AGTNUM deseado.
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/classifications
+Content-Type: application/json
+
+{
+  "current": ["1", "", "", "", "", "", "", "", ""],
+  "revision": 0
+}

@@ -7,7 +7,7 @@
 - Encabezado: `FDOC`; partidas: `FAXINV`; cliente: `FCLI`; producto: `FINV`.
 - Movimientos del auxiliar: `FAX`; comentarios: `FCOMENT`; piezas/cajas: `FCAJAS`.
 - Prefijo API: `/api/sales/invoices`.
-- Alcance actual: exclusivamente `GET`. No se sella, imprime, convierte, traspasa ni liquida desde la API.
+- La API consulta el historial de Facturación y permite registrar una remisión FA desde un pedido web.
 
 El módulo aplica la misma Clean Architecture del resto del backend. Los contratos
 están en `domain/datasources` y `domain/repositories`; todo el SQL legacy está en
@@ -29,6 +29,27 @@ El buscador reproduce los campos visibles de OMNIS: `issuedAt` (Fecha),
 (Ped. Cliente), `deliveryNote` (Talón), `folio`, `customerCode`,
 `warehouseSeal` (Sello Alm.) y `amount` (Importe). `q` busca conjuntamente por
 documento, pedido, pedido del cliente, código y nombre del cliente.
+
+Las remisiones web con folio `FAW` se consultan en detalle, por folio, mediante flechas y en el buscador. La fuente derivada es `tuvansa.sales_remissions` en PostgreSQL. **Auxiliar** muestra el cargo FA y la referencia al pedido según `MFACT/33`. **CT** muestra las partidas registradas. **Sellar** indica que la remisión FA se emite sin timbrado fiscal.
+
+## Remisión México desde pedido
+
+**Facturar** abre la captura de un pedido autorizado y asignado. Omnis sigue
+`MFACT/2 → /39 → /38` y toma `CIATMFACT=FA` de México. El tipo FA reduce
+Inventarios y genera el cargo en Cuentas por cobrar. El tipo fiscal FE se
+emite en un paso independiente que requiere la integración de timbrado.
+
+| Operación | Endpoint | Efecto |
+| --- | --- | --- |
+| Preparar | `GET /api/sales/invoices/from-order?orderNumber=:number` | La revisión del pedido y el máximo que se puede remitir en cada partida |
+| Registrar | `POST /api/sales/invoices/from-order` | Guarda folio FAW, salida y cargo. Aumenta lo surtido y libera la asignación aplicada |
+| Cancelar | Cierre de la captura | Descarta la fecha y las cantidades ingresadas |
+
+La captura web cubre pedidos locales de México en pesos, dentro del periodo
+fiscal, con IVA del 16 % y productos en su unidad base sin capas, lotes ni piezas.
+PostgreSQL verifica la revisión del pedido, las existencias y el crédito al
+confirmar. Una clave de solicitud repetida devuelve el folio original si todos
+los datos coinciden. Los requests están en `http/sales/invoices.http`.
 
 ## Mapeo de la ficha
 

@@ -30,6 +30,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const createPurchaseReception = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/purchasing/purchase-receptions';
   const createSupplierPayment = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*$/.test(path);
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment) { next(); return; }
+  const createSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/sales/invoices/from-order';
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment || createSalesRemission) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

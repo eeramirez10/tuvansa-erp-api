@@ -12,7 +12,7 @@ export interface InvoicePanelResult {
   section: InvoicePanelSection;
   button: string;
   available: boolean;
-  source: 'mysql' | 'static';
+  source: 'mysql' | 'postgres' | 'static';
   items: Array<Record<string, unknown>>;
   summary?: Record<string, unknown>;
   readOnly?: boolean;

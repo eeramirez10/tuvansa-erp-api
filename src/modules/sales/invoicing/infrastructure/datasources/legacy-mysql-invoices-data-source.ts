@@ -238,13 +238,20 @@ export class LegacyMysqlInvoicesDataSource implements InvoicesDataSource {
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
 
-  async findAdjacent(invoiceId: number, direction: InvoiceNavigationDirection): Promise<Invoice | null> {
+  async findNumberById(invoiceId: number): Promise<string | null> {
     const [currentRows] = await legacyMysqlPool.execute<IdNumberRow[]>(
       'SELECT DSEQ AS id, DNUM AS number FROM FDOC WHERE DSEQ = ? LIMIT 1',
       [invoiceId],
     );
-    const current = currentRows[0];
-    if (current === undefined) return null;
+    return currentRows[0]?.number ?? null;
+  }
+
+  async findAdjacent(invoiceId: number, direction: InvoiceNavigationDirection): Promise<Invoice | null> {
+    const number = await this.findNumberById(invoiceId);
+    return number === null ? null : this.findAdjacentByNumber(number, direction);
+  }
+
+  async findAdjacentByNumber(number: string, direction: InvoiceNavigationDirection): Promise<Invoice | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<IdNumberRow[]>(
@@ -253,7 +260,7 @@ export class LegacyMysqlInvoicesDataSource implements InvoicesDataSource {
         WHERE ${eligibility} AND DNUM ${operator} ?
         ORDER BY DNUM ${order}, DSEQ ${order}
         LIMIT 1`,
-      [current.number],
+      [number],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }

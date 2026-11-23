@@ -15,7 +15,7 @@ interface IdentityRow extends RowDataPacket {
   movementType: string;
 }
 
-const metadata: Record<InvoicePanelKey, { button: string; section: InvoicePanelSection }> = {
+export const invoicePanelMetadata: Record<InvoicePanelKey, { button: string; section: InvoicePanelSection }> = {
   auxiliary: { button: 'Auxiliar', section: 'actions' },
   boxes: { button: 'Cajas', section: 'actions' },
   classifications: { button: 'Clasifica', section: 'actions' },
@@ -223,7 +223,7 @@ export class LegacyMysqlInvoicePanelsDataSource implements InvoicePanelsDataSour
       reason = 'OMNIS no emitió SQL de lectura al abrir esta acción; su mutación queda fuera de esta fase.';
     }
 
-    const label = metadata[key];
+    const label = invoicePanelMetadata[key];
     return {
       invoice: { id: identity.id, number: identity.number },
       key,

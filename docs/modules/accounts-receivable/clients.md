@@ -181,6 +181,8 @@ capturados de OMNIS: `fax.AMES = 1`, documento no eliminado y
 `fdoc.DMULTICIA = 1`. Los movimientos se ordenan por `fax.ASEQ`, igual que en
 la pantalla heredada.
 
+Las remisiones FA web de la empresa 1 se agregan a Saldo y Movimientos desde `tuvansa.sales_remissions`. El cargo aumenta el saldo actual y se incluye en los importes vencidos y por vencer según su fecha de vencimiento. Los movimientos muestran el pedido como referencia y contribuyen al saldo inicial, acumulado y final según su fecha. La ficha del cliente recalcula el crédito disponible y muestra la fecha de la última compra entre ambas fuentes. El cargo y la fecha de compra corresponden a `MFACT/33` y `CLIULTCOM`, respectivamente.
+
 La captura literal completa por boton y accion esta documentada en
 `legacy-mysql-capture.md`; el archivo crudo permanece local dentro de
 `captures/` porque puede contener datos de prueba.

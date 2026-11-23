@@ -22,6 +22,8 @@ export const createInvoicesRouter = (controller: InvoicesController): Router => 
   const router = Router();
   router.get('/', controller.search);
   router.get('/first', controller.getFirst);
+  router.get('/from-order', controller.prepareFromOrder);
+  router.post('/from-order', controller.createFromOrder);
   router.get('/by-number/:invoiceNumber', controller.getByNumber);
   router.get('/:invoiceId/previous', controller.getPrevious);
   router.get('/:invoiceId/next', controller.getNext);

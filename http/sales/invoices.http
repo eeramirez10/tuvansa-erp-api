@@ -1,6 +1,30 @@
 @baseUrl = http://localhost:3000/api
 @invoiceId = 244045
 @invoiceNumber = 0007069
+@orderNumber = NP00001
+@orderRevision = 1
+@orderLineId = 1
+@issuedAt = 2026-11-23
+@requestKey = 0de010c1-ad5c-4e67-8f10-fbe09ee939c2
+@clientId = 15390
+
+### Preparar una Remisión México desde un pedido web autorizado y asignado
+GET {{baseUrl}}/sales/invoices/from-order?orderNumber={{orderNumber}}
+
+### Registrar la remisión. Tomar revisión y partidas del GET. Reusar la clave solo para reintentar el mismo envío.
+POST {{baseUrl}}/sales/invoices/from-order
+Content-Type: application/json
+
+{
+  "orderNumber": "{{orderNumber}}",
+  "revision": {{orderRevision}},
+  "issuedAt": "{{issuedAt}}",
+  "requestKey": "{{requestKey}}",
+  "lines": [{"orderLineId": {{orderLineId}}, "quantity": 1}]
+}
+
+### Consultar el cargo por el folio FAW devuelto en el POST
+GET {{baseUrl}}/accounts-receivable/clients/{{clientId}}/balance?q={{invoiceNumber}}
 
 ### Entrada inicial: primer documento elegible de Facturación
 GET {{baseUrl}}/sales/invoices/first

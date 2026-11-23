@@ -6,7 +6,7 @@ import { ReadInventoryMovements } from './application/use-cases/read-inventory-m
 import type { MovementCancellationRepository } from './domain/repositories/movement-cancellation-repository.js';
 import type { MovementsRepository } from './domain/repositories/movements-repository.js';
 import { LegacyMysqlMovementsDataSource } from './infrastructure/datasources/legacy-mysql-movements-data-source.js';
-import { MovementsWithPurchaseReceptionsDataSource } from './infrastructure/datasources/movements-with-purchase-receptions-data-source.js';
+import { MovementsWithLocalDocumentsDataSource } from './infrastructure/datasources/movements-with-local-documents-data-source.js';
 import { PostgresMovementsDataSource } from './infrastructure/datasources/postgres-movements-data-source.js';
 import { MovementCancellationRepositoryImpl, MovementsRepositoryImpl } from './infrastructure/repositories/movements-repository-impl.js';
 import { createMovementsRouter } from './presentation/http/movements-routes.js';
@@ -24,7 +24,7 @@ export const createMovementsModule = (
 
   if (env.INVENTORY_MOVEMENTS_SOURCE === 'postgres') {
     const base = new PostgresMovementsDataSource(connectPostgres);
-    const source = new MovementsWithPurchaseReceptionsDataSource(base, base);
+    const source = new MovementsWithLocalDocumentsDataSource(base, base);
     const cancellations = new MovementCancellationRepositoryImpl(source);
     return createMovementsRouter(
       new ReadInventoryMovements(new MovementsRepositoryImpl(source), cancellations),
@@ -32,7 +32,7 @@ export const createMovementsModule = (
     );
   }
 
-  const source = new MovementsWithPurchaseReceptionsDataSource(new LegacyMysqlMovementsDataSource());
+  const source = new MovementsWithLocalDocumentsDataSource(new LegacyMysqlMovementsDataSource());
   return createMovementsRouter(new ReadInventoryMovements(
     new MovementsRepositoryImpl(source),
     new MovementCancellationRepositoryImpl(source),

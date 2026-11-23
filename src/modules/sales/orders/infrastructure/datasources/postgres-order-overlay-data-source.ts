@@ -3,8 +3,10 @@ import type { OrderOverlay, OrderOverlayDataSource } from '../../domain/datasour
 import type { OrderProps } from '../../domain/entities/order.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
+import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { connectPostgres, postgresConfigured, postgresUnavailable, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { readLegacySaleStock, verifyLocalOrderAssignment } from './sales-order-inventory-stock.js';
 
 type Stored = { document: OrderProps; base: OrderProps | null; deleted: boolean; revision: number };
 const columns = 'document,base_document AS base,(deleted_at IS NOT NULL) AS deleted,revision';
@@ -13,7 +15,8 @@ const columns = 'document,base_document AS base,(deleted_at IS NOT NULL) AS dele
 export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
   private initialized: Promise<void> | undefined;
   constructor(private readonly connect: PostgresConnectionFactory = connectPostgres,
-    private readonly isConfigured: () => boolean = postgresConfigured) {}
+    private readonly isConfigured: () => boolean = postgresConfigured,
+    private readonly loadStock = readLegacySaleStock) {}
   get configured() { return this.isConfigured(); }
 
   private async connection<T>(work: (client: PostgresClient) => Promise<T>): Promise<T> {
@@ -63,7 +66,7 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       return doc;
     });
   }
-  async change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert',
+  async change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment',
     transform: (current: OrderProps) => Promise<OrderProps | null>): Promise<OrderOverlay | null> {
     return this.transaction(async c => {
       // Locks even a missing overlay; concurrent first edits cannot race on INSERT.
@@ -76,14 +79,46 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       }
       if (stored.deleted) return null;
       const changed = await transform(structuredClone(stored.document));
+      if (operation === 'assignment' && changed && stored.base === null) {
+        await verifyLocalOrderAssignment(c, stored.document, changed, this.loadStock);
+      }
       const deleted = changed === null;
       const document = changed ?? stored.document;
       const revision = stored.revision + 1;
       await c.query(`UPDATE tuvansa.orders SET document=$2::jsonb,number=$3,revision=$4,
         deleted_at=CASE WHEN $5::boolean THEN now() ELSE NULL END,updated_at=now() WHERE id=$1`,
         [id,JSON.stringify(document),document.number,revision,deleted]);
-      await this.record(c,document,stored.base,deleted,revision,operation);
+      await this.record(c,document,stored.base,deleted,revision,operation === 'assignment' ? 'update' : operation);
       return { document, base: stored.base, deleted, revision };
+    });
+  }
+
+  async postRemission<T>(
+    id: number,
+    expectedRevision: number,
+    replay: (client: PostgresClient) => Promise<T | null>,
+    post: (client: PostgresClient, order: OrderProps) => Promise<{ order: OrderProps; result: T }>,
+  ): Promise<T> {
+    return this.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [id]);
+      const existing = await replay(client);
+      if (existing !== null) return existing;
+      const { rows: [stored] } = await client.query<Stored>(
+        `SELECT ${columns} FROM tuvansa.orders WHERE id=$1 AND legacy_id IS NULL FOR UPDATE`, [id],
+      );
+      if (!stored || stored.deleted) throw new NotFoundError('Pedido local');
+      if (stored.revision !== expectedRevision) {
+        throw new ConflictError('El pedido cambió. Vuelve a abrir la remisión.', 'SALES_REMISSION_ORDER_CHANGED');
+      }
+      const { order, result } = await post(client, stored.document);
+      if (order.id !== id || order.number !== stored.document.number) {
+        throw new ConflictError('La remisión no coincide con el pedido.', 'SALES_REMISSION_ORDER_MISMATCH');
+      }
+      const nextRevision = stored.revision + 1;
+      await client.query('UPDATE tuvansa.orders SET document=$2::jsonb,revision=$3,updated_at=now() WHERE id=$1',
+        [id, JSON.stringify(order), nextRevision]);
+      await this.record(client, order, null, false, nextRevision, 'update');
+      return result;
     });
   }
   private async record(c: PostgresClient, doc: OrderProps, base: OrderProps | null, deleted: boolean, revision: number, operation: string) {

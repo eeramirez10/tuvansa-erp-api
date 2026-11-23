@@ -126,3 +126,12 @@ actualizar `FPENC`, `FPLIN`, `FINV`, `FALM` ni otros acumulados legacy.
 
 Los requests reproducibles están en `http/sales/orders.http`. La evidencia SQL
 y la prueba controlada de alta/edición/baja están en `orders-capture.md`.
+
+## Surtido desde Facturación
+
+Facturación → Facturar toma un pedido web autorizado y asignado para emitir
+una [Remisión México FA](invoices.md#remisión-méxico-desde-pedido).
+Cada remisión incrementa lo surtido, reduce el saldo pendiente y libera la
+asignación correspondiente. El pedido conserva el historial de cargos FA en
+Auxiliar. La asignación de otros pedidos del mismo almacén se calcula con las
+existencias, las recepciones, las remisiones y las reservas locales vigentes.

@@ -11,6 +11,6 @@ export interface OrderOverlayDataSource {
   get(id: number): Promise<OrderOverlay | null>;
   list(): Promise<OrderOverlay[]>;
   create(build: (id: number) => Promise<OrderProps>): Promise<OrderProps>;
-  change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert',
+  change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment',
     transform: (current: OrderProps) => Promise<OrderProps | null>): Promise<OrderOverlay | null>;
 }

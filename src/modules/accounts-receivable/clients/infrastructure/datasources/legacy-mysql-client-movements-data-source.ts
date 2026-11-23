@@ -86,6 +86,20 @@ const toMovement = (row: MovementRow): ClientMovement =>
   });
 
 export class LegacyMysqlClientMovementsDataSource implements ClientMovementsDataSource {
+  async balanceThroughDates(clientId: number, dates: string[]): Promise<Map<string, number>> {
+    if (dates.length === 0) return new Map();
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { cutoff: string; balance: number }>>(
+      `SELECT cutoffs.cutoff, (
+         SELECT COALESCE(SUM(a.ACANT), 0) FROM fax a
+         LEFT JOIN fdoc d ON d.DSEQ = a.DSEQ
+         WHERE a.CLISEQ = ? AND a.AMES = 1 AND IF(d.DEST IS NULL, 0, d.DEST) = 0
+           AND d.DMULTICIA = 1 AND a.AFECHA <= cutoffs.cutoff
+       ) AS balance FROM (${dates.map(() => 'SELECT CAST(? AS DATE) AS cutoff').join(' UNION ALL ')}) AS cutoffs`,
+      [clientId, ...dates],
+    );
+    return new Map(rows.map(({ cutoff, balance }) => [cutoff, Number(balance)]));
+  }
+
   async searchByClient(
     criteria: ClientMovementSearchCriteria,
   ): Promise<ClientMovementsResult | null> {

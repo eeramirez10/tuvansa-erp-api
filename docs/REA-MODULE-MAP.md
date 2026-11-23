@@ -33,9 +33,9 @@ Los directorios de código corresponden a src/modules/ del backend; el frontend 
 | Inventarios P.T. / Productos | inventories/products | [products](modules/inventories/products.md), [botones/captura](modules/inventories/product-buttons-capture.md) | FINV, FINV2, FALM, FAXINV; documentos SQL de barra y botones separados; presencia de métodos de alta legacy no habilita escritura HTTP |
 | Pedidos / Cotizaciones | sales/orders | [orders](modules/sales/orders.md), [alta y SQL](modules/sales/orders-create-sql-new-version.md), [alta API](modules/sales/orders-create-api.md) | FPENC/FPLIN y catálogos leídos; escritura actual en overlay PostgreSQL; no sincroniza a MySQL |
 | Mantenimiento de Pedidos | sales/orders | [comportamientos](modules/sales/orders-behaviors-new-version.md), [comentarios](modules/sales/order-comments.md) | Autorización/asignación/edición, costos y monedas tienen reglas propias; verificar versiones recientes de los documentos |
-| Facturación | sales/invoicing | [invoices](modules/sales/invoices.md), [captura](modules/sales/invoices-capture.md) | FDOC, FAXINV; no asumir alta web por tener una vista o acción de lectura |
-| Bancos | treasury/banking | [banking](modules/treasury/banking.md) | Revisar datasource y panel por botón; mutaciones no migradas bloqueadas |
-| Proveedores / Ctas. x Pagar | accounts-payable/suppliers | [suppliers](modules/accounts-payable/suppliers.md) | Mismo criterio: catálogo/panel implementado no equivale a escritura migrada |
+| Facturación | sales/invoicing | [invoices](modules/sales/invoices.md), [captura](modules/sales/invoices-capture.md) | Remisión México FA desde pedido autorizado y asignado, con salida de Inventarios y cargo a CxC |
+| Bancos | treasury/banking | [banking](modules/treasury/banking.md) | Salida bancaria y póliza aplicada al pagar una recepción web en pesos |
+| Proveedores / Ctas. x Pagar | accounts-payable/suppliers | [suppliers](modules/accounts-payable/suppliers.md) | Saldo de recepciones web y abonos PP parciales o totales |
 | Órdenes de compra | purchasing/purchase-orders | [purchase-orders](modules/purchasing/purchase-orders.md) | Comparar controles, encabezado y partidas del nuevo runtime con el contrato existente |
 | Recepciones | purchasing/purchase-receptions | [purchase-receptions](modules/purchasing/purchase-receptions.md) | Alta PostgreSQL ligada a orden confirmada, movimientos de Inventarios y cargo a proveedor |
 | Pólizas | accounting/policies | [policies](modules/accounting/policies.md) | Diferenciar periodo, aplicación y cierre; no reaplicar pólizas para probar un reporte |
@@ -60,7 +60,7 @@ Los documentos de tipos XA/P, Duplicar, selección de productos y Cancún creado
 | SQL literal | Documentos con extractos/marcadores y referencias a crudos | Los logs privados no viajan por Git; no se verificó íntegramente cada literal contra sus archivos originales en esta tarea |
 | SQL implementado | Datasources y tests | Puede ser adaptado o derivado; no prueba por sí solo una emisión de OMNIS |
 | Frontend | endpoint-map y documentos de pantallas/reportes | Contrastar contra la nueva versión y permisos de usuario; no todos los módulos están completos |
-| Escritura | NEON-WRITE-DATABASE y postgresWriteBoundary | Pedidos migrado; los demás módulos conservan restricciones. El GET inicial de Pedidos puede aplicar migraciones en Neon |
+| Escritura | NEON-WRITE-DATABASE y postgresWriteBoundary | Pedidos, órdenes de compra, recepciones, pagos de recepciones web y remisiones FA escriben en PostgreSQL. El GET inicial de Pedidos puede aplicar migraciones en Neon |
 | Estado reciente | Documentos nuevos y working tree | Un clon no recibe modificaciones sin commit/push; no se debe afirmar que esos cambios ya están publicados |
 | Fuentes externas | PDFs/Excel/métodos del usuario | Archivos del escritorio no viajan con Git. Un PDF de resultados no define necesariamente todas sus reglas |
 

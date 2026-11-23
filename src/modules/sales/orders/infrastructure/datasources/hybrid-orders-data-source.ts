@@ -13,6 +13,7 @@ import type { OrderPanelKey, OrderPanelResult } from '../../domain/repositories/
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import { readSalesRemissions } from '../../../invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { compareOrders, matchesOrder } from './order-overlay-filter.js';
 
 type LegacyRead = Pick<OrdersDataSource,'findById'|'findByNumber'|'search'|'findAdjacent'|'customerExists'>;
@@ -251,7 +252,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   async setAssignment(id: number, values: Array<{ lineId: number; assigned: number }>): Promise<Order> {
     this.writable();
-    const result = await this.local.change(id,await this.original(id),'update',async doc => {
+    const result = await this.local.change(id,await this.original(id),'assignment',async doc => {
       if (doc.documentKind !== 'order' || doc.authorization !== 'O.K.') {
         throw new ConflictError('Para asignar un pedido es necesario autorizarlo antes.', 'ORDER_AUTHORIZATION_REQUIRED');
       }
@@ -283,6 +284,17 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     const {section,button} = orderPanelLabels[key];
     const result: OrderPanelResult = {order:{id,number:doc.number},key,section,button,available:false,source:'postgres',items:[],
       reason:'Este panel todavía no está implementado para la versión local del pedido.'};
+    if (key === 'invoices') {
+      const legacy = local.base ? await this.legacyPanels.getPanel(id, key) : null;
+      const remissions = await readSalesRemissions<Record<string, unknown>[]>([], async (client) => {
+        const { rows } = await client.query<{ id: string; documentNumber: string; date: string }>(
+          `SELECT id::text,number AS "documentNumber",issued_at::text AS date
+           FROM tuvansa.sales_remissions WHERE order_id=$1 AND order_number=$2 ORDER BY id`, [id, doc.number],
+        );
+        return rows.map((row) => ({ ...row, id: Number(row.id) }));
+      });
+      return { ...result, ...legacy, available: true, reason: '', items: [...(legacy?.items ?? []), ...remissions] };
+    }
     if (key==='comments') return {...result,button:'Comentarios',available:true,reason:'',items:[{comments:'',customerDocumentNumber:doc.number,amountInWords:amountInWords(doc.totals.total)}],
       summary:{customerOrderNumber:doc.customerOrderNumber,orderedAt:doc.dates.orderedAt,fromDate:doc.dates.from,dueAt:doc.dates.dueAt,
         initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,

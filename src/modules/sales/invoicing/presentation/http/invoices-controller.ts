@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import type { CreateInvoiceFromOrder } from '../../application/use-cases/create-invoice-from-order.js';
 import type { GetFirstInvoice } from '../../application/use-cases/get-first-invoice.js';
 import type { GetInvoice } from '../../application/use-cases/get-invoice.js';
 import type { GetInvoiceByNumber } from '../../application/use-cases/get-invoice-by-number.js';
@@ -11,6 +12,14 @@ import type { InvoicePanelKey } from '../../domain/repositories/invoice-panels-r
 const invoiceParamsSchema = z.object({ invoiceId: z.coerce.number().int().positive() });
 const invoiceNumberParamsSchema = z.object({ invoiceNumber: z.string().trim().min(1).max(20) });
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const orderNumberSchema = z.string().trim().min(1).max(15).toUpperCase();
+const invoiceFromOrderSchema = z.strictObject({
+  orderNumber: orderNumberSchema,
+  requestKey: z.uuid(),
+  revision: z.int().positive(),
+  issuedAt: z.iso.date(),
+  lines: z.array(z.strictObject({ orderLineId: z.int().positive(), quantity: z.number().positive() })).min(1),
+});
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   issuedAt: dateSchema.optional(),
@@ -34,6 +43,7 @@ export class InvoicesController {
     private readonly searchInvoices: SearchInvoices,
     private readonly navigateInvoice: NavigateInvoice,
     private readonly getInvoicePanel: GetInvoicePanel,
+    private readonly invoiceFromOrder: CreateInvoiceFromOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -53,6 +63,20 @@ export class InvoicesController {
         page: query.page,
         pageSize: query.pageSize,
       }));
+    } catch (error) { next(error); }
+  };
+
+  prepareFromOrder: RequestHandler = async (request, response, next) => {
+    try {
+      const number = orderNumberSchema.parse(request.query.orderNumber);
+      response.set('Cache-Control', 'no-store').json({ data: await this.invoiceFromOrder.prepare(1, number) });
+    } catch (error) { next(error); }
+  };
+
+  createFromOrder: RequestHandler = async (request, response, next) => {
+    try {
+      const result = await this.invoiceFromOrder.save(1, 0, invoiceFromOrderSchema.parse(request.body));
+      response.status(201).json({ data: result });
     } catch (error) { next(error); }
   };
 

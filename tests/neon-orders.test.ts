@@ -27,7 +27,8 @@ const connect: PostgresConnectionFactory = async () => ({
     return db.query<T>(sql,values);
   }, release() {},
 });
-const store = new PostgresOrderOverlayDataSource(connect,()=>true);
+const warehouseStock = async () => new Map([[13288, {productId:13288,unit:'M',onHand:50,assigned:0}]]);
+const store = new PostgresOrderOverlayDataSource(connect,()=>true,warehouseStock);
 const base = (id=10, number='P000010'): OrderProps => ({id,number,customerOrderNumber:'ORIGINAL',customer:{id:15331,code:'000001',name:'Cliente original'},
   documentKind:'order',status:'',fulfilledAmount:0,branch:0,department:'',dates:{orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14'},
   attention:'Agente',termsDays:30,authorization:'',initial:false,warehouse:'01',currencyId:2,exchangeRate:1,minimumFulfillmentPercentage:0,
@@ -200,6 +201,19 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   });
   it('rejects prices below the warehouse cost',async()=>{
     await expect(make().create({...input,lines:[{...input.lines[0]!,price:1}]})).rejects.toMatchObject({code:'ORDER_PRICE_BELOW_COST'});
+  });
+  it('reserves inventory across local orders and releases it when unassigned',async()=>{
+    const api=make();
+    const values={...input,documentKind:'order' as const,lines:[{...input.lines[0]!,quantity:30}]};
+    const first=(await api.create(values)).toPrimitives();
+    const next=(await api.create(values)).toPrimitives();
+    await api.setAuthorization(first.id,true);
+    await api.setAuthorization(next.id,true);
+    await api.setAssignment(first.id,[{lineId:1,assigned:30}]);
+    await expect(api.setAssignment(next.id,[{lineId:1,assigned:30}])).rejects.toMatchObject({code:'SALE_STOCK_INSUFFICIENT'});
+    expect((await api.findById(next.id))?.toPrimitives().lines[0]?.assigned).toBe(0);
+    await api.setAssignment(first.id,[{lineId:1,assigned:20}]);
+    expect((await api.setAssignment(next.id,[{lineId:1,assigned:30}])).toPrimitives().lines[0]?.assigned).toBe(30);
   });
   it('converts dollar and peso products to the selected collection currency',async()=>{
     const usdProduct={id:13288,code:'01300958',description:'Producto USD',unit:'M',price:10,cost:8,costCurrencyId:2 as const,

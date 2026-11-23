@@ -16,12 +16,15 @@ import { CreateClient } from './application/use-cases/create-client.js';
 import { DeleteClient } from './application/use-cases/delete-client.js';
 import { NavigateClient } from './application/use-cases/navigate-client.js';
 import { UpdateClient } from './application/use-cases/update-client.js';
+import {
+  ClientBalanceWithSalesRemissionsDataSource, ClientMovementsWithSalesRemissionsDataSource,
+} from './infrastructure/datasources/client-ledger-with-sales-remissions-data-source.js';
+import { ClientsWithSalesRemissionsDataSource } from './infrastructure/datasources/clients-with-sales-remissions-data-source.js';
 import { LegacyMysqlClientBalanceDataSource } from './infrastructure/datasources/legacy-mysql-client-balance-data-source.js';
 import { LegacyMysqlClientActionsDataSource } from './infrastructure/datasources/legacy-mysql-client-actions-data-source.js';
 import { LegacyMysqlClientAnalyticsDataSource } from './infrastructure/datasources/legacy-mysql-client-analytics-data-source.js';
 import { LegacyMysqlClientMovementsDataSource } from './infrastructure/datasources/legacy-mysql-client-movements-data-source.js';
 import { LegacyMysqlClientConsultationsDataSource } from './infrastructure/datasources/legacy-mysql-client-consultations-data-source.js';
-import { LegacyMysqlClientsDataSource } from './infrastructure/datasources/legacy-mysql-clients-data-source.js';
 import { ClientActionsRepositoryImpl } from './infrastructure/repositories/client-actions-repository-impl.js';
 import { ClientAnalyticsRepositoryImpl } from './infrastructure/repositories/client-analytics-repository-impl.js';
 import { ClientBalanceRepositoryImpl } from './infrastructure/repositories/client-balance-repository-impl.js';
@@ -32,13 +35,13 @@ import { ClientsController } from './presentation/http/clients-controller.js';
 import { createClientsRouter } from './presentation/http/clients-routes.js';
 
 export const createClientsModule = (): Router => {
-  const clientsDataSource = new LegacyMysqlClientsDataSource();
+  const clientsDataSource = new ClientsWithSalesRemissionsDataSource();
   const repository = new ClientsRepositoryImpl(clientsDataSource);
   const balanceRepository = new ClientBalanceRepositoryImpl(
-    new LegacyMysqlClientBalanceDataSource(),
+    new ClientBalanceWithSalesRemissionsDataSource(new LegacyMysqlClientBalanceDataSource()),
   );
   const movementsRepository = new ClientMovementsRepositoryImpl(
-    new LegacyMysqlClientMovementsDataSource(),
+    new ClientMovementsWithSalesRemissionsDataSource(new LegacyMysqlClientMovementsDataSource()),
   );
   const consultationsRepository = new ClientConsultationsRepositoryImpl(
     new LegacyMysqlClientConsultationsDataSource(),

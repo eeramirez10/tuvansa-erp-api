@@ -62,6 +62,8 @@ Las pólizas **PAGOS PR.** de `supplier_payments` se consultan por las mismas ru
 
 Las pólizas **COBRANZA** con folio `1CW` provienen de `customer_collections`. El cargo va a la cuenta bancaria y el abono a la cuenta de Cuentas por cobrar con el folio de la remisión. **Cheque** muestra la referencia bancaria capturada o el folio PAW. Se consultan por ID, folio, búsqueda y navegación, junto con las pólizas de la base histórica.
 
+Al registrar la conciliación de un depósito o pago web, la partida bancaria de su póliza aparece como conciliada. El estado se consulta en `bank_reconciliation_movements`. La póliza conserva sus cuentas, importes y aplicación.
+
 ## Reportes de la versión nueva
 
 La captura de Contabilidad → Reportes → Estado de resultados se documenta en [income-statement.md](income-statement.md). La lectura usa FCCBENC + FBENC y está disponible en GET /api/accounting/reports/income-statement, con parámetros en GET /api/accounting/reports/income-statement/options y vista imprimible en el frontend.

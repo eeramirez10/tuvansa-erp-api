@@ -6,7 +6,7 @@
 - Maestro de cuentas: `FBENC`; movimientos bancarios: `FBANMOV`; pólizas: `FPOLIZA`.
 - Cuenta bancaria contrastada en la base actual: `1102100001` (`FBENC.BSEQ=6610`).
 - Prefijo API: `/api/treasury/bank-accounts`.
-- Alcance actual: exclusivamente `GET`. Conciliar y cualquier cierre permanecen deshabilitados.
+- Alcance actual: consultas de Bancos y registro de conciliación manual de depósitos y pagos web en México.
 
 El módulo sigue Clean Architecture. Los contratos están en `domain/datasources` y
 `domain/repositories`; las consultas legacy viven únicamente en
@@ -42,7 +42,7 @@ El módulo sigue Clean Architecture. Los contratos están en `domain/datasources
 | Movimientos | `/:bankAccountId/actions/movements` | OMNIS no ejecuta SQL: muestra que no puede generar movimientos cuando la contabilidad está activa |
 | Depósitos | `/:bankAccountId/actions/deposits` | OMNIS indica que el movimiento se genera mediante póliza. La vista web consulta los depósitos registrados en Cobranza |
 | Pagos | `/:bankAccountId/actions/payments` | Para los pagos locales consulta el abono y la póliza en PostgreSQL |
-| Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA`; movimientos no conciliados y contabilizados |
+| Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA` para la consulta histórica. Los movimientos web pendientes se pueden seleccionar |
 | Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC`; pendientes sin tránsito hasta la fecha indicada |
 | Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal |
 | Gastos por prv. | `/:bankAccountId/actions/supplier-expenses` | La apertura sólo cargó configuración de sesión; el alta/pago se conserva deshabilitado |
@@ -54,9 +54,7 @@ El módulo sigue Clean Architecture. Los contratos están en `domain/datasources
 | Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0` |
 
 Todos los paneles devuelven `button`, `section`, `source`, `available`,
-`readOnly`, `items` y, cuando corresponde, `summary`. Las ventanas y sus
-botones transaccionales se reproducen en el frontend, pero permanecen
-deshabilitados porque el alcance vigente es sólo lectura. Los requests
+`readOnly`, `items` y, cuando corresponde, `summary`. Los requests
 reproducibles están en `http/treasury/bank-accounts.http`.
 
 ## Pagos de recepciones migradas
@@ -68,3 +66,18 @@ La web registra pagos parciales y liquidaciones de una recepción local en pesos
 ## Depósitos de cobranza
 
 **Clientes → Saldo → Cobrar** registra el depósito en PostgreSQL. **Depósitos** y **Auxiliar** muestran el cargo PC al banco, el folio PAW, la referencia bancaria y el vínculo a la póliza aplicada **COBRANZA**. El cargo aumenta el saldo contable. La consulta de conciliación lo muestra como pendiente.
+
+## Conciliación manual
+
+En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` muestra **Saldo BANCO**, **Saldo tránsit**, **Suma sel.** y los botones **Conciliar** y **Registrar**. La ventana observada en `recon-21-native-footer.png` conserva separados los importes de Cargos y Abonos. La captura histórica del módulo consulta `FBANMOV.BAOK` para distinguir los pendientes de los conciliados con `X` y `FBENC.BSALDOB1` para el saldo bancario. `MBANCO/112` usa el signo `BAIMPOR − BAIMPORNEG`. El flujo web usa ese signo para sumar los depósitos y restar los pagos elegidos sobre el saldo bancario de origen. La captura del estado de cuenta es una validación web.
+
+| Vista y control | Endpoint | Procedencia y efecto |
+| --- | --- | --- |
+| Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura de consulta histórica y SQL derivado de `supplier_payments`, `customer_collections` y `bank_reconciliation_movements`. Sólo los depósitos y pagos web pendientes son seleccionables |
+| Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
+| Conciliar / Registrar | `POST /api/treasury/bank-accounts/:id/actions/reconciliation` | SQL derivado. Registra un corte en `bank_reconciliations` y las partidas en `bank_reconciliation_movements` en la misma transacción |
+| Conciliar / Cancelar | Cerrar la ventana | Descarta la selección |
+
+El saldo ingresado del estado de cuenta debe coincidir al centavo con el saldo calculado. La fecha debe ser igual o posterior al último corte web y a los movimientos elegidos. El día actual de México es el límite superior. El servidor valida el saldo previo, la cuenta, la selección y el corte bajo bloqueo. Cada movimiento pertenece a un solo registro de conciliación. Un reintento con la misma clave y datos recupera el registro original.
+
+Al registrar, los movimientos elegidos salen de **Conciliar** y **Concilia Automático**. **Auxiliar**, **Pagos** y **Depósitos** conservan los registros con marca `X` y la fecha del estado de cuenta. En Contabilidad se marca conciliada la partida bancaria de la póliza. El saldo contable, los importes de las pólizas y el saldo en tránsito se conservan.

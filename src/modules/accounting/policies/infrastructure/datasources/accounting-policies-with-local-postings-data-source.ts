@@ -5,6 +5,7 @@ import { connectPostgres, postgresConfigured, type PostgresClient } from '../../
 import { isLocalSupplierPaymentId } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
 import { AccountingPolicy, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
 import type {
@@ -29,7 +30,7 @@ interface LocalPolicyHeader {
 interface LocalPolicyRecord extends LocalPolicyHeader {
   lines: {
     account: string; department: string; debit: number; credit: number;
-    reference?: string; accountName?: string; accountId?: number;
+    reference?: string; accountName?: string; accountId?: number; reconciled?: boolean;
   }[];
 }
 
@@ -47,27 +48,29 @@ const receiptFields = `
     concat('Recepción ', number, '  Referencia ', result #>> '{reception,supplierReference}', ' O.C. ', order_number) AS concept,
     created_at AS "auditAt", coalesce((payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
 const paymentFields = `
-    payment.id, payment.policy_number AS number, payment.company_id AS company, payment.user_id AS "userId",
-    payment.date::text AS date, payment.number AS cheque,
+    posting.id, posting.policy_number AS number, posting.company_id AS company, posting.user_id AS "userId",
+    posting.date::text AS date, posting.number AS cheque,
     receipt.result #>> '{reception,supplier,name}' AS beneficiary, 'PAGOS PR.'::text AS family,
-    payment.description AS concept, payment.created_at AS "auditAt",
+    posting.description AS concept, posting.created_at AS "auditAt",
     coalesce((receipt.payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
 const paymentLines = `jsonb_build_array(
-    jsonb_build_object('account', payment.bank_code, 'accountId', payment.bank_account_id,
-      'accountName', payment.bank_name, 'department', '', 'debit', 0, 'credit', payment.amount),
-    jsonb_build_object('account', payment.supplier_account, 'accountName', payment.supplier_account_name,
-      'department', '', 'debit', payment.amount, 'credit', 0, 'reference', receipt.number)
+    jsonb_build_object('account', posting.bank_code, 'accountId', posting.bank_account_id,
+      'accountName', posting.bank_name, 'department', '', 'debit', 0, 'credit', posting.amount,
+      'reconciled', settlement.statement_date IS NOT NULL),
+    jsonb_build_object('account', posting.supplier_account, 'accountName', posting.supplier_account_name,
+      'department', '', 'debit', posting.amount, 'credit', 0, 'reference', receipt.number)
   )`;
 const collectionFields = `
-    collection.id, collection.policy_number AS number, collection.company_id AS company, collection.user_id AS "userId",
-    collection.date::text AS date, coalesce(nullif(collection.reference,''),collection.number) AS cheque,
+    posting.id, posting.policy_number AS number, posting.company_id AS company, posting.user_id AS "userId",
+    posting.date::text AS date, coalesce(nullif(posting.reference,''),posting.number) AS cheque,
     remission.result #>> '{invoice,customer,name}' AS beneficiary, 'COBRANZA'::text AS family,
-    collection.description AS concept, collection.created_at AS "auditAt", 1::float8 AS "exchangeRate"`;
+    posting.description AS concept, posting.created_at AS "auditAt", 1::float8 AS "exchangeRate"`;
 const collectionLines = `jsonb_build_array(
-    jsonb_build_object('account', collection.bank_code, 'accountId', collection.bank_account_id,
-      'accountName', collection.bank_name, 'department', '', 'debit', collection.amount, 'credit', 0),
-    jsonb_build_object('account', collection.client_account, 'accountName', collection.client_account_name,
-      'department', '', 'debit', 0, 'credit', collection.amount, 'reference', remission.number)
+    jsonb_build_object('account', posting.bank_code, 'accountId', posting.bank_account_id,
+      'accountName', posting.bank_name, 'department', '', 'debit', posting.amount, 'credit', 0,
+      'reconciled', settlement.statement_date IS NOT NULL),
+    jsonb_build_object('account', posting.client_account, 'accountName', posting.client_account_name,
+      'department', '', 'debit', 0, 'credit', posting.amount, 'reference', remission.number)
   )`;
 const money = (amount: number) => Number(amount.toFixed(2));
 const isLocalPolicyId = (id: number) =>
@@ -86,20 +89,22 @@ async function readLocalPolicies<T>(
               to_regclass('tuvansa.customer_collections') IS NOT NULL AS collections`,
     );
     const withLines = (sql: string) => detail ? sql : "'[]'::jsonb";
+    const settlements = detail && (tables?.payments || tables?.collections)
+      ? joinBankReconciliation(await bankReconciliationsAvailable(client)) : '';
     const views: string[] = [];
     if (tables?.receipts) views.push(
       `SELECT ${receiptFields}, ${withLines("accounting->'lines'")} AS lines
        FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL`,
     );
     if (tables?.payments) views.push(
-      `SELECT ${paymentFields}, ${withLines(paymentLines)} AS lines FROM tuvansa.supplier_payments AS payment
-       JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = payment.receipt_id AND receipt.company_id = payment.company_id
-       WHERE payment.company_id = 1`,
+      `SELECT ${paymentFields}, ${withLines(paymentLines)} AS lines FROM tuvansa.supplier_payments AS posting
+       JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = posting.receipt_id AND receipt.company_id = posting.company_id
+       ${settlements} WHERE posting.company_id = 1`,
     );
     if (tables?.collections) views.push(
-      `SELECT ${collectionFields}, ${withLines(collectionLines)} AS lines FROM tuvansa.customer_collections AS collection
-       JOIN tuvansa.sales_remissions AS remission ON remission.id = collection.remission_id AND remission.company_id = collection.company_id
-       WHERE collection.company_id = 1`,
+      `SELECT ${collectionFields}, ${withLines(collectionLines)} AS lines FROM tuvansa.customer_collections AS posting
+       JOIN tuvansa.sales_remissions AS remission ON remission.id = posting.remission_id AND remission.company_id = posting.company_id
+       ${settlements} WHERE posting.company_id = 1`,
     );
     return views.length ? await read(client, views.join(' UNION ALL ')) : fallback;
   } catch (error) {
@@ -139,12 +144,12 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
     const code = row.code.trim();
     if (!accounts.has(code)) accounts.set(code, row);
   }
-  return localPolicy(record, record.lines.map(({ account, accountId, accountName, department, debit, credit, reference }, index) => {
+  return localPolicy(record, record.lines.map(({ account, accountId, accountName, department, debit, credit, reference, reconciled }, index) => {
     const details = accounts.get(account);
     return {
       id: index + 1, accountId: accountId ?? details?.id ?? 0, accountCode: account, accountName: accountName ?? details?.name ?? '',
       debit, credit, reference: reference ?? '', exchangeRate: record.exchangeRate, costCenter: Number(department) || 0,
-      reconciled: false, accountType: details?.type ?? 0,
+      reconciled: reconciled ?? false, accountType: details?.type ?? 0,
     };
   }));
 }

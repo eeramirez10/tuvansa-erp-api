@@ -1,0 +1,29 @@
+@baseUrl = http://localhost:3000/api
+@bankAccountId = 6610
+@depositId = 7300000000000
+@paymentId = 6900000000000
+@statementDate = 2026-11-23
+@previousBankBalance = 1000
+@statementBalance = 1025
+@requestKey = d11da802-8a96-45db-97e9-51f5702a516a
+
+### Abrir Conciliar. Usar summary.bankBalance y los movementId con canReconcile.
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation
+
+### Registrar el corte de prueba. Usar el saldo y los folios de la cuenta de prueba.
+POST {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation
+Content-Type: application/json
+
+{
+  "requestKey": "{{requestKey}}",
+  "movementIds": [{{depositId}}, {{paymentId}}],
+  "statementDate": "{{statementDate}}",
+  "statementBalance": {{statementBalance}},
+  "expectedBankBalance": {{previousBankBalance}}
+}
+
+### Consultar el saldo conciliado de la cuenta
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}
+
+### Consultar la marca y la fecha en los depósitos
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/deposits

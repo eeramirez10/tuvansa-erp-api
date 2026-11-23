@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import type { CaptureBankReconciliation } from '../../application/use-cases/capture-bank-reconciliation.js';
 import type { GetBankAccount } from '../../application/use-cases/get-bank-account.js';
 import type { GetBankAccountByCode } from '../../application/use-cases/get-bank-account-by-code.js';
 import type { GetBankPanel } from '../../application/use-cases/get-bank-panel.js';
@@ -23,6 +24,13 @@ const panelQuerySchema = z.object({
   costCenter: z.string().trim().min(1).max(3).default('1'),
   asOfDate: z.iso.date().default(new Date().toISOString().slice(0, 10)),
 });
+const reconciliationSchema = z.strictObject({
+  requestKey: z.uuid(),
+  movementIds: z.array(z.int().positive()).min(1),
+  statementDate: z.iso.date(),
+  statementBalance: z.number(),
+  expectedBankBalance: z.number(),
+});
 
 export class BankAccountsController {
   constructor(
@@ -32,6 +40,7 @@ export class BankAccountsController {
     private readonly searchBankAccounts: SearchBankAccounts,
     private readonly navigateBankAccount: NavigateBankAccount,
     private readonly getBankPanel: GetBankPanel,
+    private readonly captureReconciliation: CaptureBankReconciliation,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -87,6 +96,14 @@ export class BankAccountsController {
       const { bankAccountId } = idParamsSchema.parse(request.params);
       const options = panelQuerySchema.parse(request.query);
       response.json(await this.getBankPanel.execute(bankAccountId, key, options));
+    } catch (error) { next(error); }
+  };
+
+  reconcile: RequestHandler = async (request, response, next) => {
+    try {
+      const { bankAccountId } = idParamsSchema.parse(request.params);
+      const data = await this.captureReconciliation.save(1, bankAccountId, reconciliationSchema.parse(request.body));
+      response.status(201).json({ data });
     } catch (error) { next(error); }
   };
 }

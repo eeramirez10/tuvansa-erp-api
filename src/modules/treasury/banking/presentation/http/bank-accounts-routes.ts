@@ -13,6 +13,7 @@ export const createBankAccountsRouter = (controller: BankAccountsController): Ro
   router.get('/:bankAccountId/actions/payments', controller.panel('payments'));
   router.get('/:bankAccountId/actions/auxiliary', controller.panel('auxiliary'));
   router.get('/:bankAccountId/actions/reconciliation', controller.panel('reconciliation'));
+  router.post('/:bankAccountId/actions/reconciliation', controller.reconcile);
   router.get('/:bankAccountId/actions/automatic-reconciliation', controller.panel('automatic-reconciliation'));
   router.get('/:bankAccountId/actions/general-ledger', controller.panel('general-ledger'));
   router.get('/:bankAccountId/actions/cost-center-ledger', controller.panel('cost-center-ledger'));

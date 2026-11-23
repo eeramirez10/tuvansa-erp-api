@@ -24,7 +24,7 @@ export interface BankPanelResponse {
   section: 'actions';
   source: string[];
   available: boolean;
-  readOnly: true;
+  readOnly: boolean;
   items: unknown[];
   summary?: Record<string, unknown>;
   reason?: string;

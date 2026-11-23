@@ -60,6 +60,8 @@ La póliza se guarda en la misma transacción que la recepción, el movimiento d
 
 Las pólizas **PAGOS PR.** de `supplier_payments` se consultan por las mismas rutas. El abono va a la cuenta bancaria y el cargo va a la cuenta del proveedor con el folio de la recepción. **Cheque** muestra el folio local de cheque o transferencia. La familia, el sentido de los movimientos y el estado aplicado corresponden a `EPRV#25/120`.
 
+**REVERSIÓN PP** registra el cargo a Bancos y el abono al pasivo del proveedor. **CANCELACIÓN GA** intercambia los cargos y abonos de cada renglón de la póliza de Gastos múltiples, incluidos IVA y retenciones. El concepto de la contrapartida incluye el folio de la póliza original y el motivo.
+
 Las pólizas **COBRANZA** con folio `1CW` provienen de `customer_collections`. El cargo va a la cuenta bancaria y el abono a la cuenta de Cuentas por cobrar con el folio de la remisión. **Cheque** muestra la referencia bancaria capturada o el folio PAW. Se consultan por ID, folio, búsqueda y navegación, junto con las pólizas de la base histórica.
 
 Al registrar la conciliación de un depósito o pago web, la partida bancaria de su póliza aparece como conciliada. El estado se consulta en `bank_reconciliation_movements`. La póliza conserva sus cuentas, importes y aplicación.

@@ -10,6 +10,8 @@ import { isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes
 import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.js';
 import { paymentDocumentIdSql } from './postgres-purchase-payables.js';
 import { readLocalReceptionView, type LocalReceptionViewRecord } from './local-purchase-reception-view.js';
+import { supplierPaymentReversalSql, type PurchasePostingReversalReference } from './purchase-posting-reversal-reads.js';
+import { supplierPaymentReversalsAvailable } from './purchase-posting-reversal-tables.js';
 
 const reception = 'reception';
 const empty = { items: [], total: 0 };
@@ -47,16 +49,18 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     if (!items.length) return items;
     const rows = items.map((item) => item.toPrimitives());
     const debits = await readSupplierPayments(new Map<number, number>(), async (client) => {
+      const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
       const { rows: found } = await client.query<{ id: string; paid: string }>(
-        `SELECT ${paymentDocumentIdSql('payment')} AS id,sum(amount) AS paid
-         FROM tuvansa.supplier_payments AS payment WHERE company_id=1 AND ${paymentDocumentIdSql('payment')}=ANY($1::bigint[])
+        `SELECT ${paymentDocumentIdSql('payment')} AS id,coalesce(${reversal.paid},0) AS paid
+         FROM tuvansa.supplier_payments AS payment ${reversal.join}
+         WHERE payment.company_id=1 AND ${paymentDocumentIdSql('payment')}=ANY($1::bigint[])
          GROUP BY 1`,
         [rows.map(({ id }) => id)],
       );
       return new Map(found.map(({ id, paid }) => [Number(id), Number(paid)]));
     });
     return rows.map((row) => PurchaseReception.create({
-      ...row, totals: { ...row.totals, balance: money(row.totals.balance - (debits.get(row.id) ?? 0)) },
+      ...row, totals: { ...row.totals, balance: row.cancellation ? 0 : money(row.totals.balance - (debits.get(row.id) ?? 0)) },
     }));
   }
 
@@ -135,31 +139,52 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     if (!isLocalDocument(id)) return this.legacy.getPanel(id, key);
     const local = await this.record('id', id);
     if (!local) return null;
-    const { number, dates, orderNumber, supplierReference, classifications } = local.reception;
+    const { number, dates, orderNumber, supplierReference, classifications, cancellation } = local.reception;
     if (key === 'classifications') {
       return this.legacy.classificationPanel({ id, number }, classifications, 'postgres');
     }
     const amount = local.principal ?? 0;
-    const payments = await readSupplierPayments<Record<string, unknown>[]>([], async (client) => {
-      const { rows } = await client.query<{ id: string; date: string; number: string; amount: string; policyNumber: string }>(
-        `SELECT id::text,date::text,number,amount::text,policy_number AS "policyNumber"
-         FROM tuvansa.supplier_payments AS payment WHERE ${paymentDocumentIdSql('payment')}=$1 AND company_id=1 ORDER BY id`, [id],
+    const payments = await readSupplierPayments([], async (client) => {
+      const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
+      const { rows } = await client.query<{
+        id: number; date: string; number: string; amount: number; policyNumber: string;
+        reversal: PurchasePostingReversalReference | null;
+      }>(
+        `SELECT payment.id::float8,payment.date::text,payment.number,payment.amount::float8,payment.policy_number AS "policyNumber",
+                ${reversal.reference} AS reversal
+         FROM tuvansa.supplier_payments AS payment ${reversal.join}
+         WHERE ${paymentDocumentIdSql('payment')}=$1 AND payment.company_id=1 ORDER BY payment.id`, [id],
       );
-      return rows.map((row) => ({
-        id: Number(row.id), date: row.date, transactionType: 'PP', reference: row.number, relatedDocumentId: id,
-        charges: 0, payments: Number(row.amount), signedAmount: -Number(row.amount), relatedDocument: number,
-        policyNumber: row.policyNumber, policyId: Number(row.id),
-      }));
+      return rows.flatMap((row) => {
+        const original = {
+          id: row.id, date: row.date, transactionType: 'PP', reference: row.number, relatedDocumentId: id,
+          charges: 0, payments: row.amount, signedAmount: -row.amount, relatedDocument: number,
+          policyNumber: row.policyNumber, policyId: row.id,
+        };
+        return row.reversal ? [original, {
+          ...original, id: row.reversal.id, date: row.reversal.date, transactionType: 'RP',
+          charges: row.amount, payments: 0, signedAmount: row.amount,
+          policyNumber: row.reversal.policyNumber, policyId: row.reversal.id,
+        }] : [original];
+      });
     });
     const charge = local.principal !== null ? [{
       id, date: dates.receivedAt, transactionType: local.movementType, reference: orderNumber || supplierReference,
       relatedDocumentId: id, charges: amount, payments: 0, signedAmount: amount, relatedDocument: number,
       policyNumber: local.policyNumber ?? '', policyId: local.policyId,
     }] : [];
+    const cancelled = cancellation ? [{
+      id: cancellation.id, date: cancellation.date, transactionType: 'CG', reference: cancellation.reason,
+      relatedDocumentId: id, charges: 0, payments: amount, signedAmount: -amount, relatedDocument: number,
+      policyNumber: cancellation.policyNumber, policyId: cancellation.id,
+    }] : [];
+    const items = [...charge, ...payments, ...cancelled]
+      .sort((left, right) => (left.date ?? '').localeCompare(right.date ?? '')
+        || Number(right.id === id) - Number(left.id === id) || left.id - right.id);
     return {
       purchaseReception: { id, number }, key, section: 'actions', button: 'Auxiliar', source: 'postgres',
-      items: [...charge, ...payments],
-      summary: { total: money(amount + payments.reduce((total, row) => total + Number(row.signedAmount), 0)) },
+      items,
+      summary: { total: money(items.reduce((total, row) => total + row.signedAmount, 0)) },
     };
   }
 }

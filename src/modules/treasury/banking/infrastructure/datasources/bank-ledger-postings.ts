@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 
 interface MonthPosting {
   month: string;
@@ -25,6 +26,11 @@ async function monthlyPostings(client: PostgresClient, accountId: number, window
   );
   const source: string[] = [];
   if (tables?.payments) source.push('SELECT date,-amount AS amount FROM tuvansa.supplier_payments WHERE company_id=1 AND bank_account_id=$1');
+  if (tables?.payments && await supplierPaymentReversalsAvailable(client)) source.push(
+    `SELECT reversal.date,payment.amount FROM tuvansa.supplier_payment_reversals reversal
+     JOIN tuvansa.supplier_payments payment ON payment.id=reversal.payment_id AND payment.company_id=reversal.company_id
+     WHERE payment.company_id=1 AND payment.bank_account_id=$1`,
+  );
   if (tables?.collections) source.push('SELECT date,amount FROM tuvansa.customer_collections WHERE company_id=1 AND bank_account_id=$1');
   if (tables?.transfers) source.push(
     `SELECT t.date,m.amount FROM tuvansa.bank_transfer_movements m

@@ -1,6 +1,8 @@
 import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { supplierPaymentsAvailable } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { paymentDocumentIdSql, readPurchasePayables } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import { supplierPaymentReversalSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
+import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import type { BankSupplierExpenseReceipt, BankSupplierExpenseReceipts } from '../../domain/datasources/bank-supplier-expense-data-source.js';
 
 export class PostgresBankSupplierExpenseReceipts implements BankSupplierExpenseReceipts {
@@ -9,9 +11,10 @@ export class PostgresBankSupplierExpenseReceipts implements BankSupplierExpenseR
   pending(companyId: number): Promise<BankSupplierExpenseReceipt[]> {
     return readPurchasePayables<BankSupplierExpenseReceipt[]>([], async (client, payables) => {
       const withPayments = await supplierPaymentsAvailable(client);
+      const reversal = supplierPaymentReversalSql(withPayments && await supplierPaymentReversalsAvailable(client));
       const payments = withPayments ? `CROSS JOIN LATERAL (
-        SELECT coalesce(sum(amount),0) AS amount, (count(*)+1)::integer AS revision
-        FROM tuvansa.supplier_payments AS payment
+        SELECT coalesce(${reversal.paid},0) AS amount, ${reversal.revision} AS revision
+        FROM tuvansa.supplier_payments AS payment ${reversal.join}
         WHERE ${paymentDocumentIdSql('payment')}=receipt.id AND payment.company_id=receipt.company_id AND payment.supplier_id=receipt.supplier_id
       ) AS paid` : 'CROSS JOIN (SELECT 0::numeric AS amount,1::integer AS revision) AS paid';
       // Derivada. Lista el saldo y la revisión vigente con las mismas condiciones del pago de recepciones.

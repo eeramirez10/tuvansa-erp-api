@@ -1,17 +1,28 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { reversalReferenceSql } from './purchase-posting-reversal-reads.js';
 
 // La columna nueva es opcional en respaldos que sólo registraron pagos de recepciones.
 export const paymentDocumentIdSql = (alias: string) => `coalesce(${alias}.receipt_id,(to_jsonb(${alias})->>'expense_id')::bigint)`;
 
-export interface PurchaseDocumentTables { receipts: boolean; expenses: boolean }
+export interface PurchaseDocumentTables { receipts: boolean; expenses: boolean; expenseCancellations: boolean }
 
 async function purchaseDocumentTables(client: PostgresClient): Promise<PurchaseDocumentTables> {
   const { rows: [tables] } = await client.query<PurchaseDocumentTables>(
     `SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS receipts,
-            to_regclass('tuvansa.purchase_expense_documents') IS NOT NULL AS expenses`,
+            to_regclass('tuvansa.purchase_expense_documents') IS NOT NULL AS expenses,
+            to_regclass('tuvansa.purchase_expense_cancellations') IS NOT NULL AS "expenseCancellations"`,
   );
-  return tables ?? { receipts: false, expenses: false };
+  return tables ?? { receipts: false, expenses: false, expenseCancellations: false };
+}
+
+export function expenseCancellationSql(available: boolean) {
+  return {
+    cancelled: available ? 'cancellation.id IS NOT NULL' : 'false',
+    reference: available ? reversalReferenceSql('cancellation') : 'null::jsonb',
+    join: available ? `LEFT JOIN tuvansa.purchase_expense_cancellations cancellation
+      ON cancellation.batch_id=b.id AND cancellation.company_id=b.company_id` : '',
+  };
 }
 
 function payablesSql(tables: PurchaseDocumentTables): string | null {
@@ -30,16 +41,18 @@ function payablesSql(tables: PurchaseDocumentTables): string | null {
       null::text AS supplier_account,null::text AS supplier_account_name,
       r.result #>> '{reception,supplierReference}' AS supplier_reference,r.order_number,
       r.movement #>> '{header,type}' AS movement_type,r.user_id,r.accounting->>'number' AS policy_number,
-      CASE WHEN r.accounting IS NOT NULL THEN r.id END AS policy_id,r.created_at
+      CASE WHEN r.accounting IS NOT NULL THEN r.id END AS policy_id,r.created_at,null::jsonb AS cancellation
     FROM tuvansa.purchase_receptions r WHERE r.number LIKE 'RW%'`);
+  const cancellation = expenseCancellationSql(tables.expenseCancellations);
   if (tables.expenses) sources.push(`
     SELECT d.id,d.company_id,d.number,d.supplier_id,d.supplier_code,d.supplier_name,
       d.date AS received_at,d.due_date AS due_at,d.amount AS principal,
-      1 AS currency_id,1::numeric AS exchange_rate,false AS cancelled,d.supplier_account,d.supplier_account_name,
+      1 AS currency_id,1::numeric AS exchange_rate,${cancellation.cancelled} AS cancelled,d.supplier_account,d.supplier_account_name,
       d.reference AS supplier_reference,''::text AS order_number,'GA'::text AS movement_type,b.user_id,
-      b.policy_number,b.id AS policy_id,b.created_at
+      b.policy_number,b.id AS policy_id,b.created_at,${cancellation.reference} AS cancellation
     FROM tuvansa.purchase_expense_documents d
-    JOIN tuvansa.purchase_expense_batches b ON b.id=d.batch_id AND b.company_id=d.company_id`);
+    JOIN tuvansa.purchase_expense_batches b ON b.id=d.batch_id AND b.company_id=d.company_id
+    ${cancellation.join}`);
   return sources.length ? sources.join(' UNION ALL ') : null;
 }
 

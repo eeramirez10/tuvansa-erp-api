@@ -29,4 +29,7 @@ export function validateSupplierPayment(target: SupplierPaymentTarget, input: Su
   if (target.receivedAt && input.date < target.receivedAt.slice(0, 10)) {
     throw new ApplicationError('La fecha del pago debe ser igual o posterior a la fecha del documento.', 'SUPPLIER_PAYMENT_DATE_INVALID', 422);
   }
+  if (target.latestReversalDate && input.date < target.latestReversalDate) {
+    throw new ApplicationError('La fecha del pago debe ser igual o posterior a la última reversión del documento.', 'SUPPLIER_PAYMENT_DATE_INVALID', 422);
+  }
 }

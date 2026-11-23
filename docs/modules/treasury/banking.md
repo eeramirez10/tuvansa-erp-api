@@ -67,7 +67,7 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | --- | --- | --- |
 | Movimientos | `/:bankAccountId/actions/movements` | OMNIS no ejecuta SQL: muestra que no puede generar movimientos cuando la contabilidad está activa |
 | Depósitos | `/:bankAccountId/actions/deposits` | OMNIS indica que el movimiento se genera mediante póliza. La vista web consulta los depósitos registrados en Cobranza |
-| Pagos | `/:bankAccountId/actions/payments` | Para los pagos locales consulta el abono y la póliza en PostgreSQL |
+| Pagos | `/:bankAccountId/actions/payments` | Consulta el abono local y su póliza. Al seleccionar un PP web aparece **Revertir PP** o **Ver reversión** |
 | Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA` para la consulta histórica. Los movimientos web pendientes se pueden seleccionar |
 | Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC` e importación CSV o TSV. El botón **Registra** usa el mismo POST de Conciliar. |
 | Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal. La web muestra comentarios, póliza y fecha de conciliación cuando existen. |
@@ -78,6 +78,8 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | Clasificar | `/:bankAccountId/actions/classifiers` | Nueve niveles de `FAG`, `AGT=1..9` y `AGTIPO=3`, con valores de `FBENC.BPAR1..9`. El PATCH guarda las claves disponibles. |
 | Traspasos entre Cuentas | `/:bankAccountId/actions/transfer/capture?direction=outgoing` | `FTIPMV.TICLA='3'` y `FCIA.CIAPOLIZACONT`. El POST en `/:bankAccountId/actions/transfer` registra Cheque o Traspas y la póliza de diario con dos partidas. |
 | Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0`. Consulta, comentarios e impresión si hay una póliza seleccionada. |
+
+La reversión de un PP pendiente desde Bancos o Proveedores restablece el saldo contable por el importe del pago. **Pagos** y **Auxiliar** conservan el abono PP y el cargo RP en su fecha respectiva. Ambas partidas quedan fuera de la conciliación. Un PP conciliado conserva su marca y corte y queda bloqueado para la reversión.
 
 Todos los paneles devuelven `button`, `section`, `source`, `available`,
 `readOnly`, `items` y, cuando corresponde, `summary`. Los requests

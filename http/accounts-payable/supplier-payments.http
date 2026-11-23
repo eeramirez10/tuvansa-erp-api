@@ -5,6 +5,8 @@
 @revision = 1
 @requestKey = generar-uuid-por-pago
 @paymentDate = 2026-11-23
+@paymentId = copiar-id-del-pago-web
+@reversalKey = generar-uuid-por-reversion
 
 ### Previsualizar el saldo y las cuentas autorizadas
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{receiptId}}
@@ -25,3 +27,17 @@ Content-Type: application/json
 
 ### Consultar el abono en Bancos
 GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/payments
+
+### Consultar si el pago sigue pendiente de conciliación
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{paymentId}}/reversal
+
+### Revertir el pago y reabrir el saldo del documento
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{paymentId}}/reversal
+Content-Type: application/json
+
+{
+  "requestKey": "{{reversalKey}}",
+  "date": "{{paymentDate}}",
+  "reason": "Reversión de prueba",
+  "confirmed": true
+}

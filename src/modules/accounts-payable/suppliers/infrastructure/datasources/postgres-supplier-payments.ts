@@ -9,6 +9,8 @@ import {
   ensurePurchaseExpenseSchema, isLocalPurchaseExpenseDocumentId,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
 import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import { supplierPaymentReversalSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
+import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import type { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
@@ -118,18 +120,21 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
   private async findTarget(client: PostgresClient, identity: SupplierPaymentIdentity, withPayments: boolean) {
     const source = await localPurchasePayablesSql(client);
     if (!source) return null;
+    const reversal = supplierPaymentReversalSql(withPayments && await supplierPaymentReversalsAvailable(client));
     const { rows: [row] } = await client.query<SupplierPaymentTarget>(
       `SELECT r.id::float8 AS "receiptId", r.number,
          r.received_at::text AS "receivedAt", r.cancelled, r.principal::float8 AS principal,
          r.currency_id AS "currencyId", r.exchange_rate::float8 AS "exchangeRate",
-         ${withPayments ? 'GREATEST(r.principal - p.paid,0)' : 'r.principal'}::float8 AS remaining,
+         (CASE WHEN r.cancelled THEN 0 ELSE ${withPayments ? 'GREATEST(r.principal - p.paid,0)' : 'r.principal'} END)::float8 AS remaining,
          ${withPayments ? 'p.revision' : '1'} AS revision,
+         ${withPayments ? 'p.latest_reversal_date' : 'null::text'} AS "latestReversalDate",
          CASE WHEN r.supplier_account IS NOT NULL THEN
            jsonb_build_object('code',r.supplier_account,'name',r.supplier_account_name) END AS liability
        FROM (${source}) r
        ${withPayments ? `CROSS JOIN LATERAL (
-         SELECT COALESCE(sum(amount),0) AS paid, (count(*) + 1)::integer AS revision
-         FROM tuvansa.supplier_payments payment
+         SELECT COALESCE(${reversal.paid},0) AS paid, ${reversal.revision} AS revision,
+                ${reversal.latestDate} AS latest_reversal_date
+         FROM tuvansa.supplier_payments payment ${reversal.join}
          WHERE ${paymentDocumentIdSql('payment')} = r.id AND payment.company_id=r.company_id AND payment.supplier_id=r.supplier_id
        ) p` : ''}
        WHERE r.id=$1 AND r.company_id=$2 AND r.supplier_id=$3`,

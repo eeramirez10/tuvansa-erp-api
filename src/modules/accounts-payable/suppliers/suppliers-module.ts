@@ -1,4 +1,7 @@
 import type { Router } from 'express';
+import { ReversePurchasePosting } from '../../purchasing/purchase-receptions/application/use-cases/reverse-purchase-posting.js';
+import { MysqlPostingReversalReferences } from '../../purchasing/purchase-receptions/infrastructure/datasources/mysql-posting-reversal-references.js';
+import { PostgresPurchasePostingReversals } from '../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-posting-reversals.js';
 import { BankAccountsWithCatalogDataSource } from '../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import { CaptureSupplierPayment } from './application/use-cases/capture-supplier-payment.js';
 import { GetFirstSupplier } from './application/use-cases/get-first-supplier.js';
@@ -35,5 +38,6 @@ export const createSuppliersModule = (): Router => {
     ),
   );
 
-  return createSuppliersRouter(controller);
+  const reversals = new ReversePurchasePosting(new PostgresPurchasePostingReversals(), new MysqlPostingReversalReferences());
+  return createSuppliersRouter(controller, reversals);
 };

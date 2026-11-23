@@ -23,6 +23,7 @@ function movementRow(charge: SupplierPurchaseReceptionCharge) {
     userId: charge.userId, exchangeDifference: 0, exchangeRate: charge.exchangeRate,
     policy: charge.policyNumber ?? '', policyId: charge.policyId, documentReference: charge.supplierReference,
     accountType: 0, currency: charge.currencyId,
+    ...(charge.cancellation ? { cancellation: charge.cancellation } : {}),
   };
 }
 
@@ -33,14 +34,31 @@ function paymentRow(charge: SupplierPurchaseReceptionCharge, payment: SupplierPu
     userId: payment.userId, exchangeDifference: 0, exchangeRate: charge.exchangeRate,
     policy: payment.policyNumber, policyId: payment.id, documentReference: charge.supplierReference,
     accountType: 0, currency: charge.currencyId,
+    paymentId: payment.id, canReverse: true,
+    ...(payment.reversal ? { reversal: payment.reversal } : {}),
   };
 }
 
 function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
-  return charges.flatMap((charge) => [
-    { createdAt: charge.createdAt, row: movementRow(charge) },
-    ...charge.payments.map((payment) => ({ createdAt: payment.createdAt, row: paymentRow(charge, payment) })),
-  ]).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.row.id - right.row.id)
+  return charges.flatMap((charge) => {
+    const original = movementRow(charge);
+    const movements = [{ createdAt: charge.createdAt, row: original }];
+    for (const payment of charge.payments) {
+      movements.push({ createdAt: payment.createdAt, row: paymentRow(charge, payment) });
+      const reversal = payment.reversal;
+      if (reversal) movements.push({ createdAt: reversal.createdAt, row: {
+        ...original, id: reversal.id, date: reversal.date, amount: payment.amount, movementType: 'RP',
+        policy: reversal.policyNumber, policyId: reversal.id, userId: reversal.userId, paymentReference: payment.number,
+      } });
+    }
+    const cancellation = charge.cancellation;
+    if (cancellation) movements.push({ createdAt: cancellation.createdAt, row: {
+      ...original, id: cancellation.id, date: cancellation.date, amount: -charge.principal, movementType: 'CG',
+      policy: cancellation.policyNumber, policyId: cancellation.id, userId: cancellation.userId,
+      paymentReference: cancellation.reason,
+    } });
+    return movements;
+  }).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.row.id - right.row.id)
     .map(({ row }) => row);
 }
 

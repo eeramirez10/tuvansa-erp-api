@@ -1,6 +1,8 @@
 import { isLocalSupplierPaymentId, supplierPaymentsAvailable } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { customerCollectionsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
+import { supplierPaymentReversalSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
+import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import {
@@ -115,12 +117,14 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     if (payments.length + deposits.length + transfers.length !== ids.length) return [];
     const movements: BankReconciliationMovement[] = [];
     if (payments.length && await supplierPaymentsAvailable(client)) {
+      const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
       const { rows } = await client.query<BankReconciliationMovement>(
-        `SELECT p.id::float8 AS id,p.date::text,(-p.amount)::float8 AS amount
-         FROM tuvansa.supplier_payments p
-         WHERE p.company_id=$1 AND p.bank_account_id=$2 AND p.id=ANY($3::bigint[])
-           AND NOT EXISTS (SELECT 1 FROM tuvansa.bank_reconciliation_movements m WHERE m.movement_id=p.id)
-         FOR KEY SHARE OF p`, [companyId, accountId, payments],
+        `SELECT payment.id::float8 AS id,payment.date::text,(-payment.amount)::float8 AS amount
+         FROM tuvansa.supplier_payments payment ${reversal.join}
+         WHERE payment.company_id=$1 AND payment.bank_account_id=$2 AND payment.id=ANY($3::bigint[])
+           AND ${reversal.active}
+           AND NOT EXISTS (SELECT 1 FROM tuvansa.bank_reconciliation_movements m WHERE m.movement_id=payment.id)
+         FOR KEY SHARE OF payment`, [companyId, accountId, payments],
       );
       movements.push(...rows);
     }

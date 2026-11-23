@@ -1,6 +1,6 @@
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { PurchaseReceptionProps } from '../../domain/entities/purchase-reception.js';
-import { readPurchaseDocuments, type PurchaseDocumentTables } from './postgres-purchase-payables.js';
+import { expenseCancellationSql, readPurchaseDocuments, type PurchaseDocumentTables } from './postgres-purchase-payables.js';
 
 export interface LocalReceptionViewRecord {
   reception: PurchaseReceptionProps;
@@ -27,12 +27,14 @@ const expenseLines = `(
     FROM jsonb_array_elements(d.lines) WITH ORDINALITY AS line(item,position)
   )`;
 
-function expenseView(includeLines: boolean) {
+function expenseView(includeLines: boolean, withCancellations: boolean) {
+  const cancellation = expenseCancellationSql(withCancellations);
   return `SELECT d.id,d.company_id,d.number,''::text AS order_number,
     jsonb_build_object(
       'id',d.id,'number',d.number,'orderNumber','','supplierReference',d.reference,
       'supplier',jsonb_build_object('id',d.supplier_id,'code',d.supplier_code,'name',d.supplier_name),
-      'department','','warehouse','','branch',0,'status','2','cancelled',false,'delayDays',0,
+      'department','','warehouse','','branch',0,'status',CASE WHEN ${cancellation.cancelled} THEN 'C' ELSE '2' END,
+      'cancelled',${cancellation.cancelled},'cancellation',${cancellation.reference},'delayDays',0,
       'dates',jsonb_build_object('receivedAt',d.date,'dueAt',d.due_date,'orderedAt',null),
       'classifications',jsonb_build_array('','','','','','','','',''),'discountPercentages',jsonb_build_array(0,0,0),
       'totals',jsonb_build_object(
@@ -41,11 +43,12 @@ function expenseView(includeLines: boolean) {
         'taxPercentage',CASE WHEN d.base<>0 THEN round(d.vat/d.base*100,2) ELSE 0 END,
         'tax',d.vat,'withholdingTax',d.vat_withholding+d.income_withholding,
         'expenseTaxes',jsonb_build_object('vatWithholding',d.vat_withholding,'incomeWithholding',d.income_withholding),
-        'total',d.amount,'balance',d.amount
+        'total',d.amount,'balance',CASE WHEN ${cancellation.cancelled} THEN 0 ELSE d.amount END
       ),'lines',${includeLines ? expenseLines : "'[]'::jsonb"}
     ) AS reception,d.amount AS principal,'GA'::text AS movement_type,b.policy_number,b.id AS policy_id
     FROM tuvansa.purchase_expense_documents d
-    JOIN tuvansa.purchase_expense_batches b ON b.id=d.batch_id AND b.company_id=d.company_id`;
+    JOIN tuvansa.purchase_expense_batches b ON b.id=d.batch_id AND b.company_id=d.company_id
+    ${cancellation.join}`;
 }
 
 export function readLocalReceptionView<T>(
@@ -54,7 +57,7 @@ export function readLocalReceptionView<T>(
   return readPurchaseDocuments(fallback, (client, tables: PurchaseDocumentTables) => {
     const sources = [];
     if (tables.receipts) sources.push(receiptView);
-    if (tables.expenses) sources.push(expenseView(includeLines));
+    if (tables.expenses) sources.push(expenseView(includeLines, tables.expenseCancellations));
     return read(client, sources.join(' UNION ALL '));
   });
 }

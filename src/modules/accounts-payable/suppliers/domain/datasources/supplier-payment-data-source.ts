@@ -29,6 +29,7 @@ export interface SupplierPaymentTarget {
   receiptId: number;
   number: string;
   receivedAt: string | null;
+  latestReversalDate?: string | null;
   cancelled: boolean;
   principal: number;
   currencyId: number;

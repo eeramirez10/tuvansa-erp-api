@@ -1,8 +1,11 @@
 import { Router } from 'express';
+import type { ReversePurchasePosting } from '../../../../purchasing/purchase-receptions/application/use-cases/reverse-purchase-posting.js';
+import { postingReversalHandlers } from '../../../../purchasing/purchase-receptions/presentation/http/posting-reversal-handlers.js';
 import type { SuppliersController } from './suppliers-controller.js';
 
-export const createSuppliersRouter = (controller: SuppliersController): Router => {
+export const createSuppliersRouter = (controller: SuppliersController, reversals: ReversePurchasePosting): Router => {
   const router = Router();
+  const reversal = postingReversalHandlers(reversals, 'payment');
 
   router.get('/', controller.search);
   router.get('/first', controller.getFirst);
@@ -18,6 +21,8 @@ export const createSuppliersRouter = (controller: SuppliersController): Router =
   router.get('/:supplierId/movements', controller.panel('movements'));
   router.get('/:supplierId/payments/:receiptId', controller.preparePayment);
   router.post('/:supplierId/payments/:receiptId', controller.createPayment);
+  router.get('/:supplierId/payments/:paymentId/reversal', reversal.prepare);
+  router.post('/:supplierId/payments/:paymentId/reversal', reversal.save);
   router.get('/:supplierId/invoices', controller.panel('invoices'));
   router.get('/:supplierId/products/ordered', controller.panel('ordered-products'));
   router.get('/:supplierId/fill-rate', controller.panel('fill-rate'));

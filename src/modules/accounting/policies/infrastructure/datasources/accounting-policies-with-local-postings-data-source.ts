@@ -7,6 +7,10 @@ import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/cli
 import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { isLocalPurchaseExpenseBatchId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
 import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import {
+  isLocalPurchaseExpenseCancellationId, isLocalSupplierPaymentReversalId,
+  purchaseExpenseCancellationsAvailable, supplierPaymentReversalsAvailable,
+} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
@@ -67,6 +71,29 @@ const paymentLines = `jsonb_build_array(
     jsonb_build_object('account', posting.supplier_account, 'accountName', posting.supplier_account_name,
       'department', '', 'debit', posting.amount, 'credit', 0, 'reference', receipt.number)
   )`;
+const paymentReversalFields = `
+    reversal.id, reversal.policy_number AS number, reversal.company_id AS company, reversal.user_id AS "userId",
+    reversal.date::text AS date, reversal.number AS cheque,
+    receipt.supplier_name AS beneficiary, 'REVERSIÓN PP'::text AS family,
+    concat('Reversión de ', posting.policy_number, ' · ', reversal.reason) AS concept,
+    reversal.created_at AS "auditAt", receipt.exchange_rate::float8 AS "exchangeRate"`;
+const paymentReversalLines = `jsonb_build_array(
+    jsonb_build_object('account', posting.bank_code, 'accountId', posting.bank_account_id,
+      'accountName', posting.bank_name, 'department', '', 'debit', posting.amount, 'credit', 0,
+      'reference', posting.policy_number),
+    jsonb_build_object('account', posting.supplier_account, 'accountName', posting.supplier_account_name,
+      'department', '', 'debit', 0, 'credit', posting.amount, 'reference', receipt.number)
+  )`;
+const expenseCancellationFields = `
+    cancellation.id, cancellation.policy_number AS number, cancellation.company_id AS company, cancellation.user_id AS "userId",
+    cancellation.date::text AS date, batch.reference AS cheque, batch.beneficiary, 'CANCELACIÓN GA'::text AS family,
+    concat('Cancelación de ', batch.policy_number, ' · ', cancellation.reason) AS concept,
+    cancellation.created_at AS "auditAt", 1::float8 AS "exchangeRate"`;
+const expenseCancellationLines = `(
+    SELECT jsonb_agg(line.value || jsonb_build_object('debit',line.value->'credit','credit',line.value->'debit')
+                     ORDER BY line.position)
+    FROM jsonb_array_elements(batch.accounting_lines) WITH ORDINALITY AS line(value,position)
+  )`;
 const collectionFields = `
     posting.id, posting.policy_number AS number, posting.company_id AS company, posting.user_id AS "userId",
     posting.date::text AS date, coalesce(nullif(posting.reference,''),posting.number) AS cheque,
@@ -99,7 +126,8 @@ const transferLines = (settlements: string) => `(
 const money = (amount: number) => Number(amount.toFixed(2));
 const isLocalPolicyId = (id: number) =>
   isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseBatchId(id) || isLocalSupplierPaymentId(id)
-    || isLocalCustomerCollectionId(id) || isLocalBankTransferId(id);
+    || isLocalCustomerCollectionId(id) || isLocalBankTransferId(id)
+    || isLocalPurchaseExpenseCancellationId(id) || isLocalSupplierPaymentReversalId(id);
 
 async function readLocalPolicies<T>(
   fallback: T, detail: boolean, read: (client: PostgresClient, view: string) => Promise<T>,
@@ -128,12 +156,26 @@ async function readLocalPolicies<T>(
       `SELECT ${expenseFields}, ${withLines('accounting_lines')} AS lines
        FROM tuvansa.purchase_expense_batches WHERE company_id=1`,
     );
+    if (tables?.expenses && await purchaseExpenseCancellationsAvailable(client)) views.push(
+      `SELECT ${expenseCancellationFields}, ${withLines(expenseCancellationLines)} AS lines
+       FROM tuvansa.purchase_expense_cancellations cancellation
+       JOIN tuvansa.purchase_expense_batches batch ON batch.id=cancellation.batch_id AND batch.company_id=cancellation.company_id
+       WHERE cancellation.company_id=1`,
+    );
     const payables = tables?.payments ? await localPurchasePayablesSql(client) : null;
     if (payables) views.push(
       `SELECT ${paymentFields}, ${withLines(paymentLines)} AS lines FROM tuvansa.supplier_payments AS posting
        JOIN (${payables}) AS receipt ON receipt.id=${paymentDocumentIdSql('posting')}
          AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
        ${settlements} WHERE posting.company_id = 1`,
+    );
+    if (payables && await supplierPaymentReversalsAvailable(client)) views.push(
+      `SELECT ${paymentReversalFields}, ${withLines(paymentReversalLines)} AS lines
+       FROM tuvansa.supplier_payment_reversals reversal
+       JOIN tuvansa.supplier_payments posting ON posting.id=reversal.payment_id AND posting.company_id=reversal.company_id
+       JOIN (${payables}) receipt ON receipt.id=${paymentDocumentIdSql('posting')}
+         AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
+       WHERE reversal.company_id=1`,
     );
     if (tables?.collections) views.push(
       `SELECT ${collectionFields}, ${withLines(collectionLines)} AS lines FROM tuvansa.customer_collections AS posting

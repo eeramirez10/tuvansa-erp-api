@@ -54,6 +54,9 @@ del borrador.
 | OK | POST `/general-expenses` | Escritura derivada de `ERECEP#12/401–403,411–412` en `purchase_expense_batches` y `purchase_expense_documents` |
 | Documento, Búsqueda y Auxiliar | GET `/:id`, `/by-number/:number`, `/` y `/:id/actions/auxiliary` | Ficha de GA, importes y movimientos GA y PP del documento |
 | Proveedores → Saldo → Paga | GET y POST `/api/accounts-payable/suppliers/:supplierId/payments/:receiptId` | Pagos parciales o liquidación. El PP usa la cuenta de pasivo del GA guardado y actualiza Recepciones, Proveedores, Bancos y Contabilidad |
+| Cancelar GA | GET y POST `/:id/actions/cancel-expense` | Previsualiza todos los documentos de la póliza y registra su cancelación en `purchase_expense_cancellations` |
+
+La cancelación se aplica a todos los documentos de la póliza GA web. Requiere motivo, confirmación, fecha dentro del periodo abierto y que se hayan revertido todos los PP del lote. El auxiliar muestra el GA original junto con el movimiento **CG**. Contabilidad invierte los cargos y abonos del GA, incluido IVA y retenciones.
 
 `ERECEP#12/402` agrupa documentos por proveedor y referencia, y líneas por
 producto y centro de costo. El saldo por pagar es importe más IVA menos

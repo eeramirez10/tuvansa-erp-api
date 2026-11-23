@@ -1,5 +1,9 @@
 import { readSupplierPayments } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import {
+  reversalReferenceSql, supplierPaymentReversalSql, type PurchasePostingReversalReference,
+} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
+import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
@@ -22,9 +26,11 @@ export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCat
     const data = account.toPrimitives();
     const [payments, collections, transfers, reconciled] = await Promise.all([
       readSupplierPayments(emptyPostings, async (client) => {
+        const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
         const { rows: [row] } = await client.query<typeof emptyPostings>(
-          `SELECT coalesce(sum(amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements"
-           FROM tuvansa.supplier_payments WHERE bank_account_id=$1 AND company_id=1`, [data.id],
+          `SELECT coalesce(${reversal.paid},0)::float8 AS amount, count(*) > 0 AS "hasMovements"
+           FROM tuvansa.supplier_payments payment ${reversal.join}
+           WHERE payment.bank_account_id=$1 AND payment.company_id=1`, [data.id],
         );
         return row ?? emptyPostings;
       }),
@@ -79,7 +85,12 @@ interface LocalBankRow {
   statementDate: string | null;
 }
 
-interface BankPaymentRow extends LocalBankRow { mode: 'check' | 'transfer' }
+interface BankPaymentRow extends LocalBankRow {
+  mode: 'check' | 'transfer';
+  offset: boolean;
+  supplierId: number;
+  reversal: PurchasePostingReversalReference | null;
+}
 interface BankCollectionRow extends LocalBankRow { reference: string }
 interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string; mode: 'check' | 'transfer' }
 
@@ -92,7 +103,10 @@ const bankRow = ({ id, number, policyNumber, date, beneficiary, description, use
 });
 
 const paymentRow = (row: BankPaymentRow) => ({
-  ...bankRow(row), bankNumber: row.number, movementType: 'PP', charge: 0, credit: Number(row.amount), mode: row.mode,
+  ...bankRow(row), bankNumber: row.number, movementType: row.offset ? 'RP' : 'PP',
+  charge: row.offset ? Number(row.amount) : 0, credit: row.offset ? 0 : Number(row.amount), mode: row.mode,
+  ...(row.offset ? {} : { supplierId: row.supplierId, paymentId: Number(row.id), canReverse: true }),
+  ...(row.reversal ? { reversal: row.reversal } : {}),
 });
 const collectionRow = (row: BankCollectionRow) => ({
   ...bankRow(row), bankNumber: row.reference || row.number,
@@ -154,19 +168,38 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       const payables = await localPurchasePayablesSql(client);
       if (!payables) return [];
       const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
+      const withReversals = await supplierPaymentReversalsAvailable(client);
+      const pending = pendingReconciliation(key);
+      const includeReversed = !pending && key !== 'authorization-review';
+      const reversalJoin = withReversals ? `LEFT JOIN tuvansa.supplier_payment_reversals reversal
+        ON reversal.payment_id=posting.id AND reversal.company_id=posting.company_id` : '';
+      const scope = `FROM tuvansa.supplier_payments AS posting
+        JOIN (${payables}) AS receipt ON receipt.id=${paymentDocumentIdSql('posting')}
+          AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
+        ${reversalJoin}`;
       const { rows } = await client.query<BankPaymentRow>(
-        `SELECT posting.id::text, posting.number, posting.policy_number AS "policyNumber",
+        `WITH entries AS (
+          SELECT posting.id, posting.number, posting.policy_number AS "policyNumber",
                 posting.date::text, posting.amount::text, posting.description, posting.user_id AS "userId",
                 posting.mode, receipt.supplier_name AS beneficiary,
-                settlement.statement_date::text AS "statementDate"
-         FROM tuvansa.supplier_payments AS posting
-         JOIN (${payables}) AS receipt ON receipt.id=${paymentDocumentIdSql('posting')}
-           AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
-         ${join}
-         WHERE posting.bank_account_id = $1 AND posting.company_id = 1
-           AND ($2::date IS NULL OR posting.date >= $2) AND ($3::date IS NULL OR posting.date <= $3)
-           ${pendingReconciliation(key) ? 'AND settlement.statement_date IS NULL' : ''}
-         ORDER BY posting.id LIMIT 32767`,
+                settlement.statement_date::text AS "statementDate", false AS "offset",
+                posting.supplier_id::float8 AS "supplierId",
+                ${withReversals ? reversalReferenceSql('reversal') : 'null::jsonb'} AS reversal
+          ${scope} ${join}
+          WHERE posting.bank_account_id=$1 AND posting.company_id=1
+            ${pending ? 'AND settlement.statement_date IS NULL' : ''}
+            ${!includeReversed && withReversals ? 'AND reversal.id IS NULL' : ''}
+          ${withReversals && includeReversed ? `UNION ALL
+          SELECT reversal.id,reversal.number,reversal.policy_number,reversal.date::text,posting.amount::text,
+                 reversal.reason,reversal.user_id,posting.mode,receipt.supplier_name,NULL::text,true,
+                 posting.supplier_id::float8,NULL::jsonb
+          ${scope}
+          WHERE posting.bank_account_id=$1 AND posting.company_id=1 AND reversal.id IS NOT NULL` : ''}
+         )
+         SELECT id::text,number,"policyNumber",date,amount,description,"userId",mode,beneficiary,"statementDate","offset","supplierId",reversal
+         FROM entries
+         WHERE ($2::date IS NULL OR date::date >= $2) AND ($3::date IS NULL OR date::date <= $3)
+         ORDER BY date,id LIMIT 32767`,
         [id, start, end],
       );
       return rows.map(paymentRow);

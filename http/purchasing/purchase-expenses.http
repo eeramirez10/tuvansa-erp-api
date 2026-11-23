@@ -7,6 +7,7 @@
 @bankAccountId = 6610
 @expenseId = 7910000000000
 @paymentRevision = 1
+@cancellationKey = generar-uuid-por-cancelacion
 
 ### Preparar Gastos múltiples
 GET {{expenses}}/create
@@ -64,4 +65,18 @@ Content-Type: application/json
   "amount": 30,
   "date": "{{GAdate}}",
   "description": "Pago parcial de GA de prueba"
+}
+
+### Consultar la cancelación y los documentos de la misma póliza
+GET {{receptions}}/{{expenseId}}/actions/cancel-expense
+
+### Cancelar todos los documentos del lote sin pagos PP vigentes
+POST {{receptions}}/{{expenseId}}/actions/cancel-expense
+Content-Type: application/json
+
+{
+  "requestKey": "{{cancellationKey}}",
+  "date": "{{GAdate}}",
+  "reason": "Cancelación de prueba",
+  "confirmed": true
 }

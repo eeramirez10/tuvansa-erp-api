@@ -47,7 +47,9 @@ La consulta inicial observada en OMNIS carga los identificadores con `SELECT PRV
 
 Todas las rutas anteriores se montan bajo `/api/accounts-payable/suppliers`.
 
-El saldo local de una recepción se obtiene restando de su cargo original los pagos registrados en `supplier_payments`. **Saldo** conserva ambos importes y muestra las recepciones web que tienen un pendiente positivo. **Movimientos** conserva el cargo **RA** y muestra cada abono **PP** con el folio de cheque o transferencia y el número de póliza. La correspondencia del abono proviene de `EPRV#25/120`.
+El saldo local de una recepción se obtiene restando de su cargo original los pagos vigentes de `supplier_payments`. **Saldo** conserva ambos importes y muestra los documentos web con pendiente positivo. **Movimientos** conserva el cargo de origen y muestra cada abono **PP** con su folio de cheque o transferencia y su póliza. La correspondencia del abono proviene de `EPRV#25/120`.
+
+**Movimientos → Revertir PP** consulta y registra en `GET/POST /api/accounts-payable/suppliers/:supplierId/payments/:paymentId/reversal`. Requiere motivo, confirmación y fecha dentro del periodo abierto. La contrapartida **RP** reabre el saldo y queda vinculada a la póliza de reversión. La operación queda bloqueada si el pago pertenece a un corte conciliado.
 
 ## Correspondencia visual
 

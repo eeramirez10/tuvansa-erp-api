@@ -31,6 +31,9 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     (path === '/purchasing/purchase-receptions' || path === '/purchasing/purchase-receptions/general-expenses');
   const createSupplierPayment = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*$/.test(path);
+  const reversePurchasePosting = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
+    (/^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*\/reversal$/.test(path) ||
+      /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/cancel-expense$/.test(path));
   const createSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/sales/invoices/from-order';
   const simulateSalesStamping = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/sales\/invoices\/[1-9]\d*\/actions\/seal\/simulation$/.test(path);
@@ -44,6 +47,6 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const bankActions = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(transfer|supplier-expenses)$/.test(path)) ||
      (req.method === 'PATCH' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(classifiers|general-ledger|cost-center-ledger|authorization-review)$/.test(path)));
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment || createSalesRemission || simulateSalesStamping || createCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions) { next(); return; }
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment || reversePurchasePosting || createSalesRemission || simulateSalesStamping || createCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

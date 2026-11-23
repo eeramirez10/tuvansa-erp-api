@@ -17,6 +17,7 @@ import { createOrdersModule } from './modules/sales/orders/orders-module.js';
 import { createSalesReportsModule } from './modules/sales/reports/sales-reports-module.js';
 import { createCollectionCommissionsModule } from './modules/sales/commissions/collection-commissions-module.js';
 import { createBankingModule } from './modules/treasury/banking/banking-module.js';
+import { createCompaniesRouter } from './modules/companies/presentation/http/companies-routes.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
 import { postgresWriteBoundary } from './shared/infrastructure/http/postgres-write-boundary.js';
@@ -35,6 +36,7 @@ export const createApp = (): Express => {
     response.json({ status: 'ok' });
   });
 
+  app.use(`${env.API_PREFIX}/companies`, createCompaniesRouter());
   app.use(`${env.API_PREFIX}/accounts-receivable/clients`, createClientsModule());
   app.use(`${env.API_PREFIX}/accounts-payable/suppliers`, createSuppliersModule());
   app.use(`${env.API_PREFIX}/accounting/policies`, createAccountingPoliciesModule());

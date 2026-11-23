@@ -1,0 +1,13 @@
+@baseUrl = http://localhost:3000/api
+
+### Selección de multicía
+GET {{baseUrl}}/companies
+
+### México, Cía. 1
+GET {{baseUrl}}/companies/1/context
+
+### Compañía conocida aún deshabilitada (403 COMPANY_DISABLED)
+GET {{baseUrl}}/companies/2/context
+
+### Compañía desconocida (404 COMPANY_NOT_FOUND)
+GET {{baseUrl}}/companies/99/context

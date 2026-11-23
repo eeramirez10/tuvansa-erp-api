@@ -3,6 +3,7 @@ import type { PurchaseOrderEditStorage } from '../../domain/datasources/purchase
 import type { PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderConversionStorage } from '../../domain/datasources/purchase-order-conversion-data-source.js';
 import type { PurchaseOrderCommentsStorage } from '../../domain/datasources/purchase-order-comments-data-source.js';
+import { readPurchaseOrderPieces, type PurchaseOrderPiecesStorage } from '../../domain/datasources/purchase-order-pieces-data-source.js';
 import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
@@ -33,7 +34,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     private readonly classificationStorage: PurchaseOrderClassificationStorage,
     private readonly editStorage: PurchaseOrderEditStorage & Pick<PurchaseOrderAuthorizationStorage, 'findAuthorizationEvents'> &
       Pick<PurchaseOrderSupplierChangeStorage, 'findSupplierChanges'> & Pick<PurchaseOrderConversionStorage, 'findKindOverrides'> &
-      Pick<PurchaseOrderCommentsStorage, 'findCommentOverrides'>,
+      Pick<PurchaseOrderCommentsStorage, 'findCommentOverrides'> & Pick<PurchaseOrderPiecesStorage, 'listPieceOverrides'>,
     private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
@@ -128,9 +129,24 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     if (key === 'classifications') return this.getClassifications(id);
     const local = await this.creation.findLocal(id);
     if (await this.isRemoved(id, local?.order.identity)) return null;
+    if (key === 'pieces') {
+      const panel = await this.dataSource.getPanel(id, key, undefined, local?.order.identity);
+      if (!panel) return null;
+      const overrides = await this.editStorage.listPieceOverrides(panel.purchaseOrder);
+      if (!overrides.length) return panel;
+      const products = new Set(overrides.map(({ productCode }) => productCode));
+      const merged = [
+        ...readPurchaseOrderPieces(panel.items).filter((item) => !products.has(item.productCode)),
+        ...overrides.flatMap(({ items }) => items),
+      ].sort((left, right) => left.id - right.id);
+      return {
+        ...panel, source: local ? 'postgres' : 'mysql+postgres', items: merged.map((item) => ({ ...item })),
+        summary: { totalQuantity: Number(merged.reduce((sum, piece) => sum + piece.quantity, 0).toFixed(3)) },
+      };
+    }
     if (local) {
       const { order, metadata } = local;
-      if (key === 'receipts' || key === 'pieces') {
+      if (key === 'receipts') {
         return this.dataSource.getPanel(id, key, undefined, order.identity);
       }
       const edits = await this.editStorage.find([id]);

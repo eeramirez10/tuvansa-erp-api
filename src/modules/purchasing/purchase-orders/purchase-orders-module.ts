@@ -11,6 +11,12 @@ import { RemovePurchaseOrder } from './application/use-cases/remove-purchase-ord
 import { ConfirmPurchaseOrder } from './application/use-cases/confirm-purchase-order.js';
 import { ConvertPurchaseOrder } from './application/use-cases/convert-purchase-order.js';
 import { EditPurchaseOrderComments } from './application/use-cases/edit-purchase-order-comments.js';
+import { DuplicatePurchaseOrder } from './application/use-cases/duplicate-purchase-order.js';
+import { ChangePurchaseOrderColorSize } from './application/use-cases/change-purchase-order-color-size.js';
+import { SplitPurchaseOrder } from './application/use-cases/split-purchase-order.js';
+import { TransferPurchaseOrderBranch } from './application/use-cases/transfer-purchase-order-branch.js';
+import { EditPurchaseOrderPieces } from './application/use-cases/edit-purchase-order-pieces.js';
+import { ConfirmPurchaseOrderPieces } from './application/use-cases/confirm-purchase-order-pieces.js';
 import { AuthorizePurchaseOrder } from './application/use-cases/authorize-purchase-order.js';
 import { MysqlPurchaseOrderAuthorizationAccess } from './infrastructure/datasources/mysql-purchase-order-authorization-access.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from './infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
@@ -29,6 +35,7 @@ export const createPurchaseOrdersModule = (): Router => {
   const classifications = new PostgresPurchaseOrderClassifications();
   const dataSource = new HybridPurchaseOrdersDataSource(legacy, classifications, edits, edits);
   const repository = new PurchaseOrdersRepositoryImpl(dataSource);
+  const comments = new EditPurchaseOrderComments(capture, edits, edits, repository);
   const controller = new PurchaseOrdersController(
     new GetPurchaseOrder(repository),
     new GetPurchaseOrderByNumber(repository),
@@ -42,7 +49,13 @@ export const createPurchaseOrdersModule = (): Router => {
     new ConfirmPurchaseOrder(capture, edits, edits, repository),
     new AuthorizePurchaseOrder(capture, edits, edits, classifications, repository, new MysqlPurchaseOrderAuthorizationAccess()),
     new ConvertPurchaseOrder(capture, edits, edits, repository),
-    new EditPurchaseOrderComments(capture, edits, edits, repository),
+    comments,
+    new DuplicatePurchaseOrder(capture, edits, repository, comments),
+    new ChangePurchaseOrderColorSize(capture, legacy, edits, edits, repository),
+    new SplitPurchaseOrder(capture, edits, repository),
+    new TransferPurchaseOrderBranch(capture, edits, edits, repository),
+    new EditPurchaseOrderPieces(capture, edits, edits, repository),
+    new ConfirmPurchaseOrderPieces(capture, edits, edits, repository),
   );
   return createPurchaseOrdersRouter(controller);
 };

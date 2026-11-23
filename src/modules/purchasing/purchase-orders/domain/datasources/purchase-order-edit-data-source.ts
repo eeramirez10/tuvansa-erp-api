@@ -57,6 +57,7 @@ export interface PurchaseOrderEditSnapshot extends PurchaseOrderIdentity {
   amountInWords: string | null;
   documentKind?: 'order' | 'quote';
   comments?: PurchaseOrderCommentsSnapshot;
+  splitSequence?: number;
 }
 
 export type PurchaseOrderStockChange = {

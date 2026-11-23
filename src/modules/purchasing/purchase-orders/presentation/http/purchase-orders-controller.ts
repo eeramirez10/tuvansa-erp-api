@@ -12,6 +12,13 @@ import type { RemovePurchaseOrder } from '../../application/use-cases/remove-pur
 import type { ConfirmPurchaseOrder } from '../../application/use-cases/confirm-purchase-order.js';
 import type { ConvertPurchaseOrder } from '../../application/use-cases/convert-purchase-order.js';
 import type { EditPurchaseOrderComments } from '../../application/use-cases/edit-purchase-order-comments.js';
+import type { DuplicatePurchaseOrder } from '../../application/use-cases/duplicate-purchase-order.js';
+import type { ChangePurchaseOrderColorSize } from '../../application/use-cases/change-purchase-order-color-size.js';
+import type { SplitPurchaseOrder } from '../../application/use-cases/split-purchase-order.js';
+import type { TransferPurchaseOrderBranch } from '../../application/use-cases/transfer-purchase-order-branch.js';
+import type { EditPurchaseOrderPieces } from '../../application/use-cases/edit-purchase-order-pieces.js';
+import type { ConfirmPurchaseOrderPieces } from '../../application/use-cases/confirm-purchase-order-pieces.js';
+import { purchaseOrderColorSizeQuantityMin, purchaseOrderColorSizeQuantityMax } from '../../domain/datasources/purchase-order-color-size-change-data-source.js';
 import type { AuthorizePurchaseOrder } from '../../application/use-cases/authorize-purchase-order.js';
 import type { PurchaseOrderSupplierChangeMode } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { purchaseOrderAuthorizationLevels } from '../../domain/entities/purchase-order-authorization.js';
@@ -46,6 +53,32 @@ const revisionSchema = z.object({
 const removalSchema = revisionSchema.extend({ number: numberParamsSchema.shape.purchaseOrderNumber }).strict();
 const confirmationSchema = revisionSchema.extend({ mode: z.enum(['confirm', 'unconfirm']) }).strict();
 const conversionSchema = revisionSchema.extend({ target: z.enum(['order', 'quote']) }).strict();
+const colorSizeChangeSchema = revisionSchema.extend({
+  lineId: z.int().positive(),
+  quantity: z.int().min(purchaseOrderColorSizeQuantityMin).max(purchaseOrderColorSizeQuantityMax),
+}).strict();
+const splitSchema = revisionSchema.extend({
+  requestKey: z.uuid().toLowerCase(),
+  lineIds: z.array(z.int().positive()).min(1),
+}).strict();
+const branchTransferSchema = revisionSchema.extend({
+  requestKey: z.uuid().toLowerCase(),
+  mode: z.enum(['divide', 'percentage']),
+  sourceLineId: z.int().positive(),
+  destinationNumber: numberParamsSchema.shape.purchaseOrderNumber.toUpperCase(),
+  destinationRevision: revisionSchema.shape.revision,
+  destinationLegacyVersion: revisionSchema.shape.legacyVersion,
+  quantity: scaledNumber(3).refine((value) => value > 0, 'La cantidad debe ser mayor a cero.'),
+  destinationBranch: z.int().min(0).max(255),
+}).strict();
+const piecesSchema = revisionSchema.extend({
+  productCode: z.string().trim().min(1).max(36).toUpperCase(),
+  entries: z.array(z.strictObject({
+    id: z.int().positive().nullable(),
+    serial: z.string().trim().max(30),
+    quantity: scaledNumber(3),
+  })),
+}).strict();
 const commentsSchema = revisionSchema.extend({
   fields: z.strictObject({
     from: z.iso.date().nullable(),
@@ -109,6 +142,19 @@ const createSchema = z.object({
     price: scaledNumber(5).refine((value) => value >= 0, 'El precio debe ser mayor o igual a cero.'),
   })).min(1),
 }).strict();
+const duplicateSchema = revisionSchema.extend({
+  requestKey: z.uuid().toLowerCase(),
+  markedOnly: z.boolean(),
+  fields: z.strictObject({
+    supplierCode,
+    percentage: scaledNumber(2).refine((value) => value > 0, 'El porcentaje debe ser mayor a cero.'),
+    orderedAt: createDate,
+    from: createDate.nullable(),
+    supplierOrderNumber: z.string().trim().max(36).toUpperCase(),
+    branchCode: z.string().trim().max(15).toUpperCase(),
+  }),
+}).strict();
+const duplicateQuery = z.object({ markedOnly: z.enum(['true', 'false']).default('false').transform((value) => value === 'true') });
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   orderNumber: z.string().trim().min(1).max(15).optional(),
@@ -137,6 +183,12 @@ export class PurchaseOrdersController {
     private readonly authorizeOrder: AuthorizePurchaseOrder,
     private readonly convertOrder: ConvertPurchaseOrder,
     private readonly editComments: EditPurchaseOrderComments,
+    private readonly duplicateOrder: DuplicatePurchaseOrder,
+    private readonly changeColorSize: ChangePurchaseOrderColorSize,
+    private readonly splitOrder: SplitPurchaseOrder,
+    private readonly transferBranch: TransferPurchaseOrderBranch,
+    private readonly editPieces: EditPurchaseOrderPieces,
+    private readonly confirmPieces: ConfirmPurchaseOrderPieces,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -305,6 +357,91 @@ export class PurchaseOrdersController {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json({ data: await this.editComments.execute(purchaseOrderId, commentsSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getDuplicate: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      const { markedOnly } = duplicateQuery.parse(request.query);
+      response.set('Cache-Control', 'no-store').json({ data: await this.duplicateOrder.get(purchaseOrderId, markedOnly) });
+    } catch (error) { next(error); }
+  };
+
+  duplicate: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.status(201).json({ data: await this.duplicateOrder.execute(purchaseOrderId, duplicateSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getColorSizeEditor: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.changeColorSize.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  saveColorSize: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.changeColorSize.execute(purchaseOrderId, colorSizeChangeSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getSplit: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.splitOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  split: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.status(201).json({ data: await this.splitOrder.execute(purchaseOrderId, splitSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getBranchTransfer: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.transferBranch.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  saveBranchTransfer: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.transferBranch.execute(purchaseOrderId, branchTransferSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getPiecesEditor: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.editPieces.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  savePieces: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.editPieces.execute(purchaseOrderId, piecesSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getPieceConfirmation: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.confirmPieces.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  savePieceConfirmation: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.confirmPieces.execute(purchaseOrderId, revisionSchema.strict().parse(request.body)) });
     } catch (error) { next(error); }
   };
 

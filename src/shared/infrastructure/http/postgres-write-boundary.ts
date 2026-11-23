@@ -22,10 +22,11 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const editProduct = env.INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS.length > 0 && env.NEON_DATABASE_URL !== '' &&
     req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*$/.test(path);
   const purchaseOrderAction = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
-    /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(classifications|comments|confirmation|quote-conversion|change-supplier|authorization(?:\/supplier)?)$/.test(path);
+    /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(classifications|comments|confirmation|ct|pieces(?:\/confirmation)?|quote-conversion|change-supplier|authorization(?:\/supplier)?)$/.test(path);
   const changePurchaseOrder = env.NEON_DATABASE_URL !== '' && ['PATCH', 'DELETE'].includes(req.method) &&
     /^\/purchasing\/purchase-orders\/[1-9]\d*$/.test(path);
-  const createPurchaseOrder = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/purchasing/purchase-orders';
+  const createPurchaseOrder = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
+    (path === '/purchasing/purchase-orders' || /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(duplicate|split|branches)$/.test(path));
   if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

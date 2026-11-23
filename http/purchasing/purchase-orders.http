@@ -1,4 +1,13 @@
 @baseUrl = http://localhost:3000/api
+@actionOrderId = copiar-id-de-orden-de-prueba
+@actionRequestKey = generar-uuid-por-operacion
+@actionLineId = copiar-id-de-partida
+@actionRevision = 0
+@actionVersion = copiar-version-del-get-de-la-accion
+@destinationId = copiar-id-de-orden-destino
+@destinationNumber = copiar-folio-de-orden-destino
+@destinationRevision = 0
+@destinationVersion = copiar-version-del-get-destino
 @purchaseOrderId = 218451
 @purchaseOrderNumber = OH00205
 @editOrderId = 93984
@@ -268,4 +277,107 @@ Content-Type: application/json
     "other": 0,
     "confirmedAt": null
   }
+}
+
+### Duplicar. Consulta y guarda con los valores de una orden de prueba
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/duplicate?markedOnly=false
+
+###
+POST {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/duplicate
+Content-Type: application/json
+
+{
+  "requestKey": "{{actionRequestKey}}",
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}",
+  "markedOnly": false,
+  "fields": {
+    "supplierCode": "{{creationSupplier}}",
+    "percentage": 50,
+    "orderedAt": "{{creationDate}}",
+    "from": "{{creationDate}}",
+    "supplierOrderNumber": "PRUEBA-DUPLICAR",
+    "branchCode": ""
+  }
+}
+
+### Split. Selecciona un ID de partida del GET
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/split
+
+###
+POST {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/split
+Content-Type: application/json
+
+{
+  "requestKey": "{{actionRequestKey}}",
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}",
+  "lineIds": [{{actionLineId}}]
+}
+
+### Div. Sucursal y Sucursal. Consulta las revisiones de ambas órdenes
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/branches
+
+###
+GET {{baseUrl}}/purchasing/purchase-orders/{{destinationId}}/actions/branches
+
+###
+# Para Sucursal usa mode=percentage y el porcentaje en quantity.
+POST {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/branches
+Content-Type: application/json
+
+{
+  "requestKey": "{{actionRequestKey}}",
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}",
+  "mode": "divide",
+  "sourceLineId": {{actionLineId}},
+  "destinationNumber": "{{destinationNumber}}",
+  "destinationRevision": {{destinationRevision}},
+  "destinationLegacyVersion": "{{destinationVersion}}",
+  "quantity": 1,
+  "destinationBranch": 3
+}
+
+### CT. Usa una partida que figure en cells de la vista previa
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/ct/editor
+
+###
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/ct
+Content-Type: application/json
+
+{
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}",
+  "lineId": {{actionLineId}},
+  "quantity": 2
+}
+
+### Alta Piezas. Consulta las piezas y guarda con la revisión del editor
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces/editor
+
+###
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces
+Content-Type: application/json
+
+{
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}",
+  "productCode": "01300958",
+  "entries": [{ "id": null, "serial": "", "quantity": 1 }]
+}
+
+### Piezas. Consulta el panel y la revisión específica para Confirmar
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces
+
+###
+GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces/confirmation
+
+###
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces/confirmation
+Content-Type: application/json
+
+{
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}"
 }

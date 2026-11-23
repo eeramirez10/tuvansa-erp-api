@@ -77,6 +77,16 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     return rows[0]?.currency ?? '';
   }
 
+  async splitReferences(id: number, number: string) {
+    const [[parents], [children]] = await Promise.all([
+      legacyMysqlPool.execute<Array<RowDataPacket & { counter: number }>>('SELECT PEHIJOS AS counter FROM FPENC WHERE PESEQ=? AND PENUM=?', [id, number]),
+      legacyMysqlPool.execute<Array<RowDataPacket & { number: string }>>(
+        'SELECT PENUM AS number FROM FPENC WHERE LEFT(PENUM,CHAR_LENGTH(?))=? AND CHAR_LENGTH(PENUM)=CHAR_LENGTH(?)+1', [number, number, number],
+      ),
+    ]);
+    return { counter: Number(parents[0]?.counter) || 0, occupied: children.map((row) => row.number.toUpperCase()) };
+  }
+
   async rules(id: number): Promise<PurchaseOrderEditRules | null> {
     const [rows] = await legacyMysqlPool.execute<RulesRow[]>(
       `SELECT PEMULTICIA AS companyId,

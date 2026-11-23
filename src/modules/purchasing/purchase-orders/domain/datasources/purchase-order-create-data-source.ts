@@ -4,7 +4,6 @@ import type { PurchaseOrderEditLegacyDataSource, PurchaseOrderEditLine, Purchase
 
 export const localPurchaseOrderIdStart = 6500000000000;
 export const isLocalPurchaseOrderId = (id: number) => id >= localPurchaseOrderIdStart;
-export const localPurchaseOrderNumber = /^OW\d{8}$/;
 
 export type PurchaseOrderCreateDefaults = {
   movement: string;
@@ -71,7 +70,7 @@ export type LocalPurchaseOrder = {
 export type NewPurchaseOrder = {
   header: Omit<PurchaseOrderProps, 'id' | 'number'>;
   metadata: PurchaseOrderLocalMetadata;
-  document: Pick<PurchaseOrderEditSnapshot, 'amountInWords' | 'lines' | 'totals'>;
+  document: Pick<PurchaseOrderEditSnapshot, 'amountInWords' | 'lines' | 'totals' | 'comments'>;
   stock: PurchaseOrderStockChange[];
 };
 

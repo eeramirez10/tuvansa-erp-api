@@ -10,12 +10,17 @@ import type {
   PurchaseOrderEditSnapshot, PurchaseOrderEditStorage, PurchaseOrderStockChange,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import {
-  isLocalPurchaseOrderId, localPurchaseOrderIdStart, localPurchaseOrderNumber,
+  isLocalPurchaseOrderId, localPurchaseOrderIdStart,
   type LocalPurchaseOrder, type NewPurchaseOrder, type PurchaseOrderCreateStorage, type PurchaseOrderLocalMetadata,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
 import type { PurchaseOrderConversionStorage, PurchaseOrderKindOverride } from '../../domain/datasources/purchase-order-conversion-data-source.js';
 import type { PurchaseOrderCommentsStorage, PurchaseOrderCommentSearchOverride } from '../../domain/datasources/purchase-order-comments-data-source.js';
+import type { PurchaseOrderDuplicateStorage } from '../../domain/datasources/purchase-order-duplicate-data-source.js';
+import type { PurchaseOrderColorSizeChangeStorage } from '../../domain/datasources/purchase-order-color-size-change-data-source.js';
+import type { PurchaseOrderSplitReference, PurchaseOrderSplitStorage } from '../../domain/datasources/purchase-order-split-data-source.js';
+import type { PurchaseOrderBranchTransferIdentity, PurchaseOrderBranchTransferStorage } from '../../domain/datasources/purchase-order-branch-transfer-data-source.js';
+import type { PurchaseOrderPiece, PurchaseOrderPiecesStorage } from '../../domain/datasources/purchase-order-pieces-data-source.js';
 import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
 import type { PurchaseOrderAuthorizationEvent, PurchaseOrderAuthorizationInput, PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeMode, PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierChoice } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
@@ -135,6 +140,30 @@ const migrations = [{
 }, {
   id: 'purchase_order_quote_stock',
   sql: `ALTER TABLE tuvansa.purchase_order_stock_deltas ADD COLUMN quotes numeric(18,3) NOT NULL DEFAULT 0;`,
+}, {
+  id: 'purchase_order_branch_transfers',
+  sql: `
+    CREATE TABLE tuvansa.purchase_order_branch_transfers (
+      request_key uuid PRIMARY KEY,
+      fingerprint char(64) NOT NULL,
+      source_id bigint NOT NULL,
+      destination_id bigint NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `,
+}, {
+  id: 'purchase_order_pieces',
+  sql: `
+    CREATE SEQUENCE tuvansa.purchase_order_piece_ids START WITH 6600000000000 MAXVALUE 6600099999998;
+    CREATE TABLE tuvansa.purchase_order_pieces (
+      order_id bigint NOT NULL,
+      order_number varchar(15) NOT NULL,
+      product_code varchar(36) NOT NULL,
+      items jsonb NOT NULL CHECK (jsonb_typeof(items) = 'array'),
+      PRIMARY KEY (order_id,order_number,product_code),
+      FOREIGN KEY (order_id,order_number) REFERENCES tuvansa.purchase_order_edits(order_id,order_number) ON DELETE CASCADE
+    );
+  `,
 }];
 
 type Stored = {
@@ -142,7 +171,7 @@ type Stored = {
   number: string;
   revision: number;
   legacyVersion: string;
-  document: Pick<PurchaseOrderEditSnapshot, 'lines' | 'totals' | 'amountInWords' | 'documentKind' | 'comments'>;
+  document: Pick<PurchaseOrderEditSnapshot, 'lines' | 'totals' | 'amountInWords' | 'documentKind' | 'comments' | 'splitSequence'>;
 };
 
 type LocalRow = { id: string; number: string; fingerprint: string; header: NewPurchaseOrder['header']; metadata: PurchaseOrderLocalMetadata };
@@ -151,7 +180,8 @@ const requestConflict = () => new ConflictError('La clave de alta ya se usó par
 
 export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage,
   PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage, PurchaseOrderSupplierChangeStorage,
-  PurchaseOrderConversionStorage, PurchaseOrderCommentsStorage {
+  PurchaseOrderConversionStorage, PurchaseOrderCommentsStorage, PurchaseOrderDuplicateStorage, PurchaseOrderColorSizeChangeStorage,
+  PurchaseOrderSplitStorage, PurchaseOrderBranchTransferStorage, PurchaseOrderPiecesStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -219,8 +249,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   }
 
   findLocalByNumber(number: string) {
-    const normalized = number.toUpperCase();
-    return localPurchaseOrderNumber.test(normalized) ? this.localRecord('number', normalized) : Promise.resolve(null);
+    return this.localRecord('number', number.toUpperCase());
   }
 
   private async byRequest(client: PostgresClient, requestKey: string, fingerprint: string): Promise<PurchaseOrderIdentity | null> {
@@ -299,21 +328,131 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [requestKey]);
       const prior = await this.byRequest(client, requestKey, fingerprint);
       if (prior) return prior;
-      const allocation = (await client.query<{ id: string }>("SELECT nextval('tuvansa.purchase_order_ids') AS id")).rows[0]!;
-      const id = Number(allocation.id);
-      const number = `OW${String(id - localPurchaseOrderIdStart + 1).padStart(8, '0')}`;
-      const lines = await this.allocateLineIds(client, order.document.lines);
-      await client.query(
-        `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
-         VALUES($1,$2,1,$3,$4::jsonb)`, [id, number, fingerprint, JSON.stringify({ ...order.document, lines })],
+      return this.insertLocal(client, requestKey, fingerprint, order);
+    });
+  }
+
+  private async insertLocal(client: PostgresClient, requestKey: string, fingerprint: string, order: NewPurchaseOrder, splitNumber?: string): Promise<PurchaseOrderIdentity> {
+    const allocation = (await client.query<{ id: string }>("SELECT nextval('tuvansa.purchase_order_ids') AS id")).rows[0]!;
+    const id = Number(allocation.id);
+    const number = splitNumber ?? `OW${String(id - localPurchaseOrderIdStart + 1).padStart(8, '0')}`;
+    const lines = await this.allocateLineIds(client, order.document.lines);
+    await client.query(
+      `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
+       VALUES($1,$2,1,$3,$4::jsonb)`, [id, number, fingerprint, JSON.stringify({ ...order.document, lines })],
+    );
+    await client.query(
+      `INSERT INTO tuvansa.purchase_orders(id, number, request_key, fingerprint, header, metadata)
+       VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
+      [id, number, requestKey, fingerprint, JSON.stringify(order.header), JSON.stringify(order.metadata)],
+    );
+    await this.saveStock(client, id, number, order.stock);
+    return { id, number };
+  }
+
+  async saveDuplicate(requestKey: string, fingerprint: string, source: PurchaseOrderEditSnapshot, duplicate: NewPurchaseOrder): Promise<PurchaseOrderIdentity> {
+    return this.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [requestKey]);
+      const prior = await this.byRequest(client, requestKey, fingerprint);
+      if (prior) return prior;
+      await lockPurchaseOrderWrite(client, source.id);
+      await assertActivePurchaseOrder(client, source);
+      const { rows: [current] } = await client.query<Pick<Stored, 'revision' | 'legacyVersion'>>(
+        `SELECT revision, legacy_version AS "legacyVersion" FROM tuvansa.purchase_order_edits
+         WHERE order_id=$1 AND order_number=$2`, [source.id, source.number],
       );
-      await client.query(
-        `INSERT INTO tuvansa.purchase_orders(id, number, request_key, fingerprint, header, metadata)
-         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
-        [id, number, requestKey, fingerprint, JSON.stringify(order.header), JSON.stringify(order.metadata)],
+      if (source.revision !== (current?.revision ?? 0) || (current && source.legacyVersion !== current.legacyVersion)) {
+        throw new ConflictError('El documento cambió. Vuelve a abrir Duplicar.', 'PURCHASE_ORDER_DUPLICATE_STALE');
+      }
+      if (source.lines.some(({ classCode }) => classCode === 'X')) {
+        const lines = source.lines.map((line) => line.classCode === 'X' ? { ...line, classCode: '' } : line);
+        await this.saveRevision(client, { ...source, lines }, 'duplicate');
+      }
+      return this.insertLocal(client, requestKey, fingerprint, duplicate);
+    });
+  }
+
+  async saveSplit(
+    requestKey: string, fingerprint: string, source: PurchaseOrderEditSnapshot,
+    sourceStock: PurchaseOrderStockChange[], split: NewPurchaseOrder, references: PurchaseOrderSplitReference,
+  ): Promise<PurchaseOrderIdentity> {
+    return this.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [requestKey]);
+      const prior = await this.byRequest(client, requestKey, fingerprint);
+      if (prior) return prior;
+      await lockPurchaseOrderWrite(client, source.id);
+      await assertActivePurchaseOrder(client, source);
+      const { rows: [saved] } = await client.query<{ splitSequence: number }>(
+        `SELECT (document->>'splitSequence')::int AS "splitSequence"
+         FROM tuvansa.purchase_order_edits WHERE order_id=$1 AND order_number=$2`, [source.id, source.number],
       );
-      await this.saveStock(client, id, number, order.stock);
-      return { id, number };
+      const candidates = Array.from({ length: 26 }, (_, index) => source.number.toUpperCase() + String.fromCharCode(65 + index));
+      const { rows } = await client.query<{ number: string }>('SELECT number FROM tuvansa.purchase_orders WHERE number=ANY($1::text[])', [candidates]);
+      const occupied = new Set([...references.occupied, ...rows.map(({ number }) => number)]);
+      const after = Math.max(saved?.splitSequence ?? 0, references.counter);
+      const index = candidates.findIndex((number, position) => position >= after && !occupied.has(number));
+      if (index < 0) throw new ConflictError('El folio ya no tiene sufijos disponibles.', 'PURCHASE_ORDER_SPLIT_NUMBER_UNAVAILABLE');
+      await this.saveRevision(client, { ...source, splitSequence: index + 1 }, 'split');
+      await this.saveStock(client, source.id, source.number, sourceStock);
+      return this.insertLocal(client, requestKey, fingerprint, split, candidates[index]);
+    });
+  }
+
+  private async branchTransferRequest(
+    client: PostgresClient, requestKey: string, fingerprint: string,
+  ): Promise<PurchaseOrderBranchTransferIdentity | null> {
+    const { rows: [saved] } = await client.query<{ sourceId: string; destinationId: string; fingerprint: string }>(
+      `SELECT source_id AS "sourceId", destination_id AS "destinationId", fingerprint
+       FROM tuvansa.purchase_order_branch_transfers WHERE request_key=$1`, [requestKey],
+    );
+    if (!saved) return null;
+    if (saved.fingerprint !== fingerprint) {
+      throw new ConflictError('La clave ya se usó para otra operación entre sucursales.', 'PURCHASE_ORDER_BRANCH_REQUEST_CONFLICT');
+    }
+    return { sourceId: Number(saved.sourceId), destinationId: Number(saved.destinationId) };
+  }
+
+  findBranchTransferRequest(requestKey: string, fingerprint: string) {
+    return this.readLocal<PurchaseOrderBranchTransferIdentity | null>(null, async (client) => {
+      const { rows: [state] } = await client.query<{ available: boolean }>(
+        "SELECT to_regclass('tuvansa.purchase_order_branch_transfers') IS NOT NULL AS available",
+      );
+      return state?.available ? this.branchTransferRequest(client, requestKey, fingerprint) : null;
+    });
+  }
+
+  async saveBranchTransfer(
+    requestKey: string, fingerprint: string, source: PurchaseOrderEditSnapshot, sourceStock: PurchaseOrderStockChange[] | null,
+    destination: PurchaseOrderEditSnapshot, destinationStock: PurchaseOrderStockChange[],
+  ): Promise<void> {
+    await this.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [requestKey]);
+      if (await this.branchTransferRequest(client, requestKey, fingerprint)) return;
+      for (const id of [...new Set([source.id, destination.id])].sort((a, b) => a - b)) {
+        await lockPurchaseOrderWrite(client, id);
+      }
+      if (source.id !== destination.id) {
+        if (sourceStock) {
+          await this.saveRevision(client, source, 'branch');
+          await this.saveStock(client, source.id, source.number, sourceStock, true);
+        } else {
+          await assertActivePurchaseOrder(client, source);
+          const { rows: [current] } = await client.query<Pick<Stored, 'revision' | 'legacyVersion'>>(
+            `SELECT revision, legacy_version AS "legacyVersion" FROM tuvansa.purchase_order_edits
+             WHERE order_id=$1 AND order_number=$2`, [source.id, source.number],
+          );
+          if (source.revision !== (current?.revision ?? 0) || (current && source.legacyVersion !== current.legacyVersion)) {
+            throw new ConflictError('El pedido de origen cambió.', 'PURCHASE_ORDER_BRANCH_TRANSFER_STALE');
+          }
+        }
+      }
+      const lines = await this.allocateLineIds(client, destination.lines);
+      await this.saveRevision(client, { ...destination, lines }, 'branch');
+      await this.saveStock(client, destination.id, destination.number, destinationStock, true);
+      await client.query(
+        'INSERT INTO tuvansa.purchase_order_branch_transfers(request_key,fingerprint,source_id,destination_id) VALUES($1,$2,$3,$4)',
+        [requestKey, fingerprint, source.id, destination.id],
+      );
     });
   }
 
@@ -402,6 +541,53 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   async saveComments(snapshot: PurchaseOrderEditSnapshot): Promise<void> {
     await this.transaction(async (client) => {
       await this.saveRevision(client, snapshot, 'comments');
+    });
+  }
+
+  async saveColorSizeChange(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<void> {
+    await this.transaction(async (client) => {
+      await this.saveRevision(client, snapshot, 'colorSize');
+      await this.saveStock(client, snapshot.id, snapshot.number, stock, true);
+    });
+  }
+
+  listPieceOverrides({ id, number }: PurchaseOrderIdentity) {
+    return this.readLocal<Array<{ productCode: string; items: PurchaseOrderPiece[] }>>([], async (client) => {
+      const { rows: [state] } = await client.query<{ available: boolean }>(
+        "SELECT to_regclass('tuvansa.purchase_order_pieces') IS NOT NULL AS available",
+      );
+      if (!state?.available) return [];
+      const { rows } = await client.query<{ productCode: string; items: PurchaseOrderPiece[] }>(
+        `SELECT product_code AS "productCode",items FROM tuvansa.purchase_order_pieces
+         WHERE order_id=$1 AND order_number=$2 ORDER BY product_code`, [id, number],
+      );
+      return rows;
+    });
+  }
+
+  async savePieces(snapshot: PurchaseOrderEditSnapshot, productCode: string, items: PurchaseOrderPiece[]): Promise<void> {
+    await this.transaction(async (client) => {
+      await this.saveRevision(client, snapshot, 'pieces');
+      const count = items.filter(({ id }) => id === 0).length;
+      const { rows } = count ? await client.query<{ id: string; serial: string }>(
+        `SELECT number AS id, 'W' || LPAD((number - 6599999999999)::text, 8, '0') AS serial
+         FROM (SELECT nextval('tuvansa.purchase_order_piece_ids') AS number FROM generate_series(1,$1::int)) AS allocated`, [count],
+      ) : { rows: [] };
+      let index = 0;
+      const saved = items.map((item) => {
+        if (item.id !== 0) return item;
+        const next = rows[index++]!;
+        return { ...item, id: Number(next.id), serial: item.serial || next.serial };
+      });
+      const serials = saved.map(({ serial }) => serial);
+      if (new Set(serials).size !== serials.length) {
+        throw new ConflictError('La serie ya existe para el producto.', 'PURCHASE_ORDER_PIECE_SERIAL_CONFLICT');
+      }
+      await client.query(
+        `INSERT INTO tuvansa.purchase_order_pieces(order_id,order_number,product_code,items) VALUES($1,$2,$3,$4::jsonb)
+         ON CONFLICT(order_id,order_number,product_code) DO UPDATE SET items=EXCLUDED.items`,
+        [snapshot.id, snapshot.number, productCode, JSON.stringify(saved)],
+      );
     });
   }
 
@@ -516,11 +702,13 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   }
 
   private async saveRevision(
-    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation' | 'conversion' | 'comments', supplierRevision?: number,
+    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot,
+    operation: 'edit' | 'confirmation' | 'conversion' | 'comments' | 'duplicate' | 'colorSize' | 'split' | 'branch' | 'pieces',
+    supplierRevision?: number,
   ) {
     await lockPurchaseOrderWrite(client, snapshot.id);
     await assertActivePurchaseOrder(client, snapshot);
-    const { id, number, legacyVersion, revision, lines, totals, amountInWords, documentKind, comments } = snapshot;
+    const { id, number, legacyVersion, revision, lines, totals, amountInWords, documentKind, comments, splitSequence } = snapshot;
     if (supplierRevision !== undefined) {
       const { rows: [change] } = await client.query<{ revision: number }>(
         `SELECT revision FROM tuvansa.purchase_order_supplier_changes
@@ -530,7 +718,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
         throw new ConflictError('La orden cambió desde que abriste el editor. Vuelve a abrirlo.', 'PURCHASE_ORDER_EDIT_STALE');
       }
     }
-    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords, documentKind, comments })];
+    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords, documentKind, comments, splitSequence })];
     const result = revision === 0
       ? await client.query<{ revision: number }>(
         `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
@@ -547,6 +735,11 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
         confirmation: ['La orden cambió. Vuelve a abrir la confirmación.', 'PURCHASE_ORDER_CONFIRMATION_STALE'],
         conversion: ['El documento cambió. Vuelve a abrir Cotiz.', 'PURCHASE_ORDER_CONVERSION_STALE'],
         comments: ['La orden cambió. Vuelve a abrir Comentarios.', 'PURCHASE_ORDER_COMMENTS_STALE'],
+        duplicate: ['El documento cambió. Vuelve a abrir Duplicar.', 'PURCHASE_ORDER_DUPLICATE_STALE'],
+        colorSize: ['El documento cambió. Vuelve a abrir Cambio de CT.', 'PURCHASE_ORDER_COLOR_SIZE_CHANGE_STALE'],
+        split: ['La orden cambió. Vuelve a abrir Split.', 'PURCHASE_ORDER_SPLIT_STALE'],
+        branch: ['El pedido de origen o destino cambió. Vuelve a abrir la acción.', 'PURCHASE_ORDER_BRANCH_TRANSFER_STALE'],
+        pieces: ['Las piezas o la orden cambiaron. Vuelve a abrir Alta Piezas.', 'PURCHASE_ORDER_PIECES_STALE'],
       } as const;
       const [message, code] = errors[operation];
       throw new ConflictError(message, code);

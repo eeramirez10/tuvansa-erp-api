@@ -36,9 +36,9 @@ El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor
 |---|---|---|
 | Auxiliar | `GET /:id/actions/auxiliar` | `FDOC`, `DREFER=PENUM`, `DEST=0`, `DMULTICIA=1` |
 | Clasificar | `GET /:id/actions/classifications` | Valores de `PEPAR1..PEPAR9` y PostgreSQL cuando existe una revisión local. Opciones `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)`, orden `AGNUM`. `MBASE/91` lee los rótulos de `FYG.YGKEY='ABITITPAR2'`, con respaldo de `FCIA.CIAPAR1..9` si falta esa entrada. |
-| Comentarios | `GET /:id/actions/comments`, `GET /:id/actions/comments/editor`, `PATCH /:id/actions/comments` | `FCOMENT`, `COMSEQFACT=10000000+PESEQ`. Lectura adaptada según `EOC#6` y `FTIPMV.TICOML1..5`. Guardado derivado en PostgreSQL. |
-| CT | `GET /:id/actions/ct` | Consulta derivada de `EOC#6AA/240–241`. `FPLIN` por `PESEQ`, raíz y color según `FCIA`, tallas de producto raíz en `FUNIDAD`. Devuelve Pedido, Surtido y Resta por raíz y por celda. |
-| Piezas | `GET /:id/actions/pieces` | Consulta derivada de `EOC#18/240`. `FCAJAS.CAJFACTURA=PENUM`, producto de `FINV` y suma de `CAJCANT`. |
+| Comentarios | `EOC#2/6 → /421 → EOC#6`, `MBASE/122–123` | Edita las cinco líneas y el encabezado. Recalcula los totales cuando cambian descuentos o cargos. | `GET /:id/actions/comments`, `GET /:id/actions/comments/editor`, `PATCH /:id/actions/comments` |
+| CT | `EOC#2/9 → EOC#6AA/240–241`, `MBASE/124` | **Cambio** actualiza la primera partida de la variante y el pendiente. El catálogo de TUVANSA no tiene tallas configuradas. | `GET /:id/actions/ct`, `GET /:id/actions/ct/editor`, `PATCH /:id/actions/ct` |
+| Piezas | `EOC#2/16 → EOC#18/240`, `EOC#18/107` | Muestra piezas por folio. **Confirmar** acumula `CAJCANT` en la primera partida del mismo código en orden `PLSEQ`. | `GET /:id/actions/pieces`, `GET/PATCH /:id/actions/pieces/confirmation` |
 
 ## Escritura de Clasificar en PostgreSQL
 
@@ -119,24 +119,32 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 
 | Orden en pantalla | Código Omnis 7 | Fuente y comportamiento | API web |
 |---|---|---|---|
-| Alta Piezas | `EOC#2/1 → EOC#17` (`EOC#19` según compañía) | Lee partidas y piezas. Cambio e importación escriben en `FCAJAS`; la serie usa `FTIPMV.PZ`. | Sin ruta |
+| Alta Piezas | `EOC#2/1 → EOC#17` | Captura, edición e importación por producto. Cantidad cero elimina la pieza. | `GET /:id/actions/pieces/editor`, `PATCH /:id/actions/pieces` |
 | Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. **Cambia proveedor** sustituye el proveedor inicial `COMPRA` en nivel A. | `GET/PATCH /:id/actions/authorization`, `PATCH /:id/actions/authorization/supplier` |
 | Auxiliar | `EOC#2/3 → EPRV#7C/240` | Lee `FDOC` por `DREFER=PENUM`, `DEST=CIAKYT`, `DMULTICIA=LVCIA`. Presenta `DNUM` y `DFECHA`. La API fija `DEST=0` y `DMULTICIA=1` para el contexto capturado. | `GET /:id/actions/auxiliar` |
 | Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y guarda el código en `PEPARA`. | `GET/PATCH /:id/actions/change-supplier` |
 | Clasificar | `EOC#2/5 → EPDC#199/239–240`; guarda en `/3` | Opciones de `FAG` con `AGTIPO IN (0,2)`, ordenadas por `AGNUM`, comparadas por `AGTNUM` contra `PEPAR1–9`. `MBASE/91` determina las etiquetas. La web usa el mismo filtro, ordena por `AGSEQ`, tiene etiquetas fijas y sólo lectura. | `GET /:id/actions/classifications` |
-| Comentarios | `EOC#2/6 → /421 → EOC#6` | Busca `FCOMENT` por `10000000 + PESEQ`. `FTIPMV.TICOML1–5` da las etiquetas. Usa `COML1–4` para líneas cortas y `COML5` para el texto largo. Plazo, descuentos, moneda, fechas, auditoría y cargos provienen de `FPENC`. La web usa otras fuentes para parte de estos campos. El retorno del modal nativo contiene escrituras a `FCOMENT` y `FPENC` y llama a totalizar. | `GET /:id/actions/comments` |
+| Comentarios | `EOC#2/6 → /421 → EOC#6`, `MBASE/122–123` | Edita las cinco líneas y el encabezado. Recalcula los totales cuando cambian descuentos o cargos. | `GET /:id/actions/comments`, `GET /:id/actions/comments/editor`, `PATCH /:id/actions/comments` |
 | Confirmar todo | `EOC#2/7 → /422–423` | Ajusta cada `FPLIN.PLASIGNADO` a `PLCANT−PLSURT`. Shift quita la asignación. | `GET/PATCH /:id/actions/confirmation` |
 | Cotiz | `EOC#2/8 → MBASE/125` | Cambia el tipo entre `2` y `5` y transfiere `PLCANT-PLSURT` entre `IPEDPRV` e `IORDCOTIZ`. | `GET/PATCH /:id/actions/quote-conversion` |
-| CT | `EOC#2/9 → EOC#6AA/240–241` | Consulta partidas por `PESEQ`, agrupa por raíz de producto (`FCIA.CIARAIZ`) y muestra matriz de variantes con Pedido, Surtido y Resta. Su botón interno Cambio puede escribir `FPLIN`. | Sin ruta |
-| Div. Sucursal | `EOC#2/10 → EPED#8` | Divide cantidad seleccionada, suma surtido a la partida origen, crea partida de destino y recalcula. | Sin ruta |
-| Duplicar | `EOC#2/11 → EOC#7` | Selecciona tipo en `FTIPMV`, consume `TINUM` y copia `FPENC`, `FPLIN` y `FCOMENT`. Shift filtra partidas marcadas con `PLCLASE='X'`. | Sin ruta |
+| CT | `EOC#2/9 → EOC#6AA/240–241`, `MBASE/124` | **Cambio** actualiza la primera partida de la variante y el pendiente. El catálogo de TUVANSA no tiene tallas configuradas. | `GET /:id/actions/ct`, `GET /:id/actions/ct/editor`, `PATCH /:id/actions/ct` |
+| Div. Sucursal | `EOC#2/10 → EPED#8` | Aumenta el surtido de la partida origen y crea una partida por esa cantidad en la orden y sucursal destino. | `GET/POST /:id/actions/branches`, modo `divide` |
+| Duplicar | `EOC#2/11 → EOC#7` | Copia las partidas por porcentaje y genera un folio nuevo. Shift copia sólo `PLCLASE='X'` y desmarca el origen al guardar. | `GET/POST /:id/actions/duplicate` |
 | Etiquetas | `EOC#2/12 → /263` en la ruta predeterminada | El reporte y el medio de impresión dependen de la configuración. La ruta predeterminada usa `FTIPMV` y las asignaciones de `FPLIN`. | Sin ruta |
 | Gen % | `EOC#2/13` | Para TUVANSA el procedimiento muestra `bye` y termina antes de efectuar cálculos o consultas. | Mensaje local |
 | Imprimir | `EOC#2/14 → MOCOM/36` | Genera el reporte de orden con `#48=0`. El medio de impresión depende de `TIPRINTER` y existen rutinas por configuración. | Sin ruta |
 | Imprimir Conf. | `EOC#2/15 → MOCOM/36` | Usa `#48=1`; el filtro predeterminado de partidas incluye `PLASIGNADO>0`. | Sin ruta |
-| Piezas | `EOC#2/16 → EOC#18/240` | Lee `FCAJAS` por `CAJFACTURA=PENUM`. Muestra producto, serie, piezas, cantidad, almacén, documento y recepción, con suma de `CAJCANT`. Su botón interno Confirmar actualiza `FPLIN`. | Sin ruta |
-| Sucursal | `EOC#2/17 → EPED#8` | Genera partidas por sucursal usando un porcentaje de `PLCANT`, luego recalcula la orden. | Sin ruta |
-| Split | `EOC#2/84` | Para TUVANSA incrementa `FPENC.PEHIJOS`, crea una orden hija con sufijo, reasigna `FPLIN.PESEQ` de las partidas seleccionadas y recalcula la orden hija. | Sin ruta |
+| Piezas | `EOC#2/16 → EOC#18/240`, `EOC#18/107` | Muestra piezas por folio. **Confirmar** acumula `CAJCANT` en la primera partida del mismo código en orden `PLSEQ`. | `GET /:id/actions/pieces`, `GET/PATCH /:id/actions/pieces/confirmation` |
+| Sucursal | `EOC#2/17 → EPED#8` | Copia un porcentaje de las partidas de la sucursal origen a la orden y sucursal destino. | `GET/POST /:id/actions/branches`, modo `percentage` |
+| Split | `EOC#2/84` | Crea una orden hija con sufijo `A` a `Z` y mueve partidas sin surtido, asignación ni piezas. | `GET/POST /:id/actions/split` |
+
+### Guardado de partidas y piezas
+
+- Duplicar usa la serie PostgreSQL `OW` de Alta de orden y conserva la moneda del origen. Split conserva el identificador de las partidas y recalcula ambas órdenes. En Omnis está comentada la totalización del padre en Split.
+- Div. Sucursal guarda los dos documentos en una sola transacción y compensa el pendiente del origen con el de la nueva partida. Sucursal aumenta el pendiente por las partidas copiadas. Ambas conservan unidad y factor del origen.
+- Cambio en CT conserva surtido, asignado y los importes de la orden, como en `MBASE/124`. El guardado se verificó con una matriz de prueba en una orden aislada de Neon.
+- Alta Piezas guarda en PostgreSQL por orden y producto. Las series automáticas usan prefijo `W`. Importar acepta filas de código, cantidad y serie separadas por tabuladores para el producto seleccionado, y espera **OK** para guardar. El origen del valor `#45` usado para comparar el total en `EOC#17/411` sigue pendiente de confirmar.
+- **Piezas → Confirmar** guarda las asignaciones, el clasificador `ASIGNAD` y el confirmado de Inventarios en la misma transacción. Los folios, las cantidades pedidas y surtidas, y el acumulado pendiente se conservan.
 
 ### Evidencia para reproducir el contraste
 
@@ -157,7 +165,7 @@ En Omnis 7 se abrió **Cambio de orden de compra** con `O000001` de la compañí
 | Unidad junto a Pedido | `MEMUC` | Editable. El cambio de unidad recalcula el factor y el precio ingresado. |
 | Descuento | `PLDESC` | Editable, condicionado por la configuración de compañía. |
 | Precio | `#2D5` | Editable, condicionado por la configuración. Se mostró con cinco decimales. |
-| Sucursal | `PLSUC` | Editable en la partida. |
+| Sucursal | `EOC#2/17 → EPED#8` | Copia un porcentaje de las partidas de la sucursal origen a la orden y sucursal destino. | `GET/POST /:id/actions/branches`, modo `percentage` |
 | Pzas. | `PLASIGNPZAS` | Editable. Es el mismo campo que la ficha muestra en **Obs.** |
 | Descripción | `IDESCR` | Texto del producto en sólo lectura. |
 

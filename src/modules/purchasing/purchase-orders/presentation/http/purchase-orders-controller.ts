@@ -11,6 +11,7 @@ import type { CreatePurchaseOrder } from '../../application/use-cases/create-pur
 import type { RemovePurchaseOrder } from '../../application/use-cases/remove-purchase-order.js';
 import type { ConfirmPurchaseOrder } from '../../application/use-cases/confirm-purchase-order.js';
 import type { AuthorizePurchaseOrder } from '../../application/use-cases/authorize-purchase-order.js';
+import type { PurchaseOrderSupplierChangeMode } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { purchaseOrderAuthorizationLevels } from '../../domain/entities/purchase-order-authorization.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
@@ -54,8 +55,10 @@ const editSchema = revisionSchema.extend({
 }).strict();
 const productQuery = z.object({ q: z.string().trim().min(1).max(60) });
 const supplierCode = z.string().trim().min(1).max(20).toUpperCase();
-const supplierChangeSchema = authorizationSchema.pick({ revision: true, legacyVersion: true, classificationRevision: true })
-  .extend({ supplierCode }).strict();
+const supplierRevision = z.number().int().min(0).max(2147483647);
+const supplierActionSchema = authorizationSchema.pick({ revision: true, legacyVersion: true, classificationRevision: true })
+  .extend({ supplierCode, supplierRevision }).strict();
+const supplierChangeSchema = supplierActionSchema.extend({ supplierRevision: supplierRevision.default(0) });
 const supplierSearchSchema = z.object({ code: supplierCode.optional(), name: z.string().trim().min(1).max(60).optional() })
   .refine(({ code, name }) => code !== undefined || name !== undefined, 'Ingresa el código o nombre del proveedor.');
 const authorizationKey = (header?: string) => /^Bearer ([0-9a-f]{64})$/i.exec(header ?? '')?.[1];
@@ -269,12 +272,21 @@ export class PurchaseOrdersController {
     } catch (error) { next(error); }
   };
 
-  changeSupplier: RequestHandler = async (request, response, next) => {
+  getSupplierAction: RequestHandler = async (request, response, next) => {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.set('Cache-Control', 'no-store');
-      response.json({ data: await this.authorizeOrder.changeSupplier(purchaseOrderId, supplierChangeSchema.parse(request.body),
-        authorizationKey(request.header('authorization'))) });
+      response.json({ data: await this.authorizeOrder.getSupplierAction(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  changeSupplier = (mode: PurchaseOrderSupplierChangeMode): RequestHandler => async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      const body = (mode === 'action' ? supplierActionSchema : supplierChangeSchema).parse(request.body);
+      response.set('Cache-Control', 'no-store');
+      response.json({ data: await this.authorizeOrder.changeSupplier(purchaseOrderId, body,
+        authorizationKey(request.header('authorization')), mode) });
     } catch (error) { next(error); }
   };
 }

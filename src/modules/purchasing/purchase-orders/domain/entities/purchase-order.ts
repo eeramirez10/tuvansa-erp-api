@@ -28,6 +28,7 @@ export interface PurchaseOrderProps {
   number: string;
   supplierOrderNumber: string;
   supplier: { id: number; code: string; name: string };
+  supplierParameter?: string;
   documentKind: PurchaseOrderDocumentKind;
   status: string;
   received: { quantity: number; pieces: number };
@@ -76,8 +77,8 @@ export class PurchaseOrder {
     return PurchaseOrder.create({ ...this.props, classifications });
   }
 
-  withSupplier(supplier: PurchaseOrderProps['supplier']): PurchaseOrder {
-    return PurchaseOrder.create({ ...this.props, supplier });
+  withSupplier(supplier: PurchaseOrderProps['supplier'], parameter: string | null): PurchaseOrder {
+    return PurchaseOrder.create({ ...this.props, supplier, ...(parameter === null ? {} : { supplierParameter: parameter }) });
   }
 
   withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'>, includeLines: boolean): PurchaseOrder {

@@ -22,7 +22,7 @@ interface IdentityRow extends RowDataPacket {
 
 interface HeaderRow extends IdentityRow {
   supplierOrderNumber: string; supplierId: number;
-  supplierCode: string | null; supplierName: string | null; documentType: number;
+  supplierCode: string | null; supplierName: string | null; supplierParameter: string; documentType: number;
   status: string; branch: number; department: string; orderedAt: string;
   fromDate: string; dueAt: string; warehouse: string; initial: number;
   received: number; receivedPieces: number;
@@ -46,6 +46,7 @@ const selectHeader = `
   FPENC.PRVSEQ AS supplierId,
   FPRV.PRVCOD AS supplierCode,
   FPRV.PRVNOM AS supplierName,
+  FPENC.PEPARA AS supplierParameter,
   PESPEDIDO AS documentType,
   PESTATUS AS status,
   PESUCURSAL AS branch,
@@ -106,6 +107,7 @@ const toPurchaseOrder = (row: HeaderRow, lines: PurchaseOrderLine[]): PurchaseOr
   number: row.number,
   supplierOrderNumber: row.supplierOrderNumber,
   supplier: { id: row.supplierId, code: row.supplierCode ?? '', name: row.supplierName ?? '' },
+  supplierParameter: row.supplierParameter,
   documentKind: documentKind(row.documentType),
   status: row.status,
   received: { quantity: Number(row.received), pieces: Number(row.receivedPieces) },

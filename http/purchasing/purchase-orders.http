@@ -16,8 +16,14 @@
 @authorizationVersion = copiar-version-del-GET-authorization
 @authorizationRevision = 0
 @authorizationClassificationRevision = 0
+@authorizationSupplierRevision = 0
 @authorizationStatus =
 @replacementSupplier = 30262
+@supplierActionId = copiar-id-de-orden-de-prueba
+@supplierActionVersion = copiar-version-del-GET-change-supplier
+@supplierActionRevision = 0
+@supplierActionClassificationRevision = 0
+@supplierActionSupplierRevision = 0
 @creationSupplier = 35436
 @creationDate = 2026-11-23
 @creationRequestKey = 92bc9c06-bd13-4533-9de7-d2fa4e380ae2
@@ -68,9 +74,26 @@ GET {{baseUrl}}/purchasing/purchase-orders/{{authorizationId}}/actions/authoriza
 ### Autorizar / Cambia proveedor / Buscar
 GET {{baseUrl}}/purchasing/purchase-orders/authorization/suppliers?code={{replacementSupplier}}
 
+### Acciones / Cambia Prv / consultar proveedor actual y revisiones
+GET {{baseUrl}}/purchasing/purchase-orders/{{supplierActionId}}/actions/change-supplier
+
+### Acciones / Cambia Prv / OK (PostgreSQL de pruebas)
+# Copia las cuatro versiones/revisiones del GET y usa la clave con supplierChangeAction.
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{supplierActionId}}/actions/change-supplier
+Authorization: Bearer {{$processEnv PURCHASE_ORDER_APPROVAL_TEST_KEY}}
+Content-Type: application/json
+
+{
+  "supplierCode": "{{replacementSupplier}}",
+  "revision": {{supplierActionRevision}},
+  "classificationRevision": {{supplierActionClassificationRevision}},
+  "supplierRevision": {{supplierActionSupplierRevision}},
+  "legacyVersion": "{{supplierActionVersion}}"
+}
+
 ### Autorizar / Cambia proveedor / OK (PostgreSQL de pruebas)
 # Usa una orden de prueba en 9A con proveedor COMPRA y la clave de un usuario con supplierChange.
-# Copia las tres versiones/revisiones del GET de Autorizar de esa misma orden.
+# Copia las versiones/revisiones del GET de Autorizar. supplierRevision viene en supplierChange.
 PATCH {{baseUrl}}/purchasing/purchase-orders/{{authorizationId}}/actions/authorization/supplier
 Authorization: Bearer {{$processEnv PURCHASE_ORDER_APPROVAL_TEST_KEY}}
 Content-Type: application/json
@@ -79,6 +102,7 @@ Content-Type: application/json
   "supplierCode": "{{replacementSupplier}}",
   "revision": {{authorizationRevision}},
   "classificationRevision": {{authorizationClassificationRevision}},
+  "supplierRevision": {{authorizationSupplierRevision}},
   "legacyVersion": "{{authorizationVersion}}"
 }
 

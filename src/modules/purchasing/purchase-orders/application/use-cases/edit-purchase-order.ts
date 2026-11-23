@@ -37,7 +37,7 @@ export class EditPurchaseOrder {
     return {
       ...context, reason, change,
       rules: change ? { ...rules, supplierCode: change.supplier.code, supplierDiscounts: change.supplierDiscounts } : rules,
-      editVersion: change ? createHash('sha256').update(`${version}/${change.supplier.id}`).digest('hex') : version,
+      editVersion: change ? createHash('sha256').update(`${version}/supplier/${change.revision}`).digest('hex') : version,
     };
   }
 
@@ -79,7 +79,7 @@ export class EditPurchaseOrder {
     if (update) {
       const { stock, ...document } = update;
       const changes = local ? stock.map((item) => ({ ...item, nextReceiptAt: item.pending > 0 ? base.dates.from : null })) : stock;
-      await this.storage.save({ id, number: base.number, legacyVersion: version, revision: input.revision, ...document }, changes, change?.supplier.id ?? null);
+      await this.storage.save({ id, number: base.number, legacyVersion: version, revision: input.revision, ...document }, changes, change?.revision ?? 0);
     }
     const saved = await this.orders.findById(id);
     if (!saved) throw new NotFoundError('Orden de compra');

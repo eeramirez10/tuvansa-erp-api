@@ -16,7 +16,8 @@ const purchaseOrderApprovers = z.string().default('[]').transform((value, ctx): 
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   levels: z.array(z.enum(['A', 'B', 'C', 'D', 'E', 'F'])),
   supplierChange: z.boolean().default(false),
-}).strict().refine(({ levels, supplierChange }) => levels.length > 0 || supplierChange,
+  supplierChangeAction: z.boolean().default(false),
+}).strict().refine(({ levels, supplierChange, supplierChangeAction }) => levels.length > 0 || supplierChange || supplierChangeAction,
   'Cada autorizador debe tener un nivel de firma o permiso para cambiar proveedor.')).refine((approvers) => new Set(approvers.map(({ sha256 }) => sha256)).size === approvers.length,
   'Cada clave de autorización debe corresponder a un solo usuario.'));
 

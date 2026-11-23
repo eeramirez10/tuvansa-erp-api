@@ -23,6 +23,7 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Confirmar todo / Desconfirmar todo | `GET /:purchaseOrderId/actions/confirmation`, `PATCH /:purchaseOrderId/actions/confirmation` | Reglas de `EOC#2/7`, `/422–423` y `MBASE/124`, persistencia derivada en PostgreSQL |
 | Autorizar / O.K. A–F | `GET /:purchaseOrderId/actions/authorization`, `PATCH /:purchaseOrderId/actions/authorization` | Reglas de `EOC#16/1–6`, permisos `FUSERS` y `FHELP`, bitácora en PostgreSQL |
 | Autorizar / Cambia proveedor | `GET /authorization/suppliers`, `PATCH /:purchaseOrderId/actions/authorization/supplier` | `EOC#16/7 → ECIA#26 → INICIO/44`, lectura de `FPRV`, sustitución de `PRVSEQ` en `FPENC` y `FPLIN` mediante PostgreSQL |
+| Acciones / Cambia Prv | `GET/PATCH /:purchaseOrderId/actions/change-supplier` | `EOC#2/4 → ECIA#26`, proveedor de `FPRV`, `FPLIN.PRVSEQ`, `FPENC.PRVSEQ` y `FPENC.PEPARA` mediante PostgreSQL |
 | Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
 | Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
 | Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
@@ -81,7 +82,7 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 | Alta Piezas | `EOC#2/1 → EOC#17` (`EOC#19` según compañía) | Lee partidas y piezas. Cambio e importación escriben en `FCAJAS`; la serie usa `FTIPMV.PZ`. | Sin ruta |
 | Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. **Cambia proveedor** sustituye el proveedor inicial `COMPRA` en nivel A. | `GET/PATCH /:id/actions/authorization`, `PATCH /:id/actions/authorization/supplier` |
 | Auxiliar | `EOC#2/3 → EPRV#7C/240` | Lee `FDOC` por `DREFER=PENUM`, `DEST=CIAKYT`, `DMULTICIA=LVCIA`. Presenta `DNUM` y `DFECHA`. La API fija `DEST=0` y `DMULTICIA=1` para el contexto capturado. | `GET /:id/actions/auxiliar` |
-| Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y ajusta `PEPARA`. | Sin ruta |
+| Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y guarda el código en `PEPARA`. | `GET/PATCH /:id/actions/change-supplier` |
 | Clasificar | `EOC#2/5 → EPDC#199/239–240`; guarda en `/3` | Opciones de `FAG` con `AGTIPO IN (0,2)`, ordenadas por `AGNUM`, comparadas por `AGTNUM` contra `PEPAR1–9`. `MBASE/91` determina las etiquetas. La web usa el mismo filtro, ordena por `AGSEQ`, tiene etiquetas fijas y sólo lectura. | `GET /:id/actions/classifications` |
 | Comentarios | `EOC#2/6 → /421 → EOC#6` | Busca `FCOMENT` por `10000000 + PESEQ`. `FTIPMV.TICOML1–5` da las etiquetas. Usa `COML1–4` para líneas cortas y `COML5` para el texto largo. Plazo, descuentos, moneda, fechas, auditoría y cargos provienen de `FPENC`. La web usa otras fuentes para parte de estos campos. El retorno del modal nativo contiene escrituras a `FCOMENT` y `FPENC` y llama a totalizar. | `GET /:id/actions/comments` |
 | Confirmar todo | `EOC#2/7 → /422–423` | Ajusta cada `FPLIN.PLASIGNADO` a `PLCANT−PLSURT`. Shift quita la asignación. | `GET/PATCH /:id/actions/confirmation` |
@@ -200,3 +201,13 @@ Tras OK, el método reemplaza `FPLIN.PRVSEQ` en todas las partidas y `FPENC.PRVS
 Agrega `"supplierChange":true` a la entrada del autorizador que corresponda en `PURCHASE_ORDER_APPROVER_KEYS`. Se admite `"levels":[]` para una clave exclusiva de esta acción. La API autentica el cambio con la clave personal y comprueba los permisos de apertura y `EOC#16/7` en Omnis. En los orígenes consultados no existe una entrada de `FHELP` para ese método y aplica la excepción de grupo 0 de `INICIO/30`. También se comprueban las revisiones dentro del bloqueo de la orden.
 
 Evidencia de código de Omnis 7, no SQL observado en ejecución: `20261120-EOC16-OC.txt` (líneas 220–263), `20261120-ECIA26-OC.txt`, `20261123-INICIO44-OC.pdf`, `20261123-EPRVFINDEDWC-OC.txt` y `20261123-MBASE69-OC.txt`. Ni el MySQL local de Omnis ni el MySQL de lectura de la API tenían el código `COMPRA`. Las escrituras se probaron con una orden temporal en Neon. `general_log` estaba en OFF.
+
+## Cambia Prv en Acciones
+
+`EOC#2/4` abre `ECIA#26` con el proveedor actual y valida el permiso `EOC#35/40` mediante `INICIO/30`. El bloque de validación de `9A` está comentado en la biblioteca German de pruebas. El método acepta los pedidos y cotizaciones de la vista, incluidas las órdenes con recepciones. Guarda `PRVSEQ` en cada partida y prepara `PEPARA` y `PRVSEQ` para guardar juntos en el encabezado. `PEPARA` y `PRVCOD` son campos de seis caracteres. Los documentos de recepción existentes conservan su proveedor y su referencia.
+
+Activa `"supplierChangeAction":true` en la entrada del usuario de `PURCHASE_ORDER_APPROVER_KEYS`. La API valida su clave personal y el permiso de Omnis. En los orígenes revisados, la entrada de `FHELP` existe y no requiere supervisor. El GET devuelve el proveedor efectivo y `supplierRevision`. El PATCH exige esa revisión junto con la revisión de edición, la de clasificación y la versión de origen. La migración convierte las sustituciones previas en la primera revisión y registra cada cambio posterior bajo el mismo bloqueo. El detalle y Comentarios proyectan `supplierParameter` como valor efectivo de `PEPARA`.
+
+El código se leyó en la exportación `20261120-EOC2-PROCEDURES.txt` (líneas 41–87). Las lecturas en MySQL confirmaron el esquema de los campos, el permiso y la presencia de órdenes con recepciones. El SQL de escritura web es derivado para PostgreSQL.
+
+La prueba en navegador y Neon cubrió selección, cancelación, firma, cambios consecutivos y conflicto entre dos guardados simultáneos. En la orden `OA00005` se verificó que cambiar proveedor y `PEPARA` conserva surtido, partidas, totales y la consulta de recepciones. Se retiraron los registros temporales de Neon y se verificó la lectura original.

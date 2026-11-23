@@ -6,7 +6,8 @@ import type {
 } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type {
-  PurchaseOrderSupplierChangeCatalog, PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierFilters,
+  PurchaseOrderSupplierChangeCatalog, PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeMode,
+  PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierFilters,
 } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import type { PurchaseOrderEditLegacyDataSource, PurchaseOrderEditStorage } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderClassificationStorage } from '../../domain/datasources/purchase-orders-data-source.js';
@@ -33,25 +34,41 @@ export class AuthorizePurchaseOrder {
     const { base, rules, stored, version } = order;
     const classification = classifications.find(({ number }) => number === base.number);
     const status = (classification?.current ?? base.classifications)[8] ?? '';
-    let reason = '';
-    if (base.documentKind !== 'order') reason = 'La autorización está disponible para órdenes de compra.';
-    else if (rules.companyId !== rules.activeCompanyId) reason = 'La orden pertenece a otra compañía.';
-    else if (stored && stored.legacyVersion !== version) reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
-    else if (!this.storage.writable()) reason = 'La autorización de órdenes requiere PostgreSQL.';
-    const supplier = supplierChanges.find(({ number }) => number === base.number)?.supplier ?? base.supplier;
-    const supplierReason = reason || (status !== '9A' ? 'Solo se puede cambiar proveedores del status A.'
-      : supplier.code !== 'COMPRA' ? 'El proveedor no es COMPRA.'
-      : !this.access.supplierChangeEnabled() ? 'No hay usuarios configurados para cambiar proveedor.' : '');
-    return { base, version, status, reason, supplier, supplierReason, revision: stored?.revision ?? 0, classificationRevision: classification?.revision ?? 0 };
+    const sourceReason = rules.companyId !== rules.activeCompanyId ? 'La orden pertenece a otra compañía.'
+      : stored && stored.legacyVersion !== version ? 'La orden de origen cambió después de la edición en PostgreSQL.' : '';
+    const supplierChange = supplierChanges.find(({ number }) => number === base.number);
+    return {
+      base, version, status, sourceReason, supplier: supplierChange?.supplier ?? base.supplier,
+      supplierRevision: supplierChange?.revision ?? 0, revision: stored?.revision ?? 0, classificationRevision: classification?.revision ?? 0,
+    };
+  }
+
+  private authorizationReason({ base, sourceReason }: Awaited<ReturnType<AuthorizePurchaseOrder['context']>>) {
+    if (base.documentKind !== 'order') return 'La autorización está disponible para órdenes de compra.';
+    return sourceReason || (!this.storage.writable() ? 'La autorización de órdenes requiere PostgreSQL.' : '');
+  }
+
+  private supplierReason(context: Awaited<ReturnType<AuthorizePurchaseOrder['context']>>, mode: PurchaseOrderSupplierChangeMode) {
+    if (mode === 'authorization') {
+      const reason = this.authorizationReason(context);
+      if (reason) return reason;
+      if (context.status !== '9A') return 'Solo se puede cambiar proveedores del status A.';
+      if (context.supplier.code !== 'COMPRA') return 'El proveedor no es COMPRA.';
+    }
+    if (context.sourceReason) return context.sourceReason;
+    if (!this.storage.writable()) return 'El cambio de proveedor requiere PostgreSQL.';
+    return this.access.supplierChangeEnabled(mode) ? '' : 'No hay usuarios configurados para cambiar proveedor.';
   }
 
   async get(id: number) {
-    const { base, version, status, reason: orderReason, supplier, supplierReason, revision, classificationRevision } = await this.context(id);
-    const reason = orderReason || (!this.access.enabled() ? 'No hay autorizadores configurados para órdenes de compra.' : '');
+    const context = await this.context(id);
+    const { base, version, status, supplier, supplierRevision, revision, classificationRevision } = context;
+    const reason = this.authorizationReason(context) || (!this.access.enabled() ? 'No hay autorizadores configurados para órdenes de compra.' : '');
+    const supplierReason = this.supplierReason(context, 'authorization');
     const levels = this.access.levels();
     return {
       id, number: base.number, status, revision, classificationRevision, legacyVersion: version, canWrite: !reason, reason,
-      supplierChange: { canWrite: !supplierReason, reason: supplierReason, supplier },
+      supplierChange: { canWrite: !supplierReason, reason: supplierReason, supplier, supplierRevision },
       options: purchaseOrderAuthorizationLevels.map((level) => ({
         level,
         canApprove: !reason && levels.includes(level) && purchaseOrderAuthorizationTransition(status, level, 'approve') !== null,
@@ -61,8 +78,9 @@ export class AuthorizePurchaseOrder {
   }
 
   async execute(id: number, input: PurchaseOrderAuthorizationInput, key: string | undefined) {
-    const { base, version, status, reason: orderReason, revision, classificationRevision } = await this.context(id);
-    const reason = orderReason || (!this.access.enabled() ? 'No hay autorizadores configurados para órdenes de compra.' : '');
+    const context = await this.context(id);
+    const { base, version, status, revision, classificationRevision } = context;
+    const reason = this.authorizationReason(context) || (!this.access.enabled() ? 'No hay autorizadores configurados para órdenes de compra.' : '');
     if (reason) throw new ApplicationError(reason, 'PURCHASE_ORDER_AUTHORIZATION_NOT_AVAILABLE', this.storage.writable() && this.access.enabled() ? 409 : 503);
     const actor = await this.access.verify(key, input.level);
     if (version !== input.legacyVersion || status !== input.status || revision !== input.revision || classificationRevision !== input.classificationRevision) {
@@ -81,19 +99,29 @@ export class AuthorizePurchaseOrder {
     return (await this.legacy.changeSuppliers(filters)).map(({ supplier }) => supplier);
   }
 
-  async changeSupplier(id: number, input: PurchaseOrderSupplierChangeInput, key: string | undefined) {
-    const actor = await this.access.verify(key, 'supplier-change');
-    const { base, version, supplier, supplierReason, revision, classificationRevision } = await this.context(id);
-    if (version !== input.legacyVersion || revision !== input.revision || classificationRevision !== input.classificationRevision) {
+  async getSupplierAction(id: number) {
+    const context = await this.context(id);
+    const { base, version, supplier, supplierRevision, revision, classificationRevision } = context;
+    const reason = this.supplierReason(context, 'action');
+    return { id, number: base.number, revision, classificationRevision, supplierRevision, legacyVersion: version, supplier, canWrite: !reason, reason };
+  }
+
+  async changeSupplier(id: number, input: PurchaseOrderSupplierChangeInput, key: string | undefined, mode: PurchaseOrderSupplierChangeMode) {
+    const actor = await this.access.verify(key, mode === 'action' ? 'supplier-change-action' : 'supplier-change');
+    const context = await this.context(id);
+    const { base, version, supplier, supplierRevision, revision, classificationRevision } = context;
+    if (version !== input.legacyVersion || revision !== input.revision || classificationRevision !== input.classificationRevision ||
+      supplierRevision !== input.supplierRevision) {
       throw new ConflictError('La orden cambió. Vuelve a abrir Cambia proveedor.', 'PURCHASE_ORDER_SUPPLIER_STALE');
     }
-    if (supplierReason) throw new ConflictError(supplierReason, 'PURCHASE_ORDER_SUPPLIER_CHANGE_NOT_ALLOWED');
+    const reason = this.supplierReason(context, mode);
+    if (reason) throw new ConflictError(reason, 'PURCHASE_ORDER_SUPPLIER_CHANGE_NOT_ALLOWED');
     const [choice] = await this.legacy.changeSuppliers({ code: input.supplierCode }, true);
     if (!choice) throw new NotFoundError('Proveedor');
-    if (choice.supplier.id === supplier.id || choice.supplier.code === 'COMPRA') {
+    if (mode === 'authorization' && (choice.supplier.id === supplier.id || choice.supplier.code === 'COMPRA')) {
       throw new ConflictError('Selecciona un proveedor distinto de COMPRA.', 'PURCHASE_ORDER_SUPPLIER_UNCHANGED');
     }
-    await this.storage.saveSupplierChange({ id, number: base.number }, base.classifications[8] ?? '', supplier.id, input, choice, actor);
+    await this.storage.saveSupplierChange({ id, number: base.number }, base.classifications[8] ?? '', supplier.id ?? 0, input, choice, actor, mode);
     const order = await this.orders.findById(id);
     if (!order) throw new NotFoundError('Orden de compra');
     return order.toPrimitives();

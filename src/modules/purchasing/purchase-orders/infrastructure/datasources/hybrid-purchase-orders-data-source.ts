@@ -41,14 +41,14 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     ]);
     const byOrder = new Map(stored.map((record) => [`${record.id}/${record.number}`, record.current]));
     const edits = new Map(edited.map((record) => [`${record.id}/${record.number}`, record]));
-    const suppliers = new Map(supplierChanges.map(({ id, number, supplier }) => [`${id}/${number}`, supplier]));
+    const suppliers = new Map(supplierChanges.map((change) => [`${change.id}/${change.number}`, change]));
     return items.map((order) => {
       const { id, number } = order.identity;
       const key = `${id}/${number}`;
       const current = byOrder.get(key);
       const edit = edits.get(key);
-      const supplier = suppliers.get(key);
-      const withSupplier = supplier ? order.withSupplier(supplier) : order;
+      const change = suppliers.get(key);
+      const withSupplier = change ? order.withSupplier(change.supplier, change.supplierParameter) : order;
       const classified = current ? withSupplier.withClassifications(current) : withSupplier;
       return edit ? classified.withEditedLines(edit, includeLines) : classified;
     });
@@ -158,15 +158,18 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
       this.editStorage.findAuthorizationEvents(panel.purchaseOrder),
       this.editStorage.findSupplierChanges([panel.purchaseOrder.id]),
     ]);
-    const supplier = changes.find(({ number }) => number === panel.purchaseOrder.number)?.supplier;
-    if (events.length === 0 && !supplier) return panel;
+    const change = changes.find(({ number }) => number === panel.purchaseOrder.number);
+    if (events.length === 0 && !change) return panel;
     const items = [...panel.items];
     const initialLine = String(items[0]?.line4 ?? '');
     const notes = events.map(({ level, direction, actorId, occurredAt }) =>
       `, ${direction === 'revoke' ? '-' : ''}${level} usr:${actorId} ${authorizationDate.format(new Date(occurredAt))}`);
     if (notes.length > 0) items[0] = { ...items[0], line4: initialLine + notes.join('') };
     const summary = { ...panel.summary };
-    if (supplier) summary.supplier = supplier;
+    if (change) {
+      summary.supplier = change.supplier;
+      if (change.supplierParameter !== null) summary.supplierParameter = change.supplierParameter;
+    }
     const levelD = events.findLast(({ level }) => level === 'D');
     if (levelD) summary.authorizedBy = levelD.direction === 'approve' ? levelD.actorId : 0;
     const levelC = events.findLast(({ level, direction }) => level === 'C' && direction === 'approve');

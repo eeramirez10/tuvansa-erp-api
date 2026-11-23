@@ -73,5 +73,5 @@ export interface PurchaseOrderEditStorage {
   writable(): boolean;
   findRemoved(ids?: number[]): Promise<PurchaseOrderIdentity[]>;
   find(ids: number[]): Promise<PurchaseOrderEditSnapshot[]>;
-  save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[], supplierChangeId: number | null): Promise<PurchaseOrderEditSnapshot>;
+  save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[], supplierRevision: number): Promise<PurchaseOrderEditSnapshot>;
 }

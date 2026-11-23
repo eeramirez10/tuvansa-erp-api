@@ -1,5 +1,6 @@
 import type { PurchaseOrderAuthorizationDirection, PurchaseOrderAuthorizationLevel } from '../entities/purchase-order-authorization.js';
 import type { PurchaseOrderIdentity } from '../repositories/purchase-orders-repository.js';
+import type { PurchaseOrderSupplierChangeMode } from './purchase-order-supplier-change-data-source.js';
 
 export type PurchaseOrderAuthorizationInput = {
   level: PurchaseOrderAuthorizationLevel;
@@ -20,8 +21,8 @@ export type PurchaseOrderAuthorizationEvent = {
 export interface PurchaseOrderAuthorizationAccess {
   enabled(): boolean;
   levels(): PurchaseOrderAuthorizationLevel[];
-  supplierChangeEnabled(): boolean;
-  verify(key: string | undefined, action: PurchaseOrderAuthorizationLevel | 'supplier-change'): Promise<number>;
+  supplierChangeEnabled(mode: PurchaseOrderSupplierChangeMode): boolean;
+  verify(key: string | undefined, action: PurchaseOrderAuthorizationLevel | 'supplier-change' | 'supplier-change-action'): Promise<number>;
 }
 
 export interface PurchaseOrderAuthorizationStorage {

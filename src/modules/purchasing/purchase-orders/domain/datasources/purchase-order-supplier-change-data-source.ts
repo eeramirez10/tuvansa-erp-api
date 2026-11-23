@@ -6,7 +6,10 @@ export type PurchaseOrderSupplierChangeInput = {
   revision: number;
   legacyVersion: string;
   classificationRevision: number;
+  supplierRevision: number;
 };
+
+export type PurchaseOrderSupplierChangeMode = 'authorization' | 'action';
 
 export type PurchaseOrderSupplierChoice = {
   supplier: PurchaseOrderProps['supplier'];
@@ -14,7 +17,10 @@ export type PurchaseOrderSupplierChoice = {
   taxType: number;
 };
 
-export type PurchaseOrderSupplierChange = PurchaseOrderIdentity & PurchaseOrderSupplierChoice;
+export type PurchaseOrderSupplierChange = PurchaseOrderIdentity & PurchaseOrderSupplierChoice & {
+  revision: number;
+  supplierParameter: string | null;
+};
 export type PurchaseOrderSupplierFilters = { code?: string | undefined; name?: string | undefined };
 
 export interface PurchaseOrderSupplierChangeCatalog {
@@ -25,6 +31,6 @@ export interface PurchaseOrderSupplierChangeStorage {
   findSupplierChanges(ids?: number[]): Promise<PurchaseOrderSupplierChange[]>;
   saveSupplierChange(
     order: PurchaseOrderIdentity, baseStatus: string, previousSupplierId: number,
-    input: PurchaseOrderSupplierChangeInput, choice: PurchaseOrderSupplierChoice, actorId: number,
+    input: PurchaseOrderSupplierChangeInput, choice: PurchaseOrderSupplierChoice, actorId: number, mode: PurchaseOrderSupplierChangeMode,
   ): Promise<void>;
 }

@@ -241,6 +241,10 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
     );
     const current = currentRows[0];
     if (current === undefined) return null;
+    return this.findAdjacentByNumber(current.number, direction);
+  }
+
+  async findAdjacentByNumber(number: string, direction: PurchaseReceptionNavigationDirection): Promise<PurchaseReception | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
@@ -248,7 +252,7 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
        FROM FDOC
        WHERE ${documentFilter} AND FDOC.DNUM ${operator} ?
        ORDER BY FDOC.DNUM ${order}, FDOC.DSEQ ${order} LIMIT 1`,
-      [current.number],
+      [number],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
@@ -282,6 +286,10 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
     }
 
     const reception = await this.findById(id);
+    return this.classificationPanel(identity, reception?.toPrimitives().classifications ?? [], 'mysql');
+  }
+
+  async classificationPanel(identity: { id: number; number: string }, current: string[], source: PurchaseReceptionPanelResult['source']): Promise<PurchaseReceptionPanelResult> {
     const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
       `SELECT FAG.AGT AS classifier, FAG.AGNUM AS code, FAG.AGDESCR AS description, FAG.AGTNUM AS compositeCode
        FROM FAG
@@ -289,9 +297,9 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
        ORDER BY FAG.AGT, FAG.AGSEQ`,
     );
     return {
-      purchaseReception: identity, key, section: 'actions', button: 'Clasificar', source: 'mysql',
+      purchaseReception: identity, key: 'classifications', section: 'actions', button: 'Clasificar', source,
       items: rows.map((row) => ({ ...row })),
-      summary: { current: reception?.toPrimitives().classifications ?? [] },
+      summary: { current },
     };
   }
 }

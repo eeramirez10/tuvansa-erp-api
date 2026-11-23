@@ -5,12 +5,15 @@ import { GetAccountingPolicy } from './application/use-cases/get-accounting-poli
 import { NavigateAccountingPolicy } from './application/use-cases/navigate-accounting-policy.js';
 import { SearchAccountingPolicies } from './application/use-cases/search-accounting-policies.js';
 import { LegacyMysqlAccountingPoliciesDataSource } from './infrastructure/datasources/legacy-mysql-accounting-policies-data-source.js';
+import { AccountingPoliciesWithPurchaseReceptionsDataSource } from './infrastructure/datasources/accounting-policies-with-purchase-receptions-data-source.js';
 import { AccountingPoliciesRepositoryImpl } from './infrastructure/repositories/accounting-policies-repository-impl.js';
 import { AccountingPoliciesController } from './presentation/http/accounting-policies-controller.js';
 import { createAccountingPoliciesRouter } from './presentation/http/accounting-policies-routes.js';
 
 export const createAccountingPoliciesModule = (): Router => {
-  const repository = new AccountingPoliciesRepositoryImpl(new LegacyMysqlAccountingPoliciesDataSource());
+  const repository = new AccountingPoliciesRepositoryImpl(
+    new AccountingPoliciesWithPurchaseReceptionsDataSource(new LegacyMysqlAccountingPoliciesDataSource()),
+  );
   const controller = new AccountingPoliciesController(
     new GetAccountingPolicy(repository),
     new GetAccountingPolicyByNumber(repository),

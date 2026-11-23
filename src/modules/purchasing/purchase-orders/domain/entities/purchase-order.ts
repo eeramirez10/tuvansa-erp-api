@@ -84,10 +84,13 @@ export class PurchaseOrder {
   }
 
   withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'> &
-    Partial<Pick<PurchaseOrderProps, 'documentKind'>> & { comments?: PurchaseOrderCommentsSnapshot }, includeLines: boolean): PurchaseOrder {
+    Partial<Pick<PurchaseOrderProps, 'documentKind'>> & {
+      comments?: PurchaseOrderCommentsSnapshot;
+      receiving?: Pick<PurchaseOrderProps, 'status' | 'received'>;
+    }, includeLines: boolean): PurchaseOrder {
     const header = edit.comments ? applyPurchaseOrderCommentFields(this.props, edit.comments.fields) : this.props;
     return PurchaseOrder.create({
-      ...header, documentKind: edit.documentKind ?? this.props.documentKind,
+      ...header, ...edit.receiving, documentKind: edit.documentKind ?? this.props.documentKind,
       totals: edit.totals, lines: includeLines ? edit.lines : [],
     });
   }

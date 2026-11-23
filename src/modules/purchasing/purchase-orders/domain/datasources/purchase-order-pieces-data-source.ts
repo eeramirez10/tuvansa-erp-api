@@ -19,9 +19,15 @@ export type PurchaseOrderPiecesInput = Pick<PurchaseOrderEditSnapshot, 'revision
   entries: PurchaseOrderPieceChange[];
 };
 
+export type PurchaseOrderPieceImportInput = Pick<PurchaseOrderEditSnapshot, 'revision' | 'legacyVersion'> & {
+  entries: Array<Pick<PurchaseOrderPiece, 'productCode' | 'serial' | 'quantity'>>;
+};
+
+export type PurchaseOrderPieceGroup = { productCode: string; items: PurchaseOrderPiece[] };
+
 export interface PurchaseOrderPiecesStorage {
-  listPieceOverrides(order: PurchaseOrderIdentity): Promise<Array<{ productCode: string; items: PurchaseOrderPiece[] }>>;
-  savePieces(snapshot: PurchaseOrderEditSnapshot, productCode: string, items: PurchaseOrderPiece[]): Promise<void>;
+  listPieceOverrides(order: PurchaseOrderIdentity): Promise<PurchaseOrderPieceGroup[]>;
+  savePieces(snapshot: PurchaseOrderEditSnapshot, products: PurchaseOrderPieceGroup[]): Promise<void>;
 }
 
 export function readPurchaseOrderPieces(items: Array<Record<string, unknown>>): PurchaseOrderPiece[] {

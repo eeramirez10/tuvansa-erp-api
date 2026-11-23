@@ -28,7 +28,7 @@ export interface PurchaseReceptionPanelResult {
   key: PurchaseReceptionPanelKey;
   section: 'actions';
   button: string;
-  source: 'mysql';
+  source: 'mysql' | 'postgres';
   items: Array<Record<string, unknown>>;
   summary?: Record<string, unknown>;
 }

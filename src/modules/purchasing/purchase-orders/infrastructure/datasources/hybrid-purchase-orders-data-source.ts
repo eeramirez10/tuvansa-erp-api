@@ -8,6 +8,7 @@ import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchas
 import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
+import { readLocalPurchaseReceptions } from '../../../purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import type {
   PurchaseOrderNavigationDirection,
   PurchaseOrderClassificationPanel,
@@ -129,6 +130,20 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     if (key === 'classifications') return this.getClassifications(id);
     const local = await this.creation.findLocal(id);
     if (await this.isRemoved(id, local?.order.identity)) return null;
+    if (key === 'receipts') {
+      const panel = await this.dataSource.getPanel(id, key, undefined, local?.order.identity);
+      if (!panel) return null;
+      const projected = await readLocalPurchaseReceptions<Record<string, unknown>[]>([], async (client) => {
+        const { rows } = await client.query(
+          `SELECT id::text AS id,number AS document,result #>> '{reception,dates,receivedAt}' AS date
+           FROM tuvansa.purchase_receptions WHERE order_id=$1 AND order_number=$2 ORDER BY number`,
+          [id, panel.purchaseOrder.number],
+        );
+        return rows.map((row) => ({ ...row, id: Number(row.id) }));
+      });
+      if (!projected.length) return panel;
+      return { ...panel, source: local ? 'postgres' : 'mysql+postgres', items: [...panel.items, ...projected] };
+    }
     if (key === 'pieces') {
       const panel = await this.dataSource.getPanel(id, key, undefined, local?.order.identity);
       if (!panel) return null;
@@ -146,9 +161,6 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     }
     if (local) {
       const { order, metadata } = local;
-      if (key === 'receipts') {
-        return this.dataSource.getPanel(id, key, undefined, order.identity);
-      }
       const edits = await this.editStorage.find([id]);
       if (key === 'ct') {
         const panel = await this.dataSource.getPanel(id, key, edits, order.identity);

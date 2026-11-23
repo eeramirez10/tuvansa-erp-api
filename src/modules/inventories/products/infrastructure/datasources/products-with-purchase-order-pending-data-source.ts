@@ -1,19 +1,39 @@
 import { purchaseOrderInventoryAdjustment } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-pending.js';
-import { Product } from '../../domain/entities/product.js';
-import type { ProductNavigationDirection } from '../../domain/repositories/products-repository.js';
+import { Product, type ProductProps } from '../../domain/entities/product.js';
+import type { ProductNavigationDirection, ProductSearchCriteria } from '../../domain/repositories/products-repository.js';
 import { LegacyMysqlProductsDataSource } from './legacy-mysql-products-data-source.js';
+import {
+  purchaseReceptionProductInventories, purchaseReceptionProductInventory, type ReceiptWarehouseTotals,
+} from './purchase-reception-product-inventory.js';
+
+function addReceiptInventory(
+  accumulated: ProductProps['accumulated'], inventory: ReceiptWarehouseTotals[],
+): ProductProps['accumulated'] {
+  const stock = inventory.reduce((total, { quantity }) => total + quantity, 0);
+  const lastPurchaseAt = inventory.reduce((latest, receipt) => {
+    return receipt.lastPurchaseAt && (!latest || receipt.lastPurchaseAt > latest) ? receipt.lastPurchaseAt : latest;
+  }, accumulated.lastPurchaseAt);
+  return {
+    ...accumulated,
+    currentStock: Number((accumulated.currentStock + stock).toFixed(3)),
+    lastPurchaseAt,
+  };
+}
 
 export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProductsDataSource {
   private async withPending(request: Promise<Product | null>): Promise<Product | null> {
     const product = await request;
     if (!product) return null;
     const details = product.toPrimitives();
-    const { pending, confirmed, quotes } = await purchaseOrderInventoryAdjustment(details.id);
-    if (pending === 0 && confirmed === 0 && quotes === 0) return product;
+    const [{ pending, confirmed, quotes }, inventory] = await Promise.all([
+      purchaseOrderInventoryAdjustment(details.id), purchaseReceptionProductInventory(details.id),
+    ]);
+    if (pending === 0 && confirmed === 0 && quotes === 0 && inventory.length === 0) return product;
+    const accumulated = inventory.length === 0 ? details.accumulated : addReceiptInventory(details.accumulated, inventory);
     return Product.create({
       ...details,
       accumulated: {
-        ...details.accumulated,
+        ...accumulated,
         supplierOrders: Number((details.accumulated.supplierOrders + pending).toFixed(2)),
         supplierQuotes: Number((details.accumulated.supplierQuotes + quotes).toFixed(2)),
         confirmed: Number((details.accumulated.confirmed + confirmed).toFixed(3)),
@@ -25,5 +45,15 @@ export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProdu
   override findFirstActive() { return this.withPending(super.findFirstActive()); }
   override findAdjacent(id: number, direction: ProductNavigationDirection) {
     return this.withPending(super.findAdjacent(id, direction));
+  }
+
+  override async search(criteria: ProductSearchCriteria) {
+    const result = await super.search(criteria);
+    const inventory = await purchaseReceptionProductInventories(result.items.map((item) => item.toPrimitives().id));
+    return { ...result, items: result.items.map((item) => {
+      const props = item.toPrimitives();
+      const totals = inventory.get(props.id);
+      return totals ? Product.create({ ...props, accumulated: addReceiptInventory(props.accumulated, totals) }) : item;
+    }) };
   }
 }

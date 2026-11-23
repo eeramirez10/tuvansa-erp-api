@@ -1,5 +1,7 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
+import type { CreatePurchaseReception } from '../../application/use-cases/create-purchase-reception.js';
 import type { GetPurchaseReceptionByNumber } from '../../application/use-cases/get-purchase-reception-by-number.js';
 import type { GetPurchaseReceptionPanel } from '../../application/use-cases/get-purchase-reception-panel.js';
 import type { GetPurchaseReception } from '../../application/use-cases/get-purchase-reception.js';
@@ -10,6 +12,20 @@ import type { PurchaseReceptionPanelKey } from '../../domain/repositories/purcha
 const idParamsSchema = z.object({ purchaseReceptionId: z.coerce.number().int().positive() });
 const numberParamsSchema = z.object({ purchaseReceptionNumber: z.string().trim().min(1).max(15) });
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const orderNumberSchema = z.string().trim().min(1).max(15).toUpperCase();
+const receiveSchema = z.strictObject({
+  orderNumber: orderNumberSchema,
+  requestKey: z.uuid(),
+  revision: z.int().nonnegative(),
+  legacyVersion: z.string().regex(/^[0-9a-f]{64}$/),
+  receivedAt: z.iso.date(),
+  warehouse: z.string().trim().min(1).max(10).toUpperCase(),
+  supplierReference: z.string().trim().max(30).toUpperCase(),
+  lines: z.array(z.strictObject({
+    orderLineId: z.int().positive(),
+    quantity: z.number().positive(),
+  })).min(1),
+});
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   documentNumber: z.string().trim().min(1).max(15).optional(),
@@ -31,7 +47,30 @@ export class PurchaseReceptionsController {
     private readonly searchReceptions: SearchPurchaseReceptions,
     private readonly navigateReception: NavigatePurchaseReception,
     private readonly getPanel: GetPurchaseReceptionPanel,
+    private readonly createReception: CreatePurchaseReception,
+    private readonly lookupOrderId: (number: string) => Promise<number | undefined>,
   ) {}
+
+  private async orderId(orderNumber: string) {
+    const id = await this.lookupOrderId(orderNumber);
+    if (!id) throw new NotFoundError('Orden de compra para recibir');
+    return id;
+  }
+
+  prepare: RequestHandler = async (request, response, next) => {
+    try {
+      const number = orderNumberSchema.parse(request.query.orderNumber);
+      response.json({ data: await this.createReception.get(1, await this.orderId(number)) });
+    } catch (error) { next(error); }
+  };
+
+  create: RequestHandler = async (request, response, next) => {
+    try {
+      const { orderNumber, ...fields } = receiveSchema.parse(request.body);
+      const result = await this.createReception.save({ companyId: 1, userId: 0 }, await this.orderId(orderNumber), fields);
+      response.status(201).json({ data: result });
+    } catch (error) { next(error); }
+  };
 
   search: RequestHandler = async (request, response, next) => {
     try {

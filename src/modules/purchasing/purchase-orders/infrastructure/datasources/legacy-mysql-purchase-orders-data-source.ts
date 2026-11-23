@@ -414,7 +414,8 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
 
     if (key === 'receipts') {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
-        `SELECT DNUM AS document, DFECHA AS date
+        `SELECT DNUM AS document, DFECHA AS date,
+           CASE WHEN DESFACT IN (2,3) OR DESCXC=2 THEN DSEQ ELSE NULL END AS id
          FROM FDOC
          WHERE DREFER = ? AND DEST = 0 AND DMULTICIA = 1
          ORDER BY DREFER, FDOC.DSEQ`,

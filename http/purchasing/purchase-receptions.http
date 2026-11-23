@@ -1,6 +1,14 @@
 @baseUrl = http://localhost:3000/api
 @purchaseReceptionId = 421564
 @purchaseReceptionNumber = RA10724
+@orderNumber = copiar-folio-orden-de-prueba-confirmada
+@revision = 2
+@version = copiar-version-del-get
+@requestKey = generar-uuid-por-recepcion
+@receivedAt = 2026-11-23
+@warehouse = 01
+@orderLineId = copiar-orderLineId-del-get
+@receptionId = copiar-id-del-post
 
 ### Ultimas recepciones
 GET {{baseUrl}}/purchasing/purchase-receptions?page=1&pageSize=25
@@ -31,3 +39,26 @@ GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/a
 
 ### Accion: Clasificar
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/classifications
+### Nueva recepción
+GET {{baseUrl}}/purchasing/purchase-receptions/create?orderNumber={{orderNumber}}
+
+### Guardar recepción parcial en Neon de pruebas
+POST {{baseUrl}}/purchasing/purchase-receptions
+Content-Type: application/json
+
+{
+  "requestKey": "{{requestKey}}",
+  "revision": {{revision}},
+  "legacyVersion": "{{version}}",
+  "orderNumber": "{{orderNumber}}",
+  "receivedAt": "{{receivedAt}}",
+  "warehouse": "{{warehouse}}",
+  "supplierReference": "PRUEBA-RECEPCION",
+  "lines": [{ "orderLineId": {{orderLineId}}, "quantity": 1 }]
+}
+
+### Cargo al proveedor
+GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/auxiliary
+
+### Entrada de Inventarios
+GET {{baseUrl}}/inventories/movements/{{receptionId}}

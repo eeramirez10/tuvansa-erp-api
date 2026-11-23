@@ -8,6 +8,7 @@ import type { PurchaseOrderEditLegacyDataSource, PurchaseOrderEditStorage } from
 import {
   readPurchaseOrderPieces,
   type PurchaseOrderPiece,
+  type PurchaseOrderPieceImportInput,
   type PurchaseOrderPiecesInput,
   type PurchaseOrderPiecesStorage,
 } from '../../domain/datasources/purchase-order-pieces-data-source.js';
@@ -15,6 +16,10 @@ import type { PurchaseOrdersRepository } from '../../domain/repositories/purchas
 import { loadPurchaseOrderWriteContext } from './load-purchase-order-write-context.js';
 
 const invalid = (message: string) => new ApplicationError(message, 'INVALID_PURCHASE_ORDER_PIECES', 422);
+
+const newPiece = (number: string, warehouse: string, productCode: string, serial: string, quantity: number): PurchaseOrderPiece => ({
+  id: 0, productCode, serial, pieces: 1, quantity, warehouse, document: number, receipt: number,
+});
 
 export class EditPurchaseOrderPieces {
   constructor(
@@ -76,18 +81,41 @@ export class EditPurchaseOrderPieces {
       const selectedSerial = serial || row?.serial || '';
       if (selectedSerial && serials.has(selectedSerial)) throw invalid('Hay una serie repetida para el producto.');
       if (selectedSerial) serials.add(selectedSerial);
-      updated.push(row ? { ...row, serial: selectedSerial, quantity } : {
-        id: 0, productCode, serial: selectedSerial, pieces: 1, quantity,
-        warehouse: stored?.comments?.fields.warehouse ?? base.warehouse, document: base.number, receipt: base.number,
-      });
+      updated.push(row ? { ...row, serial: selectedSerial, quantity }
+        : newPiece(base.number, stored?.comments?.fields.warehouse ?? base.warehouse, productCode, selectedSerial, quantity));
     }
     if (existing.size !== seen.size) throw invalid('Las piezas existentes se eliminan indicando cantidad cero.');
     if (!isDeepStrictEqual(updated, current)) {
       await this.storage.savePieces({
         id, number: base.number, revision: input.revision, legacyVersion: version, lines,
         totals: stored?.totals ?? base.totals, amountInWords: stored?.amountInWords ?? null,
-      }, productCode, updated);
+      }, [{ productCode, items: updated }]);
     }
+    return this.get(id);
+  }
+
+  async importPieces(id: number, input: PurchaseOrderPieceImportInput) {
+    const { base, stored, pieces, revisionToken, reason, lines, version, products } = await this.context(id);
+    if (input.revision !== (stored?.revision ?? 0) || input.legacyVersion !== revisionToken) {
+      throw new ConflictError('Las piezas o la orden cambiaron. Vuelve a abrir Alta Piezas.', 'PURCHASE_ORDER_PIECES_STALE');
+    }
+    if (reason) throw new ApplicationError(reason, 'PURCHASE_ORDER_PIECES_NOT_ALLOWED', this.storage.writable() ? 409 : 503);
+    const productCodes = new Set(products.map(({ productCode }) => productCode));
+    const serials = new Set(pieces.map(({ serial }) => serial).filter(Boolean));
+    const groups = new Map<string, PurchaseOrderPiece[]>();
+    const warehouse = stored?.comments?.fields.warehouse ?? base.warehouse;
+    for (const { productCode, serial, quantity } of input.entries) {
+      if (!productCodes.has(productCode)) throw invalid(`El producto ${productCode} no está en la orden.`);
+      if (serial && serials.has(serial)) throw invalid(`La serie ${serial} ya aparece en la orden o en el archivo.`);
+      if (serial) serials.add(serial);
+      const items = groups.get(productCode) ?? pieces.filter((piece) => piece.productCode === productCode);
+      items.push(newPiece(base.number, warehouse, productCode, serial, quantity));
+      groups.set(productCode, items);
+    }
+    await this.storage.savePieces({
+      id, number: base.number, revision: input.revision, legacyVersion: version, lines,
+      totals: stored?.totals ?? base.totals, amountInWords: stored?.amountInWords ?? null,
+    }, [...groups].map(([productCode, items]) => ({ productCode, items })));
     return this.get(id);
   }
 }

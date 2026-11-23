@@ -119,7 +119,7 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 
 | Orden en pantalla | Código Omnis 7 | Fuente y comportamiento | API web |
 |---|---|---|---|
-| Alta Piezas | `EOC#2/1 → EOC#17` | Captura, edición e importación por producto. Cantidad cero elimina la pieza. | `GET /:id/actions/pieces/editor`, `PATCH /:id/actions/pieces` |
+| Alta Piezas | `EOC#2/1 → EOC#17` | Captura, edición por producto e importación de varios productos. Cantidad cero elimina la pieza durante Cambio. | `GET /:id/actions/pieces/editor`, `PATCH /:id/actions/pieces`, `PATCH /:id/actions/pieces/import` |
 | Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. **Cambia proveedor** sustituye el proveedor inicial `COMPRA` en nivel A. | `GET/PATCH /:id/actions/authorization`, `PATCH /:id/actions/authorization/supplier` |
 | Auxiliar | `EOC#2/3 → EPRV#7C/240` | Lee `FDOC` por `DREFER=PENUM`, `DEST=CIAKYT`, `DMULTICIA=LVCIA`. Presenta `DNUM` y `DFECHA`. La API fija `DEST=0` y `DMULTICIA=1` para el contexto capturado. | `GET /:id/actions/auxiliar` |
 | Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y guarda el código en `PEPARA`. | `GET/PATCH /:id/actions/change-supplier` |
@@ -130,10 +130,10 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 | CT | `EOC#2/9 → EOC#6AA/240–241`, `MBASE/124` | **Cambio** actualiza la primera partida de la variante y el pendiente. El catálogo de TUVANSA no tiene tallas configuradas. | `GET /:id/actions/ct`, `GET /:id/actions/ct/editor`, `PATCH /:id/actions/ct` |
 | Div. Sucursal | `EOC#2/10 → EPED#8` | Aumenta el surtido de la partida origen y crea una partida por esa cantidad en la orden y sucursal destino. | `GET/POST /:id/actions/branches`, modo `divide` |
 | Duplicar | `EOC#2/11 → EOC#7` | Copia las partidas por porcentaje y genera un folio nuevo. Shift copia sólo `PLCLASE='X'` y desmarca el origen al guardar. | `GET/POST /:id/actions/duplicate` |
-| Etiquetas | `EOC#2/12 → /263` en la ruta predeterminada | El reporte y el medio de impresión dependen de la configuración. La ruta predeterminada usa `FTIPMV` y las asignaciones de `FPLIN`. | Sin ruta |
+| Etiquetas | `EOC#2/12 → ECPAETIEAN/151` | Vista previa A–F de etiquetas por cantidad confirmada. Shift usa las partidas marcadas. | `GET /:id/actions/labels` |
 | Gen % | `EOC#2/13` | Para TUVANSA el procedimiento muestra `bye` y termina antes de efectuar cálculos o consultas. | Mensaje local |
-| Imprimir | `EOC#2/14 → MOCOM/36` | Genera el reporte de orden con `#48=0`. El medio de impresión depende de `TIPRINTER` y existen rutinas por configuración. | Sin ruta |
-| Imprimir Conf. | `EOC#2/15 → MOCOM/36` | Usa `#48=1`; el filtro predeterminado de partidas incluye `PLASIGNADO>0`. | Sin ruta |
+| Imprimir | `EOC#2/14 → MOCOM/36` | Vista previa del formato configurado antes de abrir el diálogo del navegador. | `GET /:id/actions/print` |
+| Imprimir Conf. | `EOC#2/15 → MOCOM/36` | Formato con sufijo A. Sólo partidas con `PLASIGNADO>0`. | `GET /:id/actions/print-confirmation` |
 | Piezas | `EOC#2/16 → EOC#18/240`, `EOC#18/107` | Muestra piezas por folio. **Confirmar** acumula `CAJCANT` en la primera partida del mismo código en orden `PLSEQ`. | `GET /:id/actions/pieces`, `GET/PATCH /:id/actions/pieces/confirmation` |
 | Sucursal | `EOC#2/17 → EPED#8` | Copia un porcentaje de las partidas de la sucursal origen a la orden y sucursal destino. | `GET/POST /:id/actions/branches`, modo `percentage` |
 | Split | `EOC#2/84` | Crea una orden hija con sufijo `A` a `Z` y mueve partidas sin surtido, asignación ni piezas. | `GET/POST /:id/actions/split` |
@@ -143,8 +143,15 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 - Duplicar usa la serie PostgreSQL `OW` de Alta de orden y conserva la moneda del origen. Split conserva el identificador de las partidas y recalcula ambas órdenes. En Omnis está comentada la totalización del padre en Split.
 - Div. Sucursal guarda los dos documentos en una sola transacción y compensa el pendiente del origen con el de la nueva partida. Sucursal aumenta el pendiente por las partidas copiadas. Ambas conservan unidad y factor del origen.
 - Cambio en CT conserva surtido, asignado y los importes de la orden, como en `MBASE/124`. El guardado se verificó con una matriz de prueba en una orden aislada de Neon.
-- Alta Piezas guarda en PostgreSQL por orden y producto. Las series automáticas usan prefijo `W`. Importar acepta filas de código, cantidad y serie separadas por tabuladores para el producto seleccionado, y espera **OK** para guardar. El origen del valor `#45` usado para comparar el total en `EOC#17/411` sigue pendiente de confirmar.
+- Alta Piezas guarda en PostgreSQL por orden y producto. Las series automáticas usan prefijo `W`. Importar acepta filas de código, cantidad y serie separadas por tabuladores para productos de la orden. **OK** guarda todo el archivo en una revisión. Cancelar o una serie duplicada deja la orden intacta. El origen del valor `#45` usado para comparar el total en `EOC#17/411` sigue pendiente de confirmar.
 - **Piezas → Confirmar** guarda las asignaciones, el clasificador `ASIGNAD` y el confirmado de Inventarios en la misma transacción. Los folios, las cantidades pedidas y surtidas, y el acumulado pendiente se conservan.
+
+### Impresión y etiquetas de TUVANSA
+
+- **Imprimir** usa `FTIPMV.TIREPNAME`, con la selección por tipo de folio de `MOCOM/36`. **Imprimir Conf.** agrega el sufijo `A` y toma partidas con `PLASIGNADO>0`. La web muestra una vista previa antes del diálogo de impresión del navegador. Los formatos habilitados son `QTUVANSA004` y `QTUVANSA004A`. Un tipo con otro formato devuelve el nombre solicitado. Por ejemplo, `OD` tiene el formato base `QTUVANSA004A` y su acción confirmada solicita `QTUVANSA004AA`.
+- Se observó la vista previa estándar en Omnis con Shift. La biblioteca activa mostró `E101201` al intentar el formato confirmado. Su estructura se recuperó de `FORMATOS.LBS` y `FORMATOS.LBR`. Las vistas web usan domicilios del catálogo vigente y calculan el subtotal y el IVA sobre las partidas confirmadas.
+- **Etiquetas** sigue `ECPAETIEAN/151`, `/142–153` y `ECPAETIEANT/100–102`. Los formatos `PCL_Z201_BIA` a `BIF` del catálogo `FYG` determinan los seis diseños. A abre como primera opción. Shift toma las filas marcadas. La vista previa usa las cantidades confirmadas redondeadas a copias enteras y los identificadores guardados en `FINV` y `FINV2`. Se verificaron hojas en Chrome. La interpretación de cantidades decimales en el equipo de etiquetas queda pendiente de probar.
+- **Piezas → Imprimir** abre en Omnis `ECPAETIPZA/100`, que consulta `FCAJAS` y busca un formato `PCL_*_BC<letra>`. Las tres bases consultadas no tienen formatos BC. La web muestra el estado de esa configuración.
 
 ### Evidencia para reproducir el contraste
 

@@ -4,6 +4,8 @@ import type { PurchaseReceptionsController } from './purchase-receptions-control
 export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController): Router => {
   const router = Router();
   router.get('/', controller.search);
+  router.get('/create', controller.prepare);
+  router.post('/', controller.create);
   router.get('/by-number/:purchaseReceptionNumber', controller.getByNumberHandler);
   router.get('/:purchaseReceptionId/previous', controller.previous);
   router.get('/:purchaseReceptionId/next', controller.next);

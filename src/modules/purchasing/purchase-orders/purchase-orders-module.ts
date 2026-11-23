@@ -19,6 +19,7 @@ import { EditPurchaseOrderPieces } from './application/use-cases/edit-purchase-o
 import { ConfirmPurchaseOrderPieces } from './application/use-cases/confirm-purchase-order-pieces.js';
 import { AuthorizePurchaseOrder } from './application/use-cases/authorize-purchase-order.js';
 import { MysqlPurchaseOrderAuthorizationAccess } from './infrastructure/datasources/mysql-purchase-order-authorization-access.js';
+import { MysqlPurchaseOrderPrintReferences } from './infrastructure/datasources/mysql-purchase-order-print-references.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from './infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
 import { LegacyMysqlPurchaseOrderEditDataSource } from './infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
 import { PostgresPurchaseOrderClassifications } from './infrastructure/datasources/postgres-purchase-order-classifications.js';
@@ -56,6 +57,7 @@ export const createPurchaseOrdersModule = (): Router => {
     new TransferPurchaseOrderBranch(capture, edits, edits, repository),
     new EditPurchaseOrderPieces(capture, edits, edits, repository),
     new ConfirmPurchaseOrderPieces(capture, edits, edits, repository),
+    new MysqlPurchaseOrderPrintReferences(repository),
   );
   return createPurchaseOrdersRouter(controller);
 };

@@ -367,6 +367,19 @@ Content-Type: application/json
   "entries": [{ "id": null, "serial": "", "quantity": 1 }]
 }
 
+### Importar piezas de varios productos en una sola revisión
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces/import
+Content-Type: application/json
+
+{
+  "revision": {{actionRevision}},
+  "legacyVersion": "{{actionVersion}}",
+  "entries": [
+    { "productCode": "01300958", "serial": "PRUEBA-A", "quantity": 1.25 },
+    { "productCode": "01202259", "serial": "PRUEBA-B", "quantity": 2 }
+  ]
+}
+
 ### Piezas. Consulta el panel y la revisión específica para Confirmar
 GET {{baseUrl}}/purchasing/purchase-orders/{{actionOrderId}}/actions/pieces
 
@@ -381,3 +394,12 @@ Content-Type: application/json
   "revision": {{actionRevision}},
   "legacyVersion": "{{actionVersion}}"
 }
+
+### Imprimir orden
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/print
+
+### Imprimir Conf.
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/print-confirmation
+
+### Etiquetas por cantidad confirmada
+GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/labels

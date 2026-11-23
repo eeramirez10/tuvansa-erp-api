@@ -14,7 +14,7 @@ import { env } from '../../../config/env.js';
 import { LegacyMysqlProductClassificationDataSource } from './infrastructure/datasources/legacy-mysql-product-classification-data-source.js';
 import { LegacyMysqlProductOtherDataSource } from './infrastructure/datasources/legacy-mysql-product-other-data-source.js';
 import { ProductsWithPurchaseOrderPendingDataSource } from './infrastructure/datasources/products-with-purchase-order-pending-data-source.js';
-import { LegacyMysqlProductPanelsDataSource } from './infrastructure/datasources/legacy-mysql-product-panels-data-source.js';
+import { ProductPanelsWithPurchaseReceptionsDataSource } from './infrastructure/datasources/product-panels-with-purchase-receptions-data-source.js';
 import { PostgresProductClassificationDataSource } from './infrastructure/datasources/postgres-product-classification-data-source.js';
 import { PostgresProductOtherDataSource } from './infrastructure/datasources/postgres-product-other-data-source.js';
 import { PostgresProductCatalogEditDataSource } from './infrastructure/datasources/postgres-product-catalog-edit-data-source.js';
@@ -43,7 +43,7 @@ export const createProductsModule = (): Router => {
   );
   const repository = new ProductsRepositoryImpl(dataSource, classificationRepository, otherDataRepository, edits);
   const panelsRepository = new ProductPanelsRepositoryImpl(
-    new LegacyMysqlProductPanelsDataSource(),
+    new ProductPanelsWithPurchaseReceptionsDataSource(),
     otherDataRepository,
     edits,
   );

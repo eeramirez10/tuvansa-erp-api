@@ -58,6 +58,7 @@ export interface PurchaseOrderEditSnapshot extends PurchaseOrderIdentity {
   documentKind?: 'order' | 'quote';
   comments?: PurchaseOrderCommentsSnapshot;
   splitSequence?: number;
+  receiving?: Pick<PurchaseOrderProps, 'status' | 'received'>;
 }
 
 export type PurchaseOrderStockChange = {

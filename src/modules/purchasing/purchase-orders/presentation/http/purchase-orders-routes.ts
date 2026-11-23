@@ -39,8 +39,12 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.get('/:purchaseOrderId/actions/pieces', controller.panel('pieces'));
   router.get('/:purchaseOrderId/actions/pieces/editor', controller.getPiecesEditor);
   router.patch('/:purchaseOrderId/actions/pieces', controller.savePieces);
+  router.patch('/:purchaseOrderId/actions/pieces/import', controller.importPieces);
   router.get('/:purchaseOrderId/actions/pieces/confirmation', controller.getPieceConfirmation);
   router.patch('/:purchaseOrderId/actions/pieces/confirmation', controller.savePieceConfirmation);
+  router.get('/:purchaseOrderId/actions/print', controller.print(false));
+  router.get('/:purchaseOrderId/actions/print-confirmation', controller.print(true));
+  router.get('/:purchaseOrderId/actions/labels', controller.labels);
   router.get('/:purchaseOrderId/edit', controller.getEditor);
   router.get('/:purchaseOrderId/edit/products', controller.searchEditorProducts);
   router.get('/:purchaseOrderId/removal', controller.getRemoval);

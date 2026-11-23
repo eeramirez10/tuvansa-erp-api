@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import type { MysqlPurchaseOrderPrintReferences } from '../../infrastructure/datasources/mysql-purchase-order-print-references.js';
 import { z } from 'zod';
 import type { GetPurchaseOrderByNumber } from '../../application/use-cases/get-purchase-order-by-number.js';
 import type { GetPurchaseOrderPanel } from '../../application/use-cases/get-purchase-order-panel.js';
@@ -78,6 +79,13 @@ const piecesSchema = revisionSchema.extend({
     serial: z.string().trim().max(30),
     quantity: scaledNumber(3),
   })),
+}).strict();
+const pieceImportSchema = revisionSchema.extend({
+  entries: z.array(z.strictObject({
+    productCode: piecesSchema.shape.productCode,
+    serial: z.string().trim().max(30),
+    quantity: scaledNumber(3).refine((value) => value > 0, 'La cantidad debe ser mayor a cero.'),
+  })).min(1),
 }).strict();
 const commentsSchema = revisionSchema.extend({
   fields: z.strictObject({
@@ -189,7 +197,29 @@ export class PurchaseOrdersController {
     private readonly transferBranch: TransferPurchaseOrderBranch,
     private readonly editPieces: EditPurchaseOrderPieces,
     private readonly confirmPieces: ConfirmPurchaseOrderPieces,
+    private readonly printReferences: MysqlPurchaseOrderPrintReferences,
   ) {}
+
+  print = (confirmed: boolean): RequestHandler => async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.printReferences.execute(purchaseOrderId, confirmed) });
+    } catch (error) { next(error); }
+  };
+
+  labels: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.printReferences.labels(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  importPieces: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.editPieces.importPieces(purchaseOrderId, pieceImportSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
 
   search: RequestHandler = async (request, response, next) => {
     try {

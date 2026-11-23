@@ -170,27 +170,37 @@ export class LegacyMysqlAccountingPoliciesDataSource implements AccountingPolici
     return { items: rows.map((row) => toPolicy(row, [])), total: countRows[0]?.total ?? 0 };
   }
 
-  async findAdjacent(id: number, direction: AccountingPolicyNavigationDirection): Promise<AccountingPolicy | null> {
+  async findNumberById(id: number): Promise<string | null> {
     const [currentRows] = await legacyMysqlPool.execute<IdentityRow[]>(
       `SELECT POSEQ AS id, PONUM AS number FROM FPOLIZA WHERE ${policyFilter} AND POSEQ = ? LIMIT 1`,
       [id],
     );
-    const current = currentRows[0];
-    if (current === undefined) return null;
+    return currentRows[0]?.number ?? null;
+  }
+
+  async findAdjacent(id: number, direction: AccountingPolicyNavigationDirection): Promise<AccountingPolicy | null> {
+    const number = await this.findNumberById(id);
+    return number === null ? null : this.findAdjacentByNumber(number, direction);
+  }
+
+  async findAdjacentByNumber(number: string, direction: AccountingPolicyNavigationDirection): Promise<AccountingPolicy | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
       `SELECT POSEQ AS id, PONUM AS number FROM FPOLIZA
        WHERE ${policyFilter} AND PONUM ${operator} ?
        ORDER BY PONUM ${order}, POSEQ ${order} LIMIT 1`,
-      [current.number],
+      [number],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
 
   async getClassifications(id: number): Promise<AccountingPolicyClassificationsResult | null> {
     const policy = await this.findById(id);
-    if (policy === null) return null;
+    return policy === null ? null : this.getClassificationCatalog(policy);
+  }
+
+  async getClassificationCatalog(policy: AccountingPolicy): Promise<AccountingPolicyClassificationsResult> {
     const primitive = policy.toPrimitives();
     const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
       `SELECT FAG.AGNUM AS code, FAG.AGDESCR AS description, FAG.AGTNUM AS compositeCode

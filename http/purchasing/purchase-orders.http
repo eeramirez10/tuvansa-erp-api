@@ -8,6 +8,10 @@
 @removalNumber = copiar-folio-del-GET-removal
 @removalVersion = copiar-del-GET-removal
 @removalRevision = 0
+@confirmationId = copiar-id-de-orden-de-prueba
+@confirmationVersion = copiar-version-del-GET-confirmation
+@confirmationRevision = 0
+@confirmationMode = confirm
 @creationSupplier = 35436
 @creationDate = 2026-11-23
 @creationRequestKey = 92bc9c06-bd13-4533-9de7-d2fa4e380ae2
@@ -38,6 +42,19 @@ GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/auxiliar
 
 ### Acción: Clasificar
 GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/classifications
+
+### Acción: Confirmar todo o desconfirmar (Shift + clic)
+GET {{baseUrl}}/purchasing/purchase-orders/{{confirmationId}}/actions/confirmation
+
+### Acción: Sí (usa mode=confirm o mode=unconfirm)
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{confirmationId}}/actions/confirmation
+Content-Type: application/json
+
+{
+  "mode": "{{confirmationMode}}",
+  "revision": {{confirmationRevision}},
+  "legacyVersion": "{{confirmationVersion}}"
+}
 
 ### Acción: Comentarios
 GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/comments

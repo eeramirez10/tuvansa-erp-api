@@ -9,6 +9,7 @@ import type { UpdatePurchaseOrderClassifications } from '../../application/use-c
 import type { EditPurchaseOrder } from '../../application/use-cases/edit-purchase-order.js';
 import type { CreatePurchaseOrder } from '../../application/use-cases/create-purchase-order.js';
 import type { RemovePurchaseOrder } from '../../application/use-cases/remove-purchase-order.js';
+import type { ConfirmPurchaseOrder } from '../../application/use-cases/confirm-purchase-order.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
 const idParamsSchema = z.object({ purchaseOrderId: z.coerce.number().int().positive() });
@@ -38,6 +39,7 @@ const revisionSchema = z.object({
   legacyVersion: z.string().regex(/^[0-9a-f]{64}$/),
 });
 const removalSchema = revisionSchema.extend({ number: numberParamsSchema.shape.purchaseOrderNumber }).strict();
+const confirmationSchema = revisionSchema.extend({ mode: z.enum(['confirm', 'unconfirm']) }).strict();
 const editSchema = revisionSchema.extend({
   removeZero: z.boolean(),
   lines: z.array(lineSchema),
@@ -93,6 +95,7 @@ export class PurchaseOrdersController {
     private readonly editOrder: EditPurchaseOrder,
     private readonly createOrder: CreatePurchaseOrder,
     private readonly removeOrder: RemovePurchaseOrder,
+    private readonly confirmOrder: ConfirmPurchaseOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -211,6 +214,20 @@ export class PurchaseOrdersController {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json({ data: await this.removeOrder.execute(purchaseOrderId, removalSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getConfirmation: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.confirmOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  confirm: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.confirmOrder.execute(purchaseOrderId, confirmationSchema.parse(request.body)) });
     } catch (error) { next(error); }
   };
 }

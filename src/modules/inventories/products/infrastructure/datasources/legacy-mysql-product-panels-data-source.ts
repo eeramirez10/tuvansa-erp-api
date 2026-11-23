@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { excludeRemovedPurchaseOrders, legacyPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
+import { purchaseOrderLineAssignments } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-confirmation.js';
 import type { ProductPanelsDataSource } from '../../domain/datasources/product-panels-data-source.js';
 import type {
   ProductPanelCriteria,
@@ -408,7 +409,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   'annual-sales-summary': { section: 'queries', button: 'Ventas anuales resumen' },
   'supplier-orders': {
     section: 'queries', button: 'Ordenado a proveedor',
-    sql: `SELECT PLSEQ AS id, PRVCOD AS supplierCode, PRVNOM AS supplierName,
+    sql: `SELECT PLSEQ AS id, fpenc.PESEQ AS orderId, PRVCOD AS supplierCode, PRVNOM AS supplierName,
       PLCANT AS quantity, PLSURT AS fulfilled, PENUM AS orderNumber,
       PEDESDE AS orderedAt, PEFECHA AS date, PEDATE2 AS secondDate,
       PLFACTOR AS factor, PLUNIDAD AS unit, PENUMELLOS AS externalNumber,
@@ -668,6 +669,10 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
         criteria.offset,
       ],
     );
+    const assignments = panel === 'supplier-orders'
+      ? await purchaseOrderLineAssignments(product.id, rows.map((row) => Number(row.id))) : [];
+    const confirmedOrders = new Set(assignments.map(({ orderId, number }) => `${orderId}/${number}`));
+    const confirmedByLine = new Map(assignments.map(({ id, orderId, number, assigned }) => [`${orderId}/${number}/${id}`, assigned]));
     return {
       product,
       key: panel,
@@ -675,7 +680,10 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       button: definition.button,
       available: true,
       source: definition.source ?? 'mysql',
-      items: rows.map((row) => ({ ...row })),
+      items: rows.map((row) => {
+        const order = `${row.orderId}/${row.orderNumber}`;
+        return confirmedOrders.has(order) ? { ...row, assigned: confirmedByLine.get(`${order}/${row.id}`) ?? 0 } : { ...row };
+      }),
       ...(openingStock === undefined ? {} : { openingStock }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
       ...(supplierOrdersTotals === undefined ? {} : { supplierOrdersTotals: { remaining: supplierOrdersTotals.remaining } }),

@@ -125,7 +125,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     if (!edit) return panel;
     if (key === 'ct') return { ...panel, source: 'mysql+postgres' };
     const items = [...panel.items];
-    items[0] = { ...items[0], amountInWords: edit.amountInWords };
+    if (typeof edit.amountInWords === 'string') items[0] = { ...items[0], amountInWords: edit.amountInWords };
     return { ...panel, source: 'mysql+postgres', items, summary: { ...panel.summary, totals: edit.totals, lines: edit.lines } };
   }
 

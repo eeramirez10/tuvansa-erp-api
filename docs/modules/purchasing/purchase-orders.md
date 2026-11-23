@@ -20,6 +20,7 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Nueva orden de compra / OK | `POST /` | Alta transaccional en PostgreSQL |
 | Papelera / Baja de orden de compra | `GET /:purchaseOrderId/removal` | `FPENC`, `FPLIN` y revisión local vigente |
 | Baja de orden de compra / Sí | `DELETE /:purchaseOrderId` | Baja transaccional y ajuste del pendiente en PostgreSQL |
+| Confirmar todo / Desconfirmar todo | `GET /:purchaseOrderId/actions/confirmation`, `PATCH /:purchaseOrderId/actions/confirmation` | Reglas de `EOC#2/7`, `/422–423` y `MBASE/124`, persistencia derivada en PostgreSQL |
 | Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
 | Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
 | Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
@@ -42,7 +43,7 @@ El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor
 
 La persistencia derivada usa `tuvansa.purchase_order_classifications` en el PostgreSQL configurado por `NEON_DATABASE_URL`. La tabla se crea mediante migración al guardar por primera vez. Los GET conservan MySQL como fuente de catálogo y partidas y aplican los nueve valores locales donde hay una revisión guardada, incluida la búsqueda por Agente. MySQL permanece en lectura.
 
-**Comentarios** es de consulta. Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas se conservan deshabilitados. Los demás botones de Acciones conservan el marcador de esta etapa, incluido **Cotiz**, cuyo procedimiento nativo cambia el estado.
+**Comentarios** es de consulta. Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas se conservan deshabilitados. **Cotiz** conserva el marcador de esta etapa y su procedimiento nativo cambia el estado.
 
 La verificación web cubrió acceso directo, menú, buscador, flechas y apertura de los cinco paneles. En Neon de pruebas se guardaron dos revisiones desde el flujo de Clasificar y se comprobó la consulta posterior, la búsqueda por agente y el rechazo de una revisión obsoleta. Se retiró el registro de prueba de PostgreSQL y se verificó el valor original en MySQL. La lectura de Piezas con filas y la cuadrícula de CT con tallas configuradas también se verifican con pruebas de datos simulados.
 
@@ -81,7 +82,7 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 | Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y ajusta `PEPARA`. | Sin ruta |
 | Clasificar | `EOC#2/5 → EPDC#199/239–240`; guarda en `/3` | Opciones de `FAG` con `AGTIPO IN (0,2)`, ordenadas por `AGNUM`, comparadas por `AGTNUM` contra `PEPAR1–9`. `MBASE/91` determina las etiquetas. La web usa el mismo filtro, ordena por `AGSEQ`, tiene etiquetas fijas y sólo lectura. | `GET /:id/actions/classifications` |
 | Comentarios | `EOC#2/6 → /421 → EOC#6` | Busca `FCOMENT` por `10000000 + PESEQ`. `FTIPMV.TICOML1–5` da las etiquetas. Usa `COML1–4` para líneas cortas y `COML5` para el texto largo. Plazo, descuentos, moneda, fechas, auditoría y cargos provienen de `FPENC`. La web usa otras fuentes para parte de estos campos. El retorno del modal nativo contiene escrituras a `FCOMENT` y `FPENC` y llama a totalizar. | `GET /:id/actions/comments` |
-| Confirmar todo | `EOC#2/7 → /422–423` | Ajusta cada `FPLIN.PLASIGNADO` a `PLCANT−PLSURT`. Shift quita la asignación. | Sin ruta |
+| Confirmar todo | `EOC#2/7 → /422–423` | Ajusta cada `FPLIN.PLASIGNADO` a `PLCANT−PLSURT`. Shift quita la asignación. | `GET/PATCH /:id/actions/confirmation` |
 | Cotiz | `EOC#2/8 → MBASE/125` | Cambia `FPENC.PESPEDIDO` entre `2` y `5` y recarga la orden. | Sin ruta |
 | CT | `EOC#2/9 → EOC#6AA/240–241` | Consulta partidas por `PESEQ`, agrupa por raíz de producto (`FCIA.CIARAIZ`) y muestra matriz de variantes con Pedido, Surtido y Resta. Su botón interno Cambio puede escribir `FPLIN`. | Sin ruta |
 | Div. Sucursal | `EOC#2/10 → EPED#8` | Divide cantidad seleccionada, suma surtido a la partida origen, crea partida de destino y recalcula. | Sin ruta |
@@ -163,3 +164,13 @@ Al confirmar, `MOCOM/22 → MBASE/124` resta a `FINV.IPEDPRV` el pendiente de la
 La API aplica esa regla en PostgreSQL con un registro de baja por identificador y folio. Excluye la orden de detalle, buscador, flechas y consultas de compras. El catálogo abre la siguiente disponible y usa la anterior al llegar al final. Para órdenes web retira su contribución al pendiente. Para las heredadas descuenta las partidas aún pendientes en la lectura de MySQL, de modo que una recepción posterior en el sistema de origen no duplique el descuento. Los paneles de Inventarios **Ordenado a proveedor** y **CT** excluyen las bajas. Los documentos de recepción conservan su referencia.
 
 `DELETE` recibe `number`, `revision` y `legacyVersion` del GET de confirmación. Revalida tipo, compañía, confirmaciones y versión. La baja y el ajuste se guardan en la misma transacción. Repetir la confirmación devuelve la baja aplicada sin descontar cantidades otra vez. Esta adaptación cubre la baja completa de TUVANSA. El permiso interno `MOCOM22` depende de la sesión de Omnis. La API aplica la compañía activa de Tuvansa ERP.
+
+## Confirmar todo y desconfirmar
+
+En Omnis 7 se observaron ambos avisos con `O000001`. El clic abre **¿Desea asignar todo el pedido?** y **Shift + clic** abre **¿Desea des-asignar todo el pedido?**. Se eligió **No** en ambos. La versión web conserva el atajo y ofrece **Desconfirmar todo** en el diálogo cuando hay partidas confirmadas.
+
+`EOC#2/422` aplica a cada partida la diferencia `PLCANT − PLSURT − PLASIGNADO`. Deja lo confirmado en pedido menos surtido, en unidades de almacenamiento y con el signo del saldo. `EOC#2/423` resta la asignación vigente para dejarla en cero. `MBASE/124` aplica la misma diferencia a `FPLIN.PLASIGNADO`, `FINV.ICONFIRMADO` y `FPENC.PEPZASIGN`. Marca `PEPAR8` como `ASIGNAD` con un incremento y lo vacía con un decremento. El surtido, totales monetarios y pendiente de recibir conservan sus cantidades.
+
+El GET devuelve la revisión, la versión y si hay asignaciones. El PATCH recibe esa revisión y versión y el modo `confirm` o `unconfirm`. PostgreSQL guarda en una sola transacción las partidas, el total asignado, el acumulado por producto y el marcador de clasificación. **Editar** y **Baja** consultan la asignación vigente. Inventarios refleja el acumulado **Confirmado** y las partidas heredadas de **Ordenado a proveedor**. La API aplica la compañía activa y el tipo orden. El permiso individual `EOC#2/422` pertenece a la sesión de Omnis.
+
+La prueba en Neon cubrió ambos avisos en el navegador, una orden heredada con 44 unidades pendientes y la desconfirmación de una asignación que ya existía en MySQL. Se retiraron los registros de prueba de PostgreSQL y se verificaron los saldos originales.

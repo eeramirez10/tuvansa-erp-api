@@ -53,7 +53,7 @@ export interface PurchaseOrderEditSnapshot extends PurchaseOrderIdentity {
   legacyVersion: string;
   lines: PurchaseOrderLine[];
   totals: PurchaseOrderProps['totals'];
-  amountInWords: string;
+  amountInWords: string | null;
 }
 
 export type PurchaseOrderStockChange = {

@@ -22,10 +22,10 @@ export class RemovePurchaseOrder {
     let reason = '';
     if (base.documentKind !== 'order') reason = 'La baja sólo está disponible para órdenes de compra.';
     else if (rules.companyId !== rules.activeCompanyId) reason = 'La orden pertenece a otra compañía.';
-    else if ([...base.lines, ...lines].some((line) => line.assigned !== 0)) {
-      reason = 'El pedido tiene partidas confirmadas. Desconfírmalas antes de darlo de baja.';
-    } else if (stored && stored.legacyVersion !== version) {
+    else if (stored && stored.legacyVersion !== version) {
       reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
+    } else if (lines.some((line) => line.assigned !== 0)) {
+      reason = 'El pedido tiene partidas confirmadas. Desconfírmalas antes de darlo de baja.';
     } else if (!this.storage.writable()) reason = 'La baja de órdenes requiere PostgreSQL.';
     return { ...context, reason };
   }

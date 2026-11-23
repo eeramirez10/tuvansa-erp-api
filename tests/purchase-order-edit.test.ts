@@ -4,6 +4,7 @@ import type {
 } from '../src/modules/purchasing/purchase-orders/domain/datasources/purchase-order-edit-data-source.js';
 import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions, stockAfterPurchaseOrderRemoval } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
 import type { PurchaseOrderLine, PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
+import { assignPurchaseOrderLines } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-confirmation.js';
 
 const first: PurchaseOrderLine = {
   id: 20, productId: 10, productCode: 'A', description: 'Tubo', ordered: 12, fulfilled: 2, remaining: 10,
@@ -47,6 +48,23 @@ describe('purchase order removal stock', () => {
       { productId: first.productId, pending: -11.355, nextReceiptAt: null },
     ]);
     expect(stockAfterPurchaseOrderRemoval([])).toEqual([]);
+  });
+});
+
+describe('purchase order confirmation', () => {
+  it('assigns the signed balance in the storage unit and clears all assignments when reversed', () => {
+    const partial = { ...first, assigned: 3, confirmed: true, factor: 6 };
+    const oversupplied = { ...first, id: 21, productId: 11, ordered: 2, fulfilled: 3 };
+    const update = assignPurchaseOrderLines([partial, oversupplied], [first, oversupplied], 'confirm');
+    expect(update?.lines).toMatchObject([
+      { id: 20, assigned: 10, ordered: 12, fulfilled: 2, factor: 6, confirmed: true },
+      { id: 21, assigned: -1, confirmed: true },
+    ]);
+    expect(update).toMatchObject({ assigned: 9, marker: '', stock: [{ productId: 10, assigned: 10 }, { productId: 11, assigned: -1 }] });
+    expect(assignPurchaseOrderLines(update!.lines, [first, oversupplied], 'confirm')).toBeNull();
+    const reversed = assignPurchaseOrderLines(update!.lines, [first, oversupplied], 'unconfirm');
+    expect(reversed?.lines.every((line) => line.assigned === 0 && !line.confirmed)).toBe(true);
+    expect(reversed?.assigned).toBe(0);
   });
 });
 

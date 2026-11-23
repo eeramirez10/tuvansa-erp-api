@@ -1,4 +1,4 @@
-import { purchaseOrderPendingAdjustment } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-pending.js';
+import { purchaseOrderInventoryAdjustment } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-pending.js';
 import { Product } from '../../domain/entities/product.js';
 import type { ProductNavigationDirection } from '../../domain/repositories/products-repository.js';
 import { LegacyMysqlProductsDataSource } from './legacy-mysql-products-data-source.js';
@@ -8,13 +8,14 @@ export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProdu
     const product = await request;
     if (!product) return null;
     const details = product.toPrimitives();
-    const adjustment = await purchaseOrderPendingAdjustment(details.id);
-    if (adjustment === 0) return product;
+    const { pending, confirmed } = await purchaseOrderInventoryAdjustment(details.id);
+    if (pending === 0 && confirmed === 0) return product;
     return Product.create({
       ...details,
       accumulated: {
         ...details.accumulated,
-        supplierOrders: Number((details.accumulated.supplierOrders + adjustment).toFixed(2)),
+        supplierOrders: Number((details.accumulated.supplierOrders + pending).toFixed(2)),
+        confirmed: Number((details.accumulated.confirmed + confirmed).toFixed(3)),
       },
     });
   }

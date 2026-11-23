@@ -25,11 +25,10 @@ export class EditPurchaseOrder {
     let reason = '';
     if (base.documentKind !== 'order') reason = 'Omnis permite editar partidas desde esta ventana sólo para pedidos.';
     else if (rules.companyId !== rules.activeCompanyId) reason = 'La orden pertenece a otra compañía.';
-    else if (base.totals.assigned !== 0 || lines.some((line) => line.assigned !== 0)) {
-      reason = 'Desconfirma las partidas antes de editar la orden.';
-    } else if (stored && stored.legacyVersion !== version) {
+    else if (stored && stored.legacyVersion !== version) {
       reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
-    } else if (!this.storage.writable()) reason = 'El guardado de órdenes requiere PostgreSQL.';
+    } else if (lines.some((line) => line.assigned !== 0)) reason = 'Desconfirma las partidas antes de editar la orden.';
+    else if (!this.storage.writable()) reason = 'El guardado de órdenes requiere PostgreSQL.';
     return { ...context, reason };
   }
 

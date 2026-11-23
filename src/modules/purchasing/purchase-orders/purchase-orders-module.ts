@@ -8,6 +8,7 @@ import { UpdatePurchaseOrderClassifications } from './application/use-cases/upda
 import { EditPurchaseOrder } from './application/use-cases/edit-purchase-order.js';
 import { CreatePurchaseOrder } from './application/use-cases/create-purchase-order.js';
 import { RemovePurchaseOrder } from './application/use-cases/remove-purchase-order.js';
+import { ConfirmPurchaseOrder } from './application/use-cases/confirm-purchase-order.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from './infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
 import { LegacyMysqlPurchaseOrderEditDataSource } from './infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
 import { PostgresPurchaseOrderClassifications } from './infrastructure/datasources/postgres-purchase-order-classifications.js';
@@ -33,6 +34,7 @@ export const createPurchaseOrdersModule = (): Router => {
     new EditPurchaseOrder(capture, edits, repository, edits),
     new CreatePurchaseOrder(capture, edits, repository),
     new RemovePurchaseOrder(capture, edits, edits, repository),
+    new ConfirmPurchaseOrder(capture, edits, edits, repository),
   );
   return createPurchaseOrdersRouter(controller);
 };

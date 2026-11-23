@@ -13,8 +13,10 @@ import {
   type LocalPurchaseOrder, type NewPurchaseOrder, type PurchaseOrderCreateStorage, type PurchaseOrderLocalMetadata,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
+import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrderIdentity, PurchaseOrderNavigationDirection, PurchaseOrderSearchCriteria, PurchaseOrderSearchResult } from '../../domain/repositories/purchase-orders-repository.js';
+import { purchaseOrderClassificationMigrations, saveAssignmentMarker } from './postgres-purchase-order-classifications.js';
 
 const migrations = [{
   id: 'purchase_order_edits',
@@ -68,7 +70,21 @@ const migrations = [{
         REFERENCES tuvansa.purchase_order_edits(order_id, order_number) ON DELETE CASCADE
     );
   `,
-}];
+}, {
+  id: 'purchase_order_confirmation',
+  sql: `
+    CREATE TABLE tuvansa.purchase_order_confirmed_stock (
+      order_id bigint NOT NULL,
+      order_number varchar(15) NOT NULL,
+      product_id bigint NOT NULL,
+      assigned numeric(18,3) NOT NULL,
+      legacy boolean NOT NULL,
+      PRIMARY KEY (order_id, order_number, product_id),
+      FOREIGN KEY (order_id, order_number) REFERENCES tuvansa.purchase_order_edits(order_id, order_number) ON DELETE CASCADE
+    );
+    CREATE INDEX purchase_order_confirmed_product ON tuvansa.purchase_order_confirmed_stock(product_id);
+  `,
+}, ...purchaseOrderClassificationMigrations];
 
 type Stored = {
   id: string;
@@ -82,7 +98,7 @@ type LocalRow = { id: string; number: string; fingerprint: string; header: NewPu
 const asOrder = ({ id, number, header }: LocalRow) => PurchaseOrder.create({ ...header, id: Number(id), number });
 const requestConflict = () => new ConflictError('La clave de alta ya se usó para una orden con otros datos.', 'PURCHASE_ORDER_REQUEST_CONFLICT');
 
-export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage {
+export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage, PurchaseOrderConfirmationStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -287,26 +303,50 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
 
   async save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<PurchaseOrderEditSnapshot> {
     return this.transaction(async (client) => {
-      await lockPurchaseOrderWrite(client, snapshot.id);
-      await assertActivePurchaseOrder(client, snapshot);
       const lines = await this.allocateLineIds(client, snapshot.lines);
-      const document = { lines, totals: snapshot.totals, amountInWords: snapshot.amountInWords };
-      const { id, number, legacyVersion, revision } = snapshot;
-      const values = [id, number, legacyVersion, JSON.stringify(document)];
-      const result = revision === 0
-        ? await client.query<{ revision: number }>(
-          `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
-           VALUES($1,$2,1,$3,$4::jsonb) ON CONFLICT(order_id,order_number) DO NOTHING RETURNING revision`, values,
-        )
-        : await client.query<{ revision: number }>(
-          `UPDATE tuvansa.purchase_order_edits SET document=$4::jsonb, revision=revision+1, updated_at=now()
-           WHERE order_id=$1 AND order_number=$2 AND legacy_version=$3 AND revision=$5 RETURNING revision`, [...values, revision],
-        );
-      const saved = result.rows[0];
-      if (!saved) throw new ConflictError('Otra sesión cambió la orden. Vuelve a abrir el editor.', 'PURCHASE_ORDER_EDIT_STALE');
-      await this.saveStock(client, id, number, stock);
-      return { ...snapshot, ...document, revision: saved.revision };
+      const saved = await this.saveRevision(client, { ...snapshot, lines }, 'edit');
+      await this.saveStock(client, snapshot.id, snapshot.number, stock);
+      return saved;
     });
+  }
+
+  async saveConfirmation(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderConfirmedStock[], classifications: string[], marker: string): Promise<void> {
+    const { id, number } = snapshot;
+    await this.transaction(async (client) => {
+      await this.saveRevision(client, snapshot, 'confirmation');
+      const legacy = !isLocalPurchaseOrderId(id);
+      const changes = legacy ? stock : stock.filter(({ assigned }) => assigned !== 0);
+      await client.query('DELETE FROM tuvansa.purchase_order_confirmed_stock WHERE order_id=$1 AND order_number=$2', [id, number]);
+      if (changes.length > 0) {
+        await client.query(
+          `INSERT INTO tuvansa.purchase_order_confirmed_stock(order_id,order_number,product_id,assigned,legacy)
+           SELECT $1,$2,product,assigned,$5 FROM unnest($3::bigint[],$4::numeric[]) AS change(product,assigned)`,
+          [id, number, changes.map(({ productId }) => productId), changes.map(({ assigned }) => assigned), legacy],
+        );
+      }
+      await saveAssignmentMarker(client, snapshot, classifications, marker);
+    });
+  }
+
+  private async saveRevision(client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation') {
+    await lockPurchaseOrderWrite(client, snapshot.id);
+    await assertActivePurchaseOrder(client, snapshot);
+    const { id, number, legacyVersion, revision, lines, totals, amountInWords } = snapshot;
+    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords })];
+    const result = revision === 0
+      ? await client.query<{ revision: number }>(
+        `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
+         VALUES($1,$2,1,$3,$4::jsonb) ON CONFLICT(order_id,order_number) DO NOTHING RETURNING revision`, values,
+      )
+      : await client.query<{ revision: number }>(
+        `UPDATE tuvansa.purchase_order_edits SET document=$4::jsonb, revision=revision+1, updated_at=now()
+         WHERE order_id=$1 AND order_number=$2 AND legacy_version=$3 AND revision=$5 RETURNING revision`, [...values, revision],
+      );
+    const saved = result.rows[0];
+    if (!saved) throw operation === 'edit'
+      ? new ConflictError('Otra sesión cambió la orden. Vuelve a abrir el editor.', 'PURCHASE_ORDER_EDIT_STALE')
+      : new ConflictError('La orden cambió. Vuelve a abrir la confirmación.', 'PURCHASE_ORDER_CONFIRMATION_STALE');
+    return { ...snapshot, revision: saved.revision };
   }
 
   private async allocateLineIds(client: PostgresClient, lines: PurchaseOrderLine[]) {

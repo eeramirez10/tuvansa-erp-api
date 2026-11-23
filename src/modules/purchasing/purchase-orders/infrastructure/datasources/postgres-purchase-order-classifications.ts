@@ -11,7 +11,7 @@ import type {
   PurchaseOrderClassificationUpdate, PurchaseOrderIdentity, SavedPurchaseOrderClassifications,
 } from '../../domain/repositories/purchase-orders-repository.js';
 
-const migrations = [{
+export const purchaseOrderClassificationMigrations = [{
   id: 'purchase_order_classifications',
   sql: `CREATE TABLE tuvansa.purchase_order_classifications (
     order_id bigint NOT NULL CHECK (order_id BETWEEN 1 AND 9007199254740991),
@@ -22,6 +22,19 @@ const migrations = [{
     PRIMARY KEY (order_id, order_number)
   );`,
 }];
+
+export async function saveAssignmentMarker(client: PostgresClient, order: PurchaseOrderIdentity, fallback: string[], marker: string) {
+  const classifications = Array.from({ length: 9 }, (_, index) => index === 7 ? marker : fallback[index] ?? '');
+  await client.query(
+    `INSERT INTO tuvansa.purchase_order_classifications(order_id, order_number, current_values, revision)
+     VALUES ($1, $2, $3::jsonb, 1)
+     ON CONFLICT (order_id, order_number) DO UPDATE SET
+       current_values=jsonb_set(tuvansa.purchase_order_classifications.current_values, '{7}', to_jsonb($4::text)),
+       revision=tuvansa.purchase_order_classifications.revision+1, updated_at=now()
+     WHERE tuvansa.purchase_order_classifications.current_values->>7 IS DISTINCT FROM $4`,
+    [order.id, order.number, JSON.stringify(classifications), marker],
+  );
+}
 
 export class PostgresPurchaseOrderClassifications implements PurchaseOrderClassificationStorage {
   private migration: Promise<void> | undefined;
@@ -79,7 +92,7 @@ export class PostgresPurchaseOrderClassifications implements PurchaseOrderClassi
   async save(order: PurchaseOrderIdentity, update: PurchaseOrderClassificationUpdate): Promise<SavedPurchaseOrderClassifications> {
     if (!this.writable()) throw postgresUnavailable();
     return this.connection(async (client) => {
-      this.migration ??= migratePostgres(client, migrations).catch((error: unknown) => {
+      this.migration ??= migratePostgres(client, purchaseOrderClassificationMigrations).catch((error: unknown) => {
         this.migration = undefined;
         throw error;
       });

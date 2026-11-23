@@ -4,6 +4,7 @@ import { SetProductBlockStatus } from '../src/modules/inventories/products/appli
 import { LegacyMysqlProductPanelsDataSource } from '../src/modules/inventories/products/infrastructure/datasources/legacy-mysql-product-panels-data-source.js';
 import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 import * as purchaseOrderRemovalSource from '../src/shared/infrastructure/datasources/postgres-purchase-order-removals.js';
+import { purchaseOrderLineAssignments } from '../src/shared/infrastructure/datasources/postgres-purchase-order-confirmation.js';
 import type {
   ProductPanelResult,
   ProductPanelsRepository,
@@ -15,6 +16,9 @@ vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({
 vi.mock('../src/shared/infrastructure/datasources/postgres-purchase-order-removals.js', async (importOriginal) => ({
   ...await importOriginal<typeof purchaseOrderRemovalSource>(),
   legacyPurchaseOrderRemovals: vi.fn(async () => []),
+}));
+vi.mock('../src/shared/infrastructure/datasources/postgres-purchase-order-confirmation.js', () => ({
+  purchaseOrderLineAssignments: vi.fn(async () => []),
 }));
 
 const panel: ProductPanelResult = {
@@ -297,7 +301,8 @@ describe('Inventarios PT - botones laterales', () => {
     execute
       .mockResolvedValueOnce([[panel.product], []])
       .mockResolvedValueOnce([[{ remaining: 40, assigned: 10 }], []])
-      .mockResolvedValueOnce([[{ id: 33, quantity: 20, fulfilled: 0, factor: 10 }], []]);
+      .mockResolvedValueOnce([[{ id: 33, orderId: 72, orderNumber: 'OC00072', quantity: 20, fulfilled: 0, factor: 10 }], []]);
+    vi.mocked(purchaseOrderLineAssignments).mockResolvedValueOnce([{ id: 33, orderId: 72, number: 'OC00072', assigned: 20 }]);
     const result = await new LegacyMysqlProductPanelsDataSource().getPanel(
       panel.product.id, 'supplier-orders', { limit: 10, offset: 20, excludeFulfilled: true },
     );
@@ -314,7 +319,7 @@ describe('Inventarios PT - botones laterales', () => {
     expect(page?.[1]).toEqual([panel.product.id, 42, 'OC00042', 10, 20]);
     expect(result).toMatchObject({
       supplierOrdersTotals: { remaining: 40 },
-      items: [{ quantity: 20, factor: 10 }],
+      items: [{ quantity: 20, factor: 10, assigned: 20 }],
     });
   });
 

@@ -149,7 +149,10 @@ Content-Type: application/json
 
 { "revision": {{panelRevision}}, "movementIds": [{{movementId}}] }
 
-### Gastos por prv., consultar recepciones y revisiones
+### Gastos por prv., consultar Compras por proveedor
+GET {{banks}}/{{bankAccountId}}/actions/supplier-expenses
+
+### Pagar recepción, consultar recepciones y revisiones
 GET {{banks}}/{{bankAccountId}}/actions/supplier-expenses/capture
 
 ### Gastos por prv., registrar pago de una recepción de pruebas

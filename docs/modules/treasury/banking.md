@@ -71,7 +71,7 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA` para la consulta histórica. Los movimientos web pendientes se pueden seleccionar |
 | Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC` e importación CSV o TSV. El botón **Registra** usa el mismo POST de Conciliar. |
 | Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal. La web muestra comentarios, póliza y fecha de conciliación cuando existen. |
-| Gastos por prv. | `/:bankAccountId/actions/supplier-expenses/capture` | Consulta recepciones web pendientes. El POST en `/:bankAccountId/actions/supplier-expenses` registra un pago `PP` por cheque para la cuenta abierta. |
+| Gastos por prv. | `/:bankAccountId/actions/supplier-expenses` | Consulta **Compras por proveedor** de la cuenta. **Pagar recepción** consulta pendientes en `/capture` y registra un PP por cheque con POST en la ruta del informe. |
 | Mayor | `/:bankAccountId/actions/general-ledger` | Meses de `FBENC` más cargos y abonos web del ejercicio. **Iguales** y **Cambiar** guardan los doce meses del primer periodo con PATCH en la misma ruta. |
 | Mayor C.C. | `/:bankAccountId/actions/cost-center-ledger?costCenter=1` | Centros de `FALMCAT` (`CATTIPO='CEN'`) y registro `FCCBENC.BCCKEY='01'+C.C.+BCOD`. El PATCH guarda el primer presupuesto del centro seleccionado. |
 | Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'`. El PATCH marca la revisión de partidas web aplicadas con `*`. |
@@ -117,9 +117,29 @@ para la modalidad **Traspas**.
 La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. El cambio de estado de partidas históricas a tránsito y la operación nativa **Traspasa +** quedan pendientes.
 
 **Bancos → Gastos por prv.** abre el informe **Compras por proveedor**
-(`EBANCO#1/8 → EBANCO#9`). La captura fiscal GA está en **Recepciones →
-Gastos múltiples** (`MRECEP/5 → ERECEP#12`). La operación web de pago de una
-recepción existente registra un PP y conserva sus endpoints de captura.
+(`EBANCO#1/8 → EBANCO#9`). `EBANCO#9/240` carga `FBANMOV` por la cuenta
+seleccionada, con `PRVSEQ<>0`, `BAMES=1`, `FDOC.DEST=CIAKYT` y
+`FDOC.DMULTICIA=LVCIA`. `MSQL/276` relaciona por secuencia; la consulta web
+adaptada usa `FBANMOV.DSEQ = FDOC.DSEQ` y totaliza `BAIMPOR` y
+`BAIMPORNEG`. La copia local actual carece de `FBANMOV.DSEQ`, por lo que el
+informe presenta los totales en cero y el motivo. Las capturas
+`bank-inline-gastos-ebanco9-proc240.png` y
+`bank-inline-gastos-creditor-report.png` documentan el procedimiento y
+su resultado local.
+
+La captura fiscal GA está en **Recepciones → Gastos múltiples**
+(`MRECEP/5 → ERECEP#12`). **Pagar recepción** conserva la captura web de un
+PP por cheque para una recepción pendiente.
+
+En la captura manual GA, `ERECEP#12/401` crea la póliza de diario y la aplica.
+`/402` genera documentos por proveedor y referencia, y partidas por producto
+y centro de costo. `/403` contabiliza gastos, IVA, retenciones y el saldo por
+pagar. `/411` verifica las cuentas contables de proveedor y producto, y
+`/412` valida que la referencia del proveedor esté disponible. La captura de
+GA se abrió y se canceló durante la verificación de esta ruta.
+La compañía local tiene vacías `CIACTAIVAPAGOACRDE`, `CIACTARETIVADE` y
+`CIACTARETISRDE`, las cuentas que consulta `/403` para los importes de IVA
+y retenciones.
 
 ## Pagos de recepciones migradas
 

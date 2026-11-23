@@ -62,14 +62,42 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
       case 'cost-center-ledger': return this.getCostCenterLedger(accountData.code, options.costCenter);
       case 'authorization-review': return this.getAuthorizationReview(accountData.code);
       case 'classifiers': return this.getClassifiers();
-      case 'supplier-expenses':
-        return {
-          button: 'Gastos por prv.', section: 'actions', source: ['FBENC'], available: true, readOnly: true, items: [],
-          summary: { balance: accountData.balances.current, currency: accountData.currency },
-        };
+      case 'supplier-expenses': return this.getSupplierExpenses(bankAccountId);
       case 'transfer': return this.getTransferConfiguration();
       case 'unapplied-auxiliary': return this.getUnappliedAuxiliary(bankAccountId, await this.fiscalYear(options.fiscalYear));
     }
+  }
+
+  private async getSupplierExpenses(bankAccountId: number): Promise<BankPanelResponse> {
+    const source = ['FBANMOV', 'FPRV', 'FDOC', 'FCIA'];
+    const base = { button: 'Gastos por prv.', section: 'actions', source, available: true, readOnly: true } as const;
+    const [documentLink] = await legacyMysqlPool.execute<PanelRow[]>(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='FBANMOV' AND COLUMN_NAME='DSEQ'`,
+    );
+    if (documentLink.length === 0) {
+      return {
+        ...base, items: [], summary: { charges: 0, credits: 0 },
+        reason: 'Esta copia de Proscai no incluye el vínculo de los movimientos con el documento de compra.',
+      };
+    }
+
+    // Adaptación de EBANCO#9/240 y la relación por secuencia de MSQL/276.
+    const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
+      `SELECT m.BASEQ AS movementId, TRIM(p.PRVCOD) AS supplierCode, TRIM(p.PRVNOM) AS supplierName,
+              m.BAIMPOR AS charge, m.BAIMPORNEG AS credit
+       FROM FBANMOV m
+       LEFT JOIN FPRV p ON p.PRVSEQ=m.PRVSEQ
+       JOIN FDOC d ON d.DSEQ=m.DSEQ
+       JOIN FCIA c ON c.CIASEQ=1 AND d.DEST=c.CIAKYT AND d.DMULTICIA=c.CIASEQ
+       WHERE m.BSEQ=? AND m.PRVSEQ<>0 AND m.BAMES=1
+       ORDER BY m.BASEQ LIMIT 32767`, [bankAccountId],
+    );
+    const items = toItems(rows);
+    return {
+      ...base, items,
+      summary: { charges: Number(sum(items, 'charge').toFixed(2)), credits: Number(sum(items, 'credit').toFixed(2)) },
+    };
   }
 
   private async fiscalYear(requestedYear?: number): Promise<number> {

@@ -1,4 +1,5 @@
 import type { RowDataPacket } from 'mysql2/promise';
+import type { PurchaseOrderSupplierChoice, PurchaseOrderSupplierFilters } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { env } from '../../../../../config/env.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type {
@@ -144,6 +145,38 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
         currencyId: row.currencyId, currencyName: row.currencyName, supplierCode: row.code,
         supplierDiscounts: [Number(row.discount1), Number(row.discount2)],
       },
+    }));
+  }
+
+  async changeSuppliers({ code, name }: PurchaseOrderSupplierFilters, exact = false): Promise<PurchaseOrderSupplierChoice[]> {
+    const filters: string[] = [];
+    const params: string[] = [];
+    if (code) {
+      filters.push(exact ? 'PRVCOD=?' : 'PRVCOD LIKE ?');
+      params.push(exact ? code : `${code}%`);
+    }
+    if (name) {
+      if (name.startsWith('**')) {
+        filters.push('PRVVARIOS1=?');
+        params.push(name.slice(2).toUpperCase());
+      } else if (name.startsWith('*')) {
+        filters.push('LOCATE(UPPER(?), UPPER(PRVNOM))>0');
+        params.push(name.slice(1));
+      } else {
+        filters.push('PRVNOM LIKE ?');
+        params.push(`${name}%`);
+      }
+    }
+    if (filters.length === 0) return [];
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & {
+      id: number; code: string; name: string; discount1: number; discount2: number; taxType: number;
+    }>>(
+      `SELECT PRVSEQ AS id, TRIM(PRVCOD) AS code, PRVNOM AS name, PRVDESC1 AS discount1, PRVDESC2 AS discount2, PRVTIPOIVA AS taxType
+       FROM FPRV WHERE PRVSEQ>0 AND ${filters.join(' AND ')}
+       ORDER BY ${name ? 'PRVNOM, ' : ''}PRVCOD, PRVSEQ LIMIT ${exact ? 1 : 35}`, params,
+    );
+    return rows.map(({ id, code, name, discount1, discount2, taxType }) => ({
+      supplier: { id, code, name }, supplierDiscounts: [Number(discount1), Number(discount2)], taxType: Number(taxType),
     }));
   }
 

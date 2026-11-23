@@ -17,6 +17,7 @@
 @authorizationRevision = 0
 @authorizationClassificationRevision = 0
 @authorizationStatus =
+@replacementSupplier = 30262
 @creationSupplier = 35436
 @creationDate = 2026-11-23
 @creationRequestKey = 92bc9c06-bd13-4533-9de7-d2fa4e380ae2
@@ -63,6 +64,23 @@ Content-Type: application/json
 
 ### Acción: Autorizar / consultar niveles y estado
 GET {{baseUrl}}/purchasing/purchase-orders/{{authorizationId}}/actions/authorization
+
+### Autorizar / Cambia proveedor / Buscar
+GET {{baseUrl}}/purchasing/purchase-orders/authorization/suppliers?code={{replacementSupplier}}
+
+### Autorizar / Cambia proveedor / OK (PostgreSQL de pruebas)
+# Usa una orden de prueba en 9A con proveedor COMPRA y la clave de un usuario con supplierChange.
+# Copia las tres versiones/revisiones del GET de Autorizar de esa misma orden.
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{authorizationId}}/actions/authorization/supplier
+Authorization: Bearer {{$processEnv PURCHASE_ORDER_APPROVAL_TEST_KEY}}
+Content-Type: application/json
+
+{
+  "supplierCode": "{{replacementSupplier}}",
+  "revision": {{authorizationRevision}},
+  "classificationRevision": {{authorizationClassificationRevision}},
+  "legacyVersion": "{{authorizationVersion}}"
+}
 
 ### Acción: O.K. A (usa direction=approve o revoke)
 # Define PURCHASE_ORDER_APPROVAL_TEST_KEY fuera del repositorio y copia la versión y revisiones del GET.

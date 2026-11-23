@@ -1,7 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { excludeRemovedPurchaseOrders } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
-import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride } from '../../domain/datasources/purchase-orders-data-source.js';
+import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride, PurchaseOrderSupplierSearchOverride } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type {
@@ -277,16 +277,28 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
     return this.header(`FPENC.PENUM = ?${exclusions.sql}`, [number, ...exclusions.parameters]);
   }
 
-  async search(criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = [], removed: PurchaseOrderIdentity[] = []): Promise<PurchaseOrderSearchResult> {
+  async search(
+    criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = [], removed: PurchaseOrderIdentity[] = [],
+    supplierChanges: PurchaseOrderSupplierSearchOverride[] = [],
+  ): Promise<PurchaseOrderSearchResult> {
     const conditions = ['PESPEDIDO IN (2, 5)'];
     const parameters: Array<string | number> = [];
+    const supplierCondition = (original: string, values: string[], field: 'queryMatches' | 'codeMatches') => {
+      const matches = supplierChanges.filter((change) => change[field]);
+      const changed = excludeRemovedPurchaseOrders(supplierChanges, 'FPENC');
+      parameters.push(...values, ...changed.parameters, ...matches.flatMap(({ id, number }) => [id, number]));
+      const newMatches = matches.length > 0 ? ` OR (FPENC.PESEQ, FPENC.PENUM) IN (${matches.map(() => '(?, ?)').join(', ')})` : '';
+      return `((${original})${changed.sql}${newMatches})`;
+    };
     if (criteria.query !== undefined) {
-      conditions.push('(UPPER(PENUM) LIKE UPPER(?) OR UPPER(PENUMELLOS) LIKE UPPER(?) OR UPPER(PRVCOD) LIKE UPPER(?) OR UPPER(PRVNOM) LIKE UPPER(?))');
-      parameters.push(...Array(4).fill(`%${criteria.query}%`));
+      const query = `%${criteria.query}%`;
+      parameters.push(query, query);
+      const supplier = supplierCondition('UPPER(PRVCOD) LIKE UPPER(?) OR UPPER(PRVNOM) LIKE UPPER(?)', [query, query], 'queryMatches');
+      conditions.push(`(UPPER(PENUM) LIKE UPPER(?) OR UPPER(PENUMELLOS) LIKE UPPER(?) OR ${supplier})`);
     }
     if (criteria.orderNumber !== undefined) { conditions.push('PENUM LIKE ?'); parameters.push(`${criteria.orderNumber}%`); }
     if (criteria.supplierOrderNumber !== undefined) { conditions.push('PENUMELLOS LIKE ?'); parameters.push(`${criteria.supplierOrderNumber}%`); }
-    if (criteria.supplierCode !== undefined) { conditions.push('PRVCOD LIKE ?'); parameters.push(`${criteria.supplierCode}%`); }
+    if (criteria.supplierCode !== undefined) conditions.push(supplierCondition('PRVCOD LIKE ?', [`${criteria.supplierCode}%`], 'codeMatches'));
     if (criteria.orderedAt !== undefined) { conditions.push('PEFECHA = ?'); parameters.push(criteria.orderedAt); }
     if (criteria.dueAt !== undefined) { conditions.push('PEVENCE = ?'); parameters.push(criteria.dueAt); }
     if (criteria.agent !== undefined) {

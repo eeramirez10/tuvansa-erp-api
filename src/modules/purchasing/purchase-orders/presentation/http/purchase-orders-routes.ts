@@ -8,6 +8,7 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.get('/create', controller.getCreation);
   router.get('/create/suppliers', controller.searchCreationSuppliers);
   router.get('/create/products', controller.searchCreationProducts);
+  router.get('/authorization/suppliers', controller.searchAuthorizationSuppliers);
   router.get('/by-number/:purchaseOrderNumber', controller.getByNumberHandler);
   router.get('/:purchaseOrderId/previous', controller.previous);
   router.get('/:purchaseOrderId/next', controller.next);
@@ -18,6 +19,7 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.patch('/:purchaseOrderId/actions/confirmation', controller.confirm);
   router.get('/:purchaseOrderId/actions/authorization', controller.getAuthorization);
   router.patch('/:purchaseOrderId/actions/authorization', controller.authorize);
+  router.patch('/:purchaseOrderId/actions/authorization/supplier', controller.changeSupplier);
   router.get('/:purchaseOrderId/actions/comments', controller.panel('comments'));
   router.get('/:purchaseOrderId/actions/ct', controller.panel('ct'));
   router.get('/:purchaseOrderId/actions/pieces', controller.panel('pieces'));

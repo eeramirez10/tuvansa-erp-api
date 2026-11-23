@@ -7,21 +7,27 @@ import type { PurchaseOrderAuthorizationAccess } from '../../domain/datasources/
 import { purchaseOrderAuthorizationLevels, type PurchaseOrderAuthorizationLevel } from '../../domain/entities/purchase-order-authorization.js';
 
 const groupColumns = Array.from({ length: 40 }, (_, index) => `HUSER${index}`).join(', ');
-const denied = () => new ApplicationError('El usuario no tiene permiso para este nivel de autorización.', 'PURCHASE_ORDER_APPROVER_FORBIDDEN', 403);
+const denied = (supplierChange: boolean) => new ApplicationError(supplierChange
+  ? 'El usuario no tiene permiso para cambiar proveedor.' : 'El usuario no tiene permiso para este nivel de autorización.',
+'PURCHASE_ORDER_APPROVER_FORBIDDEN', 403);
 
 export class MysqlPurchaseOrderAuthorizationAccess implements PurchaseOrderAuthorizationAccess {
-  enabled() { return env.PURCHASE_ORDER_APPROVER_KEYS.length > 0; }
+  enabled() { return env.PURCHASE_ORDER_APPROVER_KEYS.some(({ levels }) => levels.length > 0); }
 
   levels() {
     return purchaseOrderAuthorizationLevels.filter((level) => env.PURCHASE_ORDER_APPROVER_KEYS.some((approver) => approver.levels.includes(level)));
   }
 
-  async verify(key: string | undefined, level: PurchaseOrderAuthorizationLevel): Promise<number> {
+  supplierChangeEnabled() { return env.PURCHASE_ORDER_APPROVER_KEYS.some(({ supplierChange }) => supplierChange); }
+
+  async verify(key: string | undefined, action: PurchaseOrderAuthorizationLevel | 'supplier-change'): Promise<number> {
+    const supplierChange = action === 'supplier-change';
+    const permission = supplierChange ? 'EOC#16/7' : `EOC#16/${purchaseOrderAuthorizationLevels.indexOf(action) + 1}`;
     if (!key) throw new ApplicationError('Ingresa una clave de autorización válida.', 'PURCHASE_ORDER_APPROVER_REQUIRED', 401);
     const digest = createHash('sha256').update(key).digest();
     const approver = env.PURCHASE_ORDER_APPROVER_KEYS.find(({ sha256 }) => timingSafeEqual(digest, Buffer.from(sha256, 'hex')));
     if (!approver) throw new ApplicationError('Ingresa una clave de autorización válida.', 'PURCHASE_ORDER_APPROVER_REQUIRED', 401);
-    if (!approver.levels.includes(level)) throw denied();
+    if (!(supplierChange ? approver.supplierChange : approver.levels.includes(action))) throw denied(supplierChange);
 
     const [[users], [permissions]] = await Promise.all([
       legacyMysqlPool.execute<Array<RowDataPacket & { groupId: number; permissionByGroup: number }>>(
@@ -33,20 +39,20 @@ export class MysqlPurchaseOrderAuthorizationAccess implements PurchaseOrderAutho
       legacyMysqlPool.execute<RowDataPacket[]>(
         `SELECT HKEY AS permission, HVALIDACLAVE<>'' AS requiresSupervisor, ${groupColumns}
          FROM FHELP WHERE HKEY IN (?,?) ORDER BY HSEQ`,
-        ['MRECEP63-A', `EOC#16/${purchaseOrderAuthorizationLevels.indexOf(level) + 1}`],
+        ['MRECEP63-A', permission],
       ),
     ]);
     const user = users[0];
-    if (!user || !user.permissionByGroup) throw denied();
+    if (!user || !user.permissionByGroup) throw denied(supplierChange);
     const groupId = user.groupId;
     const access = new Map<string, RowDataPacket>();
     for (const row of permissions) {
       if (!access.has(row.permission)) access.set(row.permission, row);
     }
-    const relevant = [access.get('MRECEP63-A'), access.get(`EOC#16/${purchaseOrderAuthorizationLevels.indexOf(level) + 1}`)];
-    if (groupId !== 0 && relevant.some((row) => !Number(row?.[`HUSER${groupId}`]))) throw denied();
+    const relevant = [access.get('MRECEP63-A'), access.get(permission)];
+    if (groupId !== 0 && relevant.some((row) => !Number(row?.[`HUSER${groupId}`]))) throw denied(supplierChange);
     if (relevant.some((row) => Number(row?.requiresSupervisor))) {
-      throw new ApplicationError('Este nivel requiere validación adicional de un supervisor en Omnis.', 'PURCHASE_ORDER_SUPERVISOR_REQUIRED', 403);
+      throw new ApplicationError('Esta acción requiere validación adicional de un supervisor en Omnis.', 'PURCHASE_ORDER_SUPERVISOR_REQUIRED', 403);
     }
     return approver.userId;
   }

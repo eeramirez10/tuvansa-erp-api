@@ -76,6 +76,10 @@ export class PurchaseOrder {
     return PurchaseOrder.create({ ...this.props, classifications });
   }
 
+  withSupplier(supplier: PurchaseOrderProps['supplier']): PurchaseOrder {
+    return PurchaseOrder.create({ ...this.props, supplier });
+  }
+
   withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'>, includeLines: boolean): PurchaseOrder {
     return PurchaseOrder.create({ ...this.props, totals: edit.totals, lines: includeLines ? edit.lines : [] });
   }

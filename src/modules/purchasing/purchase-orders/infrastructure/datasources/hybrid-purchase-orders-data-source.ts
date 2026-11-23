@@ -1,7 +1,8 @@
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderClassificationStorage, PurchaseOrdersDataSource } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditStorage } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
-import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
+import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
+import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
 import type {
   PurchaseOrderNavigationDirection,
@@ -17,6 +18,7 @@ import type {
 
 const sortOrders = (a: PurchaseOrder, b: PurchaseOrder) =>
   a.identity.number.localeCompare(b.identity.number, 'en', { sensitivity: 'base' }) || a.identity.id - b.identity.id;
+const normalizeSearch = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toUpperCase();
 const authorizationDate = new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
 const authorizationDateTime = new Intl.DateTimeFormat('sv-SE', {
   dateStyle: 'short', timeStyle: 'medium', timeZone: 'America/Mexico_City',
@@ -26,21 +28,28 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   constructor(
     private readonly dataSource: LegacyPurchaseOrdersDataSource,
     private readonly classificationStorage: PurchaseOrderClassificationStorage,
-    private readonly editStorage: PurchaseOrderEditStorage & Pick<PurchaseOrderAuthorizationStorage, 'findAuthorizationEvents'>,
+    private readonly editStorage: PurchaseOrderEditStorage & Pick<PurchaseOrderAuthorizationStorage, 'findAuthorizationEvents'> &
+      Pick<PurchaseOrderSupplierChangeStorage, 'findSupplierChanges'>,
     private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
   private async withChanges(items: PurchaseOrder[], includeLines = true): Promise<PurchaseOrder[]> {
     const ids = items.map((order) => order.identity.id);
-    const [stored, edited] = await Promise.all([this.classificationStorage.find(ids), this.editStorage.find(ids)]);
+    const [stored, edited, supplierChanges] = await Promise.all([
+      this.classificationStorage.find(ids), this.editStorage.find(ids),
+      this.editStorage.findSupplierChanges(ids.filter((id) => !isLocalPurchaseOrderId(id))),
+    ]);
     const byOrder = new Map(stored.map((record) => [`${record.id}/${record.number}`, record.current]));
     const edits = new Map(edited.map((record) => [`${record.id}/${record.number}`, record]));
+    const suppliers = new Map(supplierChanges.map(({ id, number, supplier }) => [`${id}/${number}`, supplier]));
     return items.map((order) => {
       const { id, number } = order.identity;
       const key = `${id}/${number}`;
       const current = byOrder.get(key);
       const edit = edits.get(key);
-      const classified = current ? order.withClassifications(current) : order;
+      const supplier = suppliers.get(key);
+      const withSupplier = supplier ? order.withSupplier(supplier) : order;
+      const classified = current ? withSupplier.withClassifications(current) : withSupplier;
       return edit ? classified.withEditedLines(edit, includeLines) : classified;
     });
   }
@@ -66,19 +75,27 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   }
 
   async search(criteria: PurchaseOrderSearchCriteria): Promise<PurchaseOrderSearchResult> {
-    const [agents, removed] = await Promise.all([
+    const [agents, removed, supplierChanges] = await Promise.all([
       criteria.agent === undefined ? undefined : this.classificationStorage.agentOverrides(criteria.agent),
       this.editStorage.findRemoved(),
+      criteria.query === undefined && criteria.supplierCode === undefined ? [] : this.editStorage.findSupplierChanges(),
     ]);
+    const query = normalizeSearch(criteria.query ?? '');
+    const code = normalizeSearch(criteria.supplierCode ?? '');
+    const supplierFilters = supplierChanges.filter(({ id }) => !isLocalPurchaseOrderId(id)).map(({ id, number, supplier }) => ({
+      id, number,
+      queryMatches: normalizeSearch(supplier.code).includes(query) || normalizeSearch(supplier.name).includes(query),
+      codeMatches: normalizeSearch(supplier.code).startsWith(code),
+    }));
     const local = await this.creation.searchLocal(criteria,
       agents?.filter((order) => !order.matches) ?? [], agents?.filter((order) => order.matches) ?? [], removed);
     if (local.total === 0) {
-      const result = await this.dataSource.search(criteria, agents, removed);
+      const result = await this.dataSource.search(criteria, agents, removed, supplierFilters);
       return { ...result, items: await this.withChanges(result.items, false) };
     }
     const legacyOffset = Math.max(0, criteria.offset - local.total);
     const offset = criteria.offset - legacyOffset;
-    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit }, agents, removed);
+    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit }, agents, removed, supplierFilters);
     const items = [...legacy.items, ...local.items].sort(sortOrders).slice(offset, offset + criteria.limit);
     return { items: await this.withChanges(items, false), total: legacy.total + local.total };
   }
@@ -137,14 +154,19 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   }
 
   private async withAuthorizationComments(panel: PurchaseOrderPanelResult): Promise<PurchaseOrderPanelResult> {
-    const events = await this.editStorage.findAuthorizationEvents(panel.purchaseOrder);
-    if (events.length === 0) return panel;
+    const [events, changes] = await Promise.all([
+      this.editStorage.findAuthorizationEvents(panel.purchaseOrder),
+      this.editStorage.findSupplierChanges([panel.purchaseOrder.id]),
+    ]);
+    const supplier = changes.find(({ number }) => number === panel.purchaseOrder.number)?.supplier;
+    if (events.length === 0 && !supplier) return panel;
     const items = [...panel.items];
     const initialLine = String(items[0]?.line4 ?? '');
     const notes = events.map(({ level, direction, actorId, occurredAt }) =>
       `, ${direction === 'revoke' ? '-' : ''}${level} usr:${actorId} ${authorizationDate.format(new Date(occurredAt))}`);
-    items[0] = { ...items[0], line4: initialLine + notes.join('') };
+    if (notes.length > 0) items[0] = { ...items[0], line4: initialLine + notes.join('') };
     const summary = { ...panel.summary };
+    if (supplier) summary.supplier = supplier;
     const levelD = events.findLast(({ level }) => level === 'D');
     if (levelD) summary.authorizedBy = levelD.direction === 'approve' ? levelD.actorId : 0;
     const levelC = events.findLast(({ level, direction }) => level === 'C' && direction === 'approve');

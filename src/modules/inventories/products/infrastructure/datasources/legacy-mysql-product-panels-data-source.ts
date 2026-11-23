@@ -2,6 +2,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { excludeRemovedPurchaseOrders, legacyPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import { purchaseOrderLineAssignments } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-confirmation.js';
+import { purchaseOrderSupplierChanges } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-suppliers.js';
 import type { ProductPanelsDataSource } from '../../domain/datasources/product-panels-data-source.js';
 import type {
   ProductPanelCriteria,
@@ -423,7 +424,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'supplier-orders-ct': {
     section: 'queries', button: 'Ordenado a proveedor CT',
-    sql: `SELECT PLSEQ AS id, ICOD AS productCode, PRVCOD AS supplierCode,
+    sql: `SELECT PLSEQ AS id, fpenc.PESEQ AS orderId, ICOD AS productCode, PRVCOD AS supplierCode,
       PRVNOM AS supplierName, PLCANT AS quantity, PLSURT AS fulfilled,
       PENUM AS orderNumber, PLPRECI AS price, PEDESDE AS orderedAt,
       PEVENCE AS dueAt, PENUMELLOS AS externalNumber, PEFECHA AS date
@@ -669,10 +670,14 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
         criteria.offset,
       ],
     );
-    const assignments = panel === 'supplier-orders'
-      ? await purchaseOrderLineAssignments(product.id, rows.map((row) => Number(row.id))) : [];
+    const [assignments, supplierChanges] = await Promise.all([
+      panel === 'supplier-orders' ? purchaseOrderLineAssignments(product.id, rows.map((row) => Number(row.id))) : [],
+      panel === 'supplier-orders' || panel === 'supplier-orders-ct'
+        ? purchaseOrderSupplierChanges([...new Set(rows.map((row) => Number(row.orderId)))]) : [],
+    ]);
     const confirmedOrders = new Set(assignments.map(({ orderId, number }) => `${orderId}/${number}`));
     const confirmedByLine = new Map(assignments.map(({ id, orderId, number, assigned }) => [`${orderId}/${number}/${id}`, assigned]));
+    const supplierByOrder = new Map(supplierChanges.map(({ id, number, supplier }) => [`${id}/${number}`, supplier]));
     return {
       product,
       key: panel,
@@ -682,7 +687,9 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       source: definition.source ?? 'mysql',
       items: rows.map((row) => {
         const order = `${row.orderId}/${row.orderNumber}`;
-        return confirmedOrders.has(order) ? { ...row, assigned: confirmedByLine.get(`${order}/${row.id}`) ?? 0 } : { ...row };
+        const supplier = supplierByOrder.get(order);
+        const item = supplier ? { ...row, supplierCode: supplier.code, supplierName: supplier.name } : { ...row };
+        return confirmedOrders.has(order) ? { ...item, assigned: confirmedByLine.get(`${order}/${row.id}`) ?? 0 } : item;
       }),
       ...(openingStock === undefined ? {} : { openingStock }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),

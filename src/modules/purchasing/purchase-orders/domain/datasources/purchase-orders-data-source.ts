@@ -24,7 +24,10 @@ export interface PurchaseOrdersDataSource {
 
 export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataSource, 'getPanel' | 'search' | 'findAdjacent' | 'saveClassifications'> {
   findByNumber(number: string, removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;
-  search(criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[], removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult>;
+  search(
+    criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[], removed?: PurchaseOrderIdentity[],
+    supplierChanges?: PurchaseOrderSupplierSearchOverride[],
+  ): Promise<PurchaseOrderSearchResult>;
   findIdentity(id: number): Promise<PurchaseOrderIdentity | undefined>;
   findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection, removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;
   getClassifications(id: number, local?: PurchaseOrder): Promise<PurchaseOrderClassificationPanel | null>;
@@ -32,6 +35,7 @@ export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataS
 }
 
 export type PurchaseOrderAgentOverride = PurchaseOrderIdentity & { matches: boolean };
+export type PurchaseOrderSupplierSearchOverride = PurchaseOrderIdentity & { queryMatches: boolean; codeMatches: boolean };
 
 export interface PurchaseOrderClassificationStorage {
   writable(): boolean;

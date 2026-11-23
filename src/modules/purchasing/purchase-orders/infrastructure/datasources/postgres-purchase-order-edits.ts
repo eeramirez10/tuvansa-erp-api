@@ -5,6 +5,7 @@ import {
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { assertActivePurchaseOrder, lockPurchaseOrderWrite, readPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
+import { readPurchaseOrderSupplierChanges } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-suppliers.js';
 import type {
   PurchaseOrderEditSnapshot, PurchaseOrderEditStorage, PurchaseOrderStockChange,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
@@ -15,6 +16,7 @@ import {
 import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
 import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
 import type { PurchaseOrderAuthorizationEvent, PurchaseOrderAuthorizationInput, PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
+import type { PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierChoice } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrderIdentity, PurchaseOrderNavigationDirection, PurchaseOrderSearchCriteria, PurchaseOrderSearchResult } from '../../domain/repositories/purchase-orders-repository.js';
 import { purchaseOrderClassificationMigrations, savePurchaseOrderClassificationValue } from './postgres-purchase-order-classifications.js';
@@ -101,6 +103,21 @@ const migrations = [{
       PRIMARY KEY (order_id, order_number, revision)
     );
   `,
+}, {
+  id: 'purchase_order_supplier_change',
+  sql: `
+    CREATE TABLE tuvansa.purchase_order_supplier_changes (
+      order_id bigint NOT NULL,
+      order_number varchar(15) NOT NULL,
+      previous_supplier_id integer NOT NULL CHECK (previous_supplier_id > 0),
+      supplier jsonb NOT NULL CHECK (jsonb_typeof(supplier) = 'object'),
+      supplier_discounts jsonb NOT NULL CHECK (jsonb_typeof(supplier_discounts) = 'array'),
+      tax_type integer NOT NULL,
+      actor_id integer NOT NULL CHECK (actor_id > 0),
+      occurred_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (order_id, order_number)
+    );
+  `,
 }];
 
 type Stored = {
@@ -115,7 +132,8 @@ type LocalRow = { id: string; number: string; fingerprint: string; header: NewPu
 const asOrder = ({ id, number, header }: LocalRow) => PurchaseOrder.create({ ...header, id: Number(id), number });
 const requestConflict = () => new ConflictError('La clave de alta ya se usó para una orden con otros datos.', 'PURCHASE_ORDER_REQUEST_CONFLICT');
 
-export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage, PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage {
+export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage,
+  PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage, PurchaseOrderSupplierChangeStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -318,10 +336,10 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     });
   }
 
-  async save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<PurchaseOrderEditSnapshot> {
+  async save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[], supplierChangeId: number | null): Promise<PurchaseOrderEditSnapshot> {
     return this.transaction(async (client) => {
       const lines = await this.allocateLineIds(client, snapshot.lines);
-      const saved = await this.saveRevision(client, { ...snapshot, lines }, 'edit');
+      const saved = await this.saveRevision(client, { ...snapshot, lines }, 'edit', supplierChangeId);
       await this.saveStock(client, snapshot.id, snapshot.number, stock);
       return saved;
     });
@@ -364,19 +382,8 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   async saveAuthorization(order: PurchaseOrderIdentity, baseClassifications: string[], input: PurchaseOrderAuthorizationInput, next: string, actorId: number): Promise<void> {
     const { id, number } = order;
     await this.transaction(async (client) => {
-      await lockPurchaseOrderWrite(client, id);
-      await assertActivePurchaseOrder(client, order);
-      const { rows: [edit] } = await client.query<Pick<Stored, 'revision' | 'legacyVersion'>>(
-        `SELECT revision, legacy_version AS "legacyVersion" FROM tuvansa.purchase_order_edits
-         WHERE order_id=$1 AND order_number=$2`, [id, number],
-      );
-      const { rows: [classification] } = await client.query<{ revision: number; status: string }>(
-        `SELECT revision, current_values->>8 AS status FROM tuvansa.purchase_order_classifications
-         WHERE order_id=$1 AND order_number=$2`, [id, number],
-      );
-      const current = classification?.status ?? baseClassifications[8] ?? '';
-      if ((edit?.revision ?? 0) !== input.revision || (edit && edit.legacyVersion !== input.legacyVersion) ||
-        (classification?.revision ?? 0) !== input.classificationRevision || current !== input.status) {
+      const current = await this.lockAuthorizationState(client, order, baseClassifications[8] ?? '', input);
+      if (current !== input.status) {
         throw new ConflictError('La orden cambió. Vuelve a abrir Autorizar.', 'PURCHASE_ORDER_AUTHORIZATION_STALE');
       }
       await savePurchaseOrderClassificationValue(client, order, baseClassifications, 8, next);
@@ -388,10 +395,74 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     });
   }
 
-  private async saveRevision(client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation') {
+  private async lockAuthorizationState(
+    client: PostgresClient, order: PurchaseOrderIdentity, baseStatus: string,
+    input: Pick<PurchaseOrderAuthorizationInput, 'revision' | 'classificationRevision' | 'legacyVersion'>,
+  ): Promise<string | null> {
+    const { id, number } = order;
+    await lockPurchaseOrderWrite(client, id);
+    await assertActivePurchaseOrder(client, order);
+    const { rows: [edit] } = await client.query<Pick<Stored, 'revision' | 'legacyVersion'>>(
+      `SELECT revision, legacy_version AS "legacyVersion" FROM tuvansa.purchase_order_edits
+       WHERE order_id=$1 AND order_number=$2`, [id, number],
+    );
+    const { rows: [classification] } = await client.query<{ revision: number; status: string }>(
+      `SELECT revision, current_values->>8 AS status FROM tuvansa.purchase_order_classifications
+       WHERE order_id=$1 AND order_number=$2`, [id, number],
+    );
+    if ((edit?.revision ?? 0) !== input.revision || (edit && edit.legacyVersion !== input.legacyVersion) ||
+      (classification?.revision ?? 0) !== input.classificationRevision) return null;
+    return classification?.status ?? baseStatus;
+  }
+
+  findSupplierChanges(ids?: number[]) {
+    if (!this.writable() || ids?.length === 0) return Promise.resolve([]);
+    return this.connection((client) => readPurchaseOrderSupplierChanges(client, ids));
+  }
+
+  async saveSupplierChange(
+    order: PurchaseOrderIdentity, baseStatus: string, previousSupplierId: number,
+    input: PurchaseOrderSupplierChangeInput, choice: PurchaseOrderSupplierChoice, actorId: number,
+  ): Promise<void> {
+    const { id, number } = order;
+    const stale = () => new ConflictError('La orden cambió. Vuelve a abrir Cambia proveedor.', 'PURCHASE_ORDER_SUPPLIER_STALE');
+    await this.transaction(async (client) => {
+      if (await this.lockAuthorizationState(client, order, baseStatus, input) !== '9A') throw stale();
+      const supplier = JSON.stringify(choice.supplier);
+      const saved = await client.query(
+        `INSERT INTO tuvansa.purchase_order_supplier_changes
+         (order_id,order_number,previous_supplier_id,supplier,supplier_discounts,tax_type,actor_id)
+         VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7)
+         ON CONFLICT(order_id,order_number) DO NOTHING RETURNING order_id`,
+        [id, number, previousSupplierId, supplier, JSON.stringify(choice.supplierDiscounts), choice.taxType, actorId],
+      );
+      if (!saved.rows.length) throw stale();
+      if (isLocalPurchaseOrderId(id)) {
+        const updated = await client.query(
+          `UPDATE tuvansa.purchase_orders SET header=jsonb_set(header,'{supplier}',$3::jsonb)
+           WHERE id=$1 AND number=$2 AND header#>>'{supplier,code}'='COMPRA' AND header#>>'{supplier,id}'=$4 RETURNING id`,
+          [id, number, supplier, String(previousSupplierId)],
+        );
+        if (!updated.rows.length) throw stale();
+      }
+    });
+  }
+
+  private async saveRevision(
+    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation', supplierChangeId?: number | null,
+  ) {
     await lockPurchaseOrderWrite(client, snapshot.id);
     await assertActivePurchaseOrder(client, snapshot);
     const { id, number, legacyVersion, revision, lines, totals, amountInWords } = snapshot;
+    if (supplierChangeId !== undefined) {
+      const { rows: [change] } = await client.query<{ id: number }>(
+        `SELECT (supplier->>'id')::integer AS id FROM tuvansa.purchase_order_supplier_changes
+         WHERE order_id=$1 AND order_number=$2`, [id, number],
+      );
+      if ((change?.id ?? null) !== supplierChangeId) {
+        throw new ConflictError('La orden cambió desde que abriste el editor. Vuelve a abrirlo.', 'PURCHASE_ORDER_EDIT_STALE');
+      }
+    }
     const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords })];
     const result = revision === 0
       ? await client.query<{ revision: number }>(

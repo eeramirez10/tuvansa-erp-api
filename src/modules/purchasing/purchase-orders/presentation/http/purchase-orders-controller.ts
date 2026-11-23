@@ -54,6 +54,11 @@ const editSchema = revisionSchema.extend({
 }).strict();
 const productQuery = z.object({ q: z.string().trim().min(1).max(60) });
 const supplierCode = z.string().trim().min(1).max(20).toUpperCase();
+const supplierChangeSchema = authorizationSchema.pick({ revision: true, legacyVersion: true, classificationRevision: true })
+  .extend({ supplierCode }).strict();
+const supplierSearchSchema = z.object({ code: supplierCode.optional(), name: z.string().trim().min(1).max(60).optional() })
+  .refine(({ code, name }) => code !== undefined || name !== undefined, 'Ingresa el código o nombre del proveedor.');
+const authorizationKey = (header?: string) => /^Bearer ([0-9a-f]{64})$/i.exec(header ?? '')?.[1];
 const createDate = dateSchema.refine((date) => {
   const parsed = new Date(`${date}T00:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(date);
@@ -251,9 +256,25 @@ export class PurchaseOrdersController {
   authorize: RequestHandler = async (request, response, next) => {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
-      const key = /^Bearer ([0-9a-f]{64})$/i.exec(request.header('authorization') ?? '')?.[1];
+      const key = authorizationKey(request.header('authorization'));
       response.set('Cache-Control', 'no-store');
       response.json({ data: await this.authorizeOrder.execute(purchaseOrderId, authorizationSchema.parse(request.body), key) });
+    } catch (error) { next(error); }
+  };
+
+  searchAuthorizationSuppliers: RequestHandler = async (request, response, next) => {
+    try {
+      const filters = supplierSearchSchema.parse(request.query);
+      response.json({ data: await this.authorizeOrder.searchSuppliers(filters) });
+    } catch (error) { next(error); }
+  };
+
+  changeSupplier: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store');
+      response.json({ data: await this.authorizeOrder.changeSupplier(purchaseOrderId, supplierChangeSchema.parse(request.body),
+        authorizationKey(request.header('authorization'))) });
     } catch (error) { next(error); }
   };
 }

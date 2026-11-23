@@ -20,7 +20,8 @@ export type PurchaseOrderAuthorizationEvent = {
 export interface PurchaseOrderAuthorizationAccess {
   enabled(): boolean;
   levels(): PurchaseOrderAuthorizationLevel[];
-  verify(key: string | undefined, level: PurchaseOrderAuthorizationLevel): Promise<number>;
+  supplierChangeEnabled(): boolean;
+  verify(key: string | undefined, action: PurchaseOrderAuthorizationLevel | 'supplier-change'): Promise<number>;
 }
 
 export interface PurchaseOrderAuthorizationStorage {

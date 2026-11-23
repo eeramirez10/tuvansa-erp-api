@@ -22,6 +22,7 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Baja de orden de compra / Sí | `DELETE /:purchaseOrderId` | Baja transaccional y ajuste del pendiente en PostgreSQL |
 | Confirmar todo / Desconfirmar todo | `GET /:purchaseOrderId/actions/confirmation`, `PATCH /:purchaseOrderId/actions/confirmation` | Reglas de `EOC#2/7`, `/422–423` y `MBASE/124`, persistencia derivada en PostgreSQL |
 | Autorizar / O.K. A–F | `GET /:purchaseOrderId/actions/authorization`, `PATCH /:purchaseOrderId/actions/authorization` | Reglas de `EOC#16/1–6`, permisos `FUSERS` y `FHELP`, bitácora en PostgreSQL |
+| Autorizar / Cambia proveedor | `GET /authorization/suppliers`, `PATCH /:purchaseOrderId/actions/authorization/supplier` | `EOC#16/7 → ECIA#26 → INICIO/44`, lectura de `FPRV`, sustitución de `PRVSEQ` en `FPENC` y `FPLIN` mediante PostgreSQL |
 | Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
 | Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
 | Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
@@ -78,7 +79,7 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 | Orden en pantalla | Código Omnis 7 | Fuente y comportamiento | API web |
 |---|---|---|---|
 | Alta Piezas | `EOC#2/1 → EOC#17` (`EOC#19` según compañía) | Lee partidas y piezas. Cambio e importación escriben en `FCAJAS`; la serie usa `FTIPMV.PZ`. | Sin ruta |
-| Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. | `GET/PATCH /:id/actions/authorization` |
+| Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. **Cambia proveedor** sustituye el proveedor inicial `COMPRA` en nivel A. | `GET/PATCH /:id/actions/authorization`, `PATCH /:id/actions/authorization/supplier` |
 | Auxiliar | `EOC#2/3 → EPRV#7C/240` | Lee `FDOC` por `DREFER=PENUM`, `DEST=CIAKYT`, `DMULTICIA=LVCIA`. Presenta `DNUM` y `DFECHA`. La API fija `DEST=0` y `DMULTICIA=1` para el contexto capturado. | `GET /:id/actions/auxiliar` |
 | Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y ajusta `PEPARA`. | Sin ruta |
 | Clasificar | `EOC#2/5 → EPDC#199/239–240`; guarda en `/3` | Opciones de `FAG` con `AGTIPO IN (0,2)`, ordenadas por `AGNUM`, comparadas por `AGTNUM` contra `PEPAR1–9`. `MBASE/91` determina las etiquetas. La web usa el mismo filtro, ordena por `AGSEQ`, tiene etiquetas fijas y sólo lectura. | `GET /:id/actions/classifications` |
@@ -186,6 +187,16 @@ La UI web aplica estas transiciones al clasificador 9 y pide una clave de firma 
 
 En PostgreSQL se guardan el estado y la bitácora de forma atómica. Comentarios muestra el historial proyectado sobre `COML4`, la fecha de avance a C (`PEDATE3`) y el usuario de D (`PEUSRAUT`), que se limpia al revertir D. Clasificar reserva los códigos de autorización para este flujo. El GET aporta la versión, revisión y el estado exigidos por el PATCH. La validación de concurrencia evita transiciones sobre una orden modificada.
 
-`MOCOM/36` y `EOC#2/14` aplican validaciones de impresión por alias en BABY, CADER y KARELE. El flujo de recepción de `MRECEP` contiene otros controles por alias, incluidos ALDO, LIZ, MODPAR, ZOY, NEWBALANCE, BABY y DURAZNOS. La revisión del código no encontró en estos flujos una compuerta por nivel para TUVANSA. **Cambia proveedor** dentro de Autorizar corresponde a `EOC#16/7` y queda pendiente.
+`MOCOM/36` y `EOC#2/14` aplican validaciones de impresión por alias en BABY, CADER y KARELE. El flujo de recepción de `MRECEP` contiene otros controles por alias, incluidos ALDO, LIZ, MODPAR, ZOY, NEWBALANCE, BABY y DURAZNOS. La revisión del código no encontró en estos flujos una compuerta por nivel para TUVANSA.
 
 La prueba en Neon usó una orden temporal y claves efímeras. Verificó la firma y reversión desde el navegador, permisos por grupo, revisiones, bitácora, fecha de C y usuario de D. Los registros de prueba se retiraron al terminar.
+
+## Cambia proveedor dentro de Autorizar
+
+`EOC#16/7` comprueba `PEPAR9='9A'` y `PRVCOD='COMPRA'`. Abre **Proveedor** (`ECIA#26`) con el código actual, **OK** y **Cancelar**. `INICIO/44` busca el código exacto en `FPRV` y usa `EPRVFINDEDWC` para localizar por código o nombre. En el buscador, un nombre precedido por `*` busca una coincidencia interna y `**` busca `PRVVARIOS1`. La web conserva esos filtros y limita los resultados a 35.
+
+Tras OK, el método reemplaza `FPLIN.PRVSEQ` en todas las partidas y `FPENC.PRVSEQ` en el documento. Calcula `PEPARA` en memoria, pero el camino SQL de `MBASE/74 → MBASE/69` arma la edición con `PRVSEQ`. Las cantidades, los precios, la moneda, el IVA, los totales, el estado de autorización y las recepciones se conservan. La persistencia web derivada usa una transacción en `tuvansa.purchase_order_supplier_changes` para guardar la sustitución por orden, aplicada a todas las partidas, y el usuario responsable. Proyecta el proveedor en ficha, buscador, Comentarios y las consultas heredadas **Ordenado a proveedor** y **Ordenado a proveedor CT** de Inventarios.
+
+Agrega `"supplierChange":true` a la entrada del autorizador que corresponda en `PURCHASE_ORDER_APPROVER_KEYS`. Se admite `"levels":[]` para una clave exclusiva de esta acción. La API autentica el cambio con la clave personal y comprueba los permisos de apertura y `EOC#16/7` en Omnis. En los orígenes consultados no existe una entrada de `FHELP` para ese método y aplica la excepción de grupo 0 de `INICIO/30`. También se comprueban las revisiones dentro del bloqueo de la orden.
+
+Evidencia de código de Omnis 7, no SQL observado en ejecución: `20261120-EOC16-OC.txt` (líneas 220–263), `20261120-ECIA26-OC.txt`, `20261123-INICIO44-OC.pdf`, `20261123-EPRVFINDEDWC-OC.txt` y `20261123-MBASE69-OC.txt`. Ni el MySQL local de Omnis ni el MySQL de lectura de la API tenían el código `COMPRA`. Las escrituras se probaron con una orden temporal en Neon. `general_log` estaba en OFF.

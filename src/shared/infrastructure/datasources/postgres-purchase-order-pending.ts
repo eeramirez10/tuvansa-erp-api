@@ -7,21 +7,22 @@ import { readPurchaseOrderConfirmedStock } from './postgres-purchase-order-confi
 
 type OrderRef = { id: number; number: string };
 
-async function legacyOrderQuantity(productId: number, orders: OrderRef[], quantity: 'pending' | 'confirmed'): Promise<number> {
+async function legacyOrderQuantity(productId: number, orders: OrderRef[], quantity: 'pending' | 'confirmed' | 'quotes'): Promise<number> {
   if (orders.length === 0) return 0;
   const pairs = orders.map(() => '(?, ?)').join(', ');
-  const measure = quantity === 'pending' ? 'GREATEST(FPLIN.PLCANT-FPLIN.PLSURT, 0)' : 'FPLIN.PLASIGNADO';
+  const measure = quantity === 'confirmed' ? 'FPLIN.PLASIGNADO' : 'GREATEST(FPLIN.PLCANT-FPLIN.PLSURT, 0)';
+  const documentType = quantity === 'quotes' ? 5 : 2;
   const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { pending: string | number }>>(
     `SELECT COALESCE(SUM(${measure}), 0) AS pending
      FROM FPLIN JOIN FPENC ON FPENC.PESEQ=FPLIN.PESEQ
-     WHERE FPLIN.ISEQ=? AND FPENC.PESPEDIDO=2 AND (FPENC.PESEQ, FPENC.PENUM) IN (${pairs})`,
-    [productId, ...orders.flatMap(({ id, number }) => [id, number])],
+     WHERE FPLIN.ISEQ=? AND FPENC.PESPEDIDO=? AND (FPENC.PESEQ, FPENC.PENUM) IN (${pairs})`,
+    [productId, documentType, ...orders.flatMap(({ id, number }) => [id, number])],
   );
   return Number(rows[0]?.pending ?? 0);
 }
 
-export async function purchaseOrderInventoryAdjustment(productId: number): Promise<{ pending: number; confirmed: number }> {
-  const empty = { pending: 0, confirmed: 0 };
+export async function purchaseOrderInventoryAdjustment(productId: number): Promise<{ pending: number; confirmed: number; quotes: number }> {
+  const empty = { pending: 0, confirmed: 0, quotes: 0 };
   if (!postgresConfigured()) return empty;
   let client: PostgresClient | undefined;
   try {
@@ -34,8 +35,10 @@ export async function purchaseOrderInventoryAdjustment(productId: number): Promi
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const removed = (await readPurchaseOrderRemovals(client)).filter(({ legacy }) => legacy);
     const confirmed = await readPurchaseOrderConfirmedStock(client, productId);
-    const { rows } = await client.query<{ pending: string }>(
-      `SELECT COALESCE(SUM(pending),0) AS pending FROM tuvansa.purchase_order_stock_deltas AS stock
+    // JSON extraction keeps this read compatible with databases awaiting the quotes migration.
+    const { rows } = await client.query<{ pending: string; quotes: string }>(
+      `SELECT COALESCE(SUM(pending),0) AS pending, COALESCE(SUM((to_jsonb(stock)->>'quotes')::numeric),0) AS quotes
+       FROM tuvansa.purchase_order_stock_deltas AS stock
        WHERE product_id=$1${removed.length === 0 ? '' : ` AND NOT EXISTS (
          SELECT 1 FROM tuvansa.purchase_order_removals AS removed
          WHERE removed.legacy AND removed.order_id=stock.order_id AND removed.order_number=stock.order_number
@@ -45,12 +48,14 @@ export async function purchaseOrderInventoryAdjustment(productId: number): Promi
     client.release();
     client = undefined;
     // Reconcile the current source for orders whose balances have been overridden locally.
-    const [legacyPending, legacyConfirmed] = await Promise.all([
+    const [legacyPending, legacyConfirmed, legacyQuotes] = await Promise.all([
       legacyOrderQuantity(productId, removed, 'pending'),
       legacyOrderQuantity(productId, confirmed.filter(({ legacy }) => legacy), 'confirmed'),
+      legacyOrderQuantity(productId, removed, 'quotes'),
     ]);
     return {
       pending: Number(rows[0]?.pending ?? 0) - legacyPending,
+      quotes: Number(rows[0]?.quotes ?? 0) - legacyQuotes,
       confirmed: confirmed.reduce((total, row) => total + row.assigned, 0) - legacyConfirmed,
     };
   } catch {

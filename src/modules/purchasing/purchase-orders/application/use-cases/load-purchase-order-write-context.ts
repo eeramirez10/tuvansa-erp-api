@@ -33,5 +33,5 @@ export async function loadPurchaseOrderWriteContext(
   const stored = savedOrders.find((item) => item.number === base.number);
   const version = local?.fingerprint ?? legacyVersion(base, rules);
   const lines = stored?.lines ?? base.lines;
-  return { base, rules, stored, version, lines, local };
+  return { base, rules, stored, version, lines, local, documentKind: stored?.documentKind ?? base.documentKind };
 }

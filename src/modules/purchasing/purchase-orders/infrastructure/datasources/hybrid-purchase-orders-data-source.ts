@@ -1,6 +1,7 @@
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderClassificationStorage, PurchaseOrdersDataSource } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditStorage } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
+import type { PurchaseOrderConversionStorage } from '../../domain/datasources/purchase-order-conversion-data-source.js';
 import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
@@ -29,7 +30,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     private readonly dataSource: LegacyPurchaseOrdersDataSource,
     private readonly classificationStorage: PurchaseOrderClassificationStorage,
     private readonly editStorage: PurchaseOrderEditStorage & Pick<PurchaseOrderAuthorizationStorage, 'findAuthorizationEvents'> &
-      Pick<PurchaseOrderSupplierChangeStorage, 'findSupplierChanges'>,
+      Pick<PurchaseOrderSupplierChangeStorage, 'findSupplierChanges'> & Pick<PurchaseOrderConversionStorage, 'findKindOverrides'>,
     private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
@@ -75,10 +76,11 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   }
 
   async search(criteria: PurchaseOrderSearchCriteria): Promise<PurchaseOrderSearchResult> {
-    const [agents, removed, supplierChanges] = await Promise.all([
+    const [agents, removed, supplierChanges, kinds] = await Promise.all([
       criteria.agent === undefined ? undefined : this.classificationStorage.agentOverrides(criteria.agent),
       this.editStorage.findRemoved(),
       criteria.query === undefined && criteria.supplierCode === undefined ? [] : this.editStorage.findSupplierChanges(),
+      criteria.documentType === undefined ? [] : this.editStorage.findKindOverrides(),
     ]);
     const query = normalizeSearch(criteria.query ?? '');
     const code = normalizeSearch(criteria.supplierCode ?? '');
@@ -87,15 +89,17 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
       queryMatches: normalizeSearch(supplier.code).includes(query) || normalizeSearch(supplier.name).includes(query),
       codeMatches: normalizeSearch(supplier.code).startsWith(code),
     }));
+    const legacyKinds = kinds.filter(({ id }) => !isLocalPurchaseOrderId(id));
     const local = await this.creation.searchLocal(criteria,
       agents?.filter((order) => !order.matches) ?? [], agents?.filter((order) => order.matches) ?? [], removed);
     if (local.total === 0) {
-      const result = await this.dataSource.search(criteria, agents, removed, supplierFilters);
+      const result = await this.dataSource.search(criteria, agents, removed, supplierFilters, legacyKinds);
       return { ...result, items: await this.withChanges(result.items, false) };
     }
     const legacyOffset = Math.max(0, criteria.offset - local.total);
     const offset = criteria.offset - legacyOffset;
-    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit }, agents, removed, supplierFilters);
+    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit },
+      agents, removed, supplierFilters, legacyKinds);
     const items = [...legacy.items, ...local.items].sort(sortOrders).slice(offset, offset + criteria.limit);
     return { items: await this.withChanges(items, false), total: legacy.total + local.total };
   }

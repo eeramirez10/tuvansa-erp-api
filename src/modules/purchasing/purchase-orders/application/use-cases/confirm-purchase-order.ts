@@ -18,9 +18,9 @@ export class ConfirmPurchaseOrder {
 
   private async context(id: number) {
     const context = await loadPurchaseOrderWriteContext(id, this.legacy, this.storage, this.creation);
-    const { base, rules, stored, version } = context;
+    const { documentKind, rules, stored, version } = context;
     let reason = '';
-    if (base.documentKind !== 'order') reason = 'La confirmación sólo está disponible para órdenes de compra.';
+    if (documentKind !== 'order') reason = 'La confirmación sólo está disponible para órdenes de compra.';
     else if (rules.companyId !== rules.activeCompanyId) reason = 'La orden pertenece a otra compañía.';
     else if (stored && stored.legacyVersion !== version) reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
     else if (!this.storage.writable()) reason = 'La confirmación de órdenes requiere PostgreSQL.';

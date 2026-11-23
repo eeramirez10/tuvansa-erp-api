@@ -14,6 +14,7 @@ import {
   type LocalPurchaseOrder, type NewPurchaseOrder, type PurchaseOrderCreateStorage, type PurchaseOrderLocalMetadata,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
+import type { PurchaseOrderConversionStorage, PurchaseOrderKindOverride } from '../../domain/datasources/purchase-order-conversion-data-source.js';
 import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
 import type { PurchaseOrderAuthorizationEvent, PurchaseOrderAuthorizationInput, PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeMode, PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierChoice } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
@@ -130,6 +131,9 @@ const migrations = [{
       ADD PRIMARY KEY (order_id, order_number, revision),
       ADD CHECK (previous_supplier_id >= 0);
   `,
+}, {
+  id: 'purchase_order_quote_stock',
+  sql: `ALTER TABLE tuvansa.purchase_order_stock_deltas ADD COLUMN quotes numeric(18,3) NOT NULL DEFAULT 0;`,
 }];
 
 type Stored = {
@@ -137,7 +141,7 @@ type Stored = {
   number: string;
   revision: number;
   legacyVersion: string;
-  document: Pick<PurchaseOrderEditSnapshot, 'lines' | 'totals' | 'amountInWords'>;
+  document: Pick<PurchaseOrderEditSnapshot, 'lines' | 'totals' | 'amountInWords' | 'documentKind'>;
 };
 
 type LocalRow = { id: string; number: string; fingerprint: string; header: NewPurchaseOrder['header']; metadata: PurchaseOrderLocalMetadata };
@@ -145,7 +149,7 @@ const asOrder = ({ id, number, header }: LocalRow) => PurchaseOrder.create({ ...
 const requestConflict = () => new ConflictError('La clave de alta ya se usó para una orden con otros datos.', 'PURCHASE_ORDER_REQUEST_CONFLICT');
 
 export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage,
-  PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage, PurchaseOrderSupplierChangeStorage {
+  PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage, PurchaseOrderSupplierChangeStorage, PurchaseOrderConversionStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -233,11 +237,15 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
 
   async searchLocal(criteria: PurchaseOrderSearchCriteria, excluded: PurchaseOrderIdentity[], matching: PurchaseOrderIdentity[], removed: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult> {
     const empty = { items: [], total: 0 };
-    if (criteria.documentType === 5) return empty;
+    if (criteria.documentType !== undefined && criteria.documentType !== 2 && criteria.documentType !== 5) return empty;
     return this.readLocal<PurchaseOrderSearchResult>(empty, async (client) => {
       const values: unknown[] = [];
       const param = (value: unknown) => `$${values.push(value)}`;
       const conditions: string[] = [];
+      if (criteria.documentType !== undefined) {
+        const kind = criteria.documentType === 2 ? 'order' : 'quote';
+        conditions.push(`COALESCE(edit.document->>'documentKind', header->>'documentKind') = ${param(kind)}`);
+      }
       const removedIds = removed.filter(({ id }) => isLocalPurchaseOrderId(id)).map(({ id }) => id);
       if (removedIds.length > 0) conditions.push(`NOT (id=ANY(${param(removedIds)}::bigint[]))`);
       const orderNumber = criteria.orderNumber;
@@ -260,7 +268,9 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       }
       const where = conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`;
       const { rows } = await client.query<LocalRow & { total: string }>(
-        `SELECT id, number, header, count(*) OVER () AS total FROM tuvansa.purchase_orders ${where}
+        `SELECT id, number, header, count(*) OVER () AS total FROM tuvansa.purchase_orders
+         JOIN tuvansa.purchase_order_edits AS edit ON edit.order_id=id AND edit.order_number=number
+         ${where}
          ORDER BY number COLLATE "C", id LIMIT ${param(criteria.offset + criteria.limit)}`, values,
       );
       return { items: rows.map(asOrder), total: Number(rows[0]?.total ?? 0) };
@@ -323,6 +333,16 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     return this.connection((client) => readPurchaseOrderRemovals(client, ids));
   }
 
+  findKindOverrides(): Promise<PurchaseOrderKindOverride[]> {
+    return this.readLocal<PurchaseOrderKindOverride[]>([], async (client) => {
+      const { rows } = await client.query<{ id: string; number: string; documentKind: PurchaseOrderKindOverride['documentKind'] }>(
+        `SELECT order_id AS id, order_number AS number, document->>'documentKind' AS "documentKind"
+         FROM tuvansa.purchase_order_edits WHERE document ? 'documentKind'`,
+      );
+      return rows.map(({ id, ...row }) => ({ ...row, id: Number(id) }));
+    });
+  }
+
   async remove(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<void> {
     const { id, number, revision, legacyVersion, lines, totals, amountInWords } = snapshot;
     await this.transaction(async (client) => {
@@ -354,6 +374,13 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       const saved = await this.saveRevision(client, { ...snapshot, lines }, 'edit', supplierRevision);
       await this.saveStock(client, snapshot.id, snapshot.number, stock);
       return saved;
+    });
+  }
+
+  async saveConversion(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<void> {
+    await this.transaction(async (client) => {
+      await this.saveRevision(client, snapshot, 'conversion');
+      await this.saveStock(client, snapshot.id, snapshot.number, stock, true);
     });
   }
 
@@ -468,11 +495,11 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   }
 
   private async saveRevision(
-    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation', supplierRevision?: number,
+    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation' | 'conversion', supplierRevision?: number,
   ) {
     await lockPurchaseOrderWrite(client, snapshot.id);
     await assertActivePurchaseOrder(client, snapshot);
-    const { id, number, legacyVersion, revision, lines, totals, amountInWords } = snapshot;
+    const { id, number, legacyVersion, revision, lines, totals, amountInWords, documentKind } = snapshot;
     if (supplierRevision !== undefined) {
       const { rows: [change] } = await client.query<{ revision: number }>(
         `SELECT revision FROM tuvansa.purchase_order_supplier_changes
@@ -482,20 +509,26 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
         throw new ConflictError('La orden cambió desde que abriste el editor. Vuelve a abrirlo.', 'PURCHASE_ORDER_EDIT_STALE');
       }
     }
-    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords })];
+    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords, documentKind })];
     const result = revision === 0
       ? await client.query<{ revision: number }>(
         `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
          VALUES($1,$2,1,$3,$4::jsonb) ON CONFLICT(order_id,order_number) DO NOTHING RETURNING revision`, values,
       )
       : await client.query<{ revision: number }>(
-        `UPDATE tuvansa.purchase_order_edits SET document=$4::jsonb, revision=revision+1, updated_at=now()
+        `UPDATE tuvansa.purchase_order_edits SET document=document || $4::jsonb, revision=revision+1, updated_at=now()
          WHERE order_id=$1 AND order_number=$2 AND legacy_version=$3 AND revision=$5 RETURNING revision`, [...values, revision],
       );
     const saved = result.rows[0];
-    if (!saved) throw operation === 'edit'
-      ? new ConflictError('Otra sesión cambió la orden. Vuelve a abrir el editor.', 'PURCHASE_ORDER_EDIT_STALE')
-      : new ConflictError('La orden cambió. Vuelve a abrir la confirmación.', 'PURCHASE_ORDER_CONFIRMATION_STALE');
+    if (!saved) {
+      const errors = {
+        edit: ['Otra sesión cambió la orden. Vuelve a abrir el editor.', 'PURCHASE_ORDER_EDIT_STALE'],
+        confirmation: ['La orden cambió. Vuelve a abrir la confirmación.', 'PURCHASE_ORDER_CONFIRMATION_STALE'],
+        conversion: ['El documento cambió. Vuelve a abrir Cotiz.', 'PURCHASE_ORDER_CONVERSION_STALE'],
+      } as const;
+      const [message, code] = errors[operation];
+      throw new ConflictError(message, code);
+    }
     return { ...snapshot, revision: saved.revision };
   }
 
@@ -521,12 +554,14 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       ...change, nextReceiptAt: change.nextReceiptAt ?? changes.get(change.productId)?.nextReceiptAt ?? null,
     });
     await client.query('DELETE FROM tuvansa.purchase_order_stock_deltas WHERE order_id=$1 AND order_number=$2', [id, number]);
-    const deltas = [...changes.values()].filter((row) => row.pending !== 0 || row.nextReceiptAt !== null);
+    const deltas = [...changes.values()].filter((row) => row.pending !== 0 || (row.quotes ?? 0) !== 0 || row.nextReceiptAt !== null);
     if (deltas.length > 0) {
       await client.query(
-        `INSERT INTO tuvansa.purchase_order_stock_deltas(order_id,order_number,product_id,pending,next_receipt_at)
-         SELECT $1,$2,product,pending,receipt FROM unnest($3::bigint[],$4::numeric[],$5::date[]) AS change(product,pending,receipt)`,
-        [id, number, deltas.map((row) => row.productId), deltas.map((row) => row.pending), deltas.map((row) => row.nextReceiptAt)],
+        `INSERT INTO tuvansa.purchase_order_stock_deltas(order_id,order_number,product_id,pending,next_receipt_at,quotes)
+         SELECT $1,$2,product,pending,receipt,quotes
+         FROM unnest($3::bigint[],$4::numeric[],$5::date[],$6::numeric[]) AS change(product,pending,receipt,quotes)`,
+        [id, number, deltas.map((row) => row.productId), deltas.map((row) => row.pending),
+          deltas.map((row) => row.nextReceiptAt), deltas.map((row) => row.quotes ?? 0)],
       );
     }
   }

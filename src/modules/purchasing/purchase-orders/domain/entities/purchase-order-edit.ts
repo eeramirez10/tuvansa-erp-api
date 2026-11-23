@@ -152,14 +152,24 @@ export function buildPurchaseOrderEdit(
   if (!Number.isSafeInteger(Math.round(totals.total * 100))) throw invalidLine('El total excede el rango de importes admitido.');
   const totalInWords = (totals.total < 0 ? 'MENOS ' : '') + amountInWords(Math.abs(totals.total));
 
+  return { lines, totals, amountInWords: totalInWords, stock: purchaseOrderStockDifference(base, lines) };
+}
+
+export function purchaseOrderStockDifference(
+  base: PurchaseOrderProps, lines: PurchaseOrderLine[], target = base.documentKind,
+): PurchaseOrderStockChange[] {
   const stock = new Map<number, PurchaseOrderStockChange>();
-  for (const [items, sign] of [[base.lines, -1], [lines, 1]] as const) {
+  const conversion = target !== base.documentKind;
+  for (const [items, sign, kind] of [[base.lines, -1, base.documentKind], [lines, 1, target]] as const) {
     for (const line of items) {
       const item = stock.get(line.productId) ?? { productId: line.productId, pending: 0, nextReceiptAt: null };
-      item.pending = round(item.pending + Math.max(line.ordered - line.fulfilled, 0) * sign, 3);
-      if (line.id === 0) item.nextReceiptAt = base.dates.from;
+      const remainder = line.ordered - line.fulfilled;
+      const adjustment = (conversion ? remainder : Math.max(remainder, 0)) * sign;
+      if (kind === 'quote') item.quotes = round((item.quotes ?? 0) + adjustment, 3);
+      else item.pending = round(item.pending + adjustment, 3);
+      if (sign === 1 && line.id === 0) item.nextReceiptAt = base.dates.from;
       stock.set(line.productId, item);
     }
   }
-  return { lines, totals, amountInWords: totalInWords, stock: [...stock.values()] };
+  return [...stock.values()];
 }

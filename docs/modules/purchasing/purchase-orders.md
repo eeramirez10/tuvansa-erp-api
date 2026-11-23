@@ -46,9 +46,29 @@ El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor
 
 La persistencia derivada usa `tuvansa.purchase_order_classifications` en el PostgreSQL configurado por `NEON_DATABASE_URL`. La tabla se crea mediante migración al guardar por primera vez. Los GET conservan MySQL como fuente de catálogo y partidas y aplican los nueve valores locales donde hay una revisión guardada, incluida la búsqueda por Agente. MySQL permanece en lectura.
 
-**Comentarios** es de consulta. Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas se conservan deshabilitados. **Cotiz** conserva el marcador de esta etapa y su procedimiento nativo cambia el estado.
+**Comentarios** es de consulta. Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas se conservan deshabilitados.
 
 La verificación web cubrió acceso directo, menú, buscador, flechas y apertura de los cinco paneles. En Neon de pruebas se guardaron dos revisiones desde el flujo de Clasificar y se comprobó la consulta posterior, la búsqueda por agente y el rechazo de una revisión obsoleta. Se retiró el registro de prueba de PostgreSQL y se verificó el valor original en MySQL. La lectura de Piezas con filas y la cuadrícula de CT con tallas configuradas también se verifican con pruebas de datos simulados.
+
+## Cotiz y Gen %
+
+**Cotiz** sigue `EOC#2/8 → MBASE/125` en la biblioteca German de pruebas.
+Conserva folio, partidas, cantidades, surtido, asignación y totales. Cambia
+`PESPEDIDO` efectivo entre pedido (`2`) y cotización (`5`). El saldo firmado
+`PLCANT - PLSURT` se transfiere entre los acumulados de pedido (`FINV.IPEDPRV`)
+y cotización (`FINV.IORDCOTIZ`). Capturas locales `purchase-cotiz-01-mbase125`
+y `purchase-cotiz-02-mbase125`.
+
+El GET carga la revisión y la versión de origen. El PATCH recibe
+`{revision, legacyVersion, target}`, con `target` igual a `order` o `quote`.
+La escritura derivada guarda el tipo y los acumulados en PostgreSQL dentro
+del mismo bloqueo de la orden. La edición, autorización y confirmación usan el
+tipo efectivo. La web pide confirmación antes de guardar. Se probaron en
+Chrome y Neon ambos sentidos, Cancelar, conservación del folio y partidas,
+filtro por tipo, acumulados y reintento. Se retiró la orden de prueba.
+
+`EOC#2/13` muestra **bye** en TUVANSA y sale. **Gen %** reproduce el mensaje
+con **OK** y no envía solicitudes.
 
 ## Diferencia conocida del legado
 
@@ -86,12 +106,12 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 | Clasificar | `EOC#2/5 → EPDC#199/239–240`; guarda en `/3` | Opciones de `FAG` con `AGTIPO IN (0,2)`, ordenadas por `AGNUM`, comparadas por `AGTNUM` contra `PEPAR1–9`. `MBASE/91` determina las etiquetas. La web usa el mismo filtro, ordena por `AGSEQ`, tiene etiquetas fijas y sólo lectura. | `GET /:id/actions/classifications` |
 | Comentarios | `EOC#2/6 → /421 → EOC#6` | Busca `FCOMENT` por `10000000 + PESEQ`. `FTIPMV.TICOML1–5` da las etiquetas. Usa `COML1–4` para líneas cortas y `COML5` para el texto largo. Plazo, descuentos, moneda, fechas, auditoría y cargos provienen de `FPENC`. La web usa otras fuentes para parte de estos campos. El retorno del modal nativo contiene escrituras a `FCOMENT` y `FPENC` y llama a totalizar. | `GET /:id/actions/comments` |
 | Confirmar todo | `EOC#2/7 → /422–423` | Ajusta cada `FPLIN.PLASIGNADO` a `PLCANT−PLSURT`. Shift quita la asignación. | `GET/PATCH /:id/actions/confirmation` |
-| Cotiz | `EOC#2/8 → MBASE/125` | Cambia `FPENC.PESPEDIDO` entre `2` y `5` y recarga la orden. | Sin ruta |
+| Cotiz | `EOC#2/8 → MBASE/125` | Cambia el tipo entre `2` y `5` y transfiere `PLCANT-PLSURT` entre `IPEDPRV` e `IORDCOTIZ`. | `GET/PATCH /:id/actions/quote-conversion` |
 | CT | `EOC#2/9 → EOC#6AA/240–241` | Consulta partidas por `PESEQ`, agrupa por raíz de producto (`FCIA.CIARAIZ`) y muestra matriz de variantes con Pedido, Surtido y Resta. Su botón interno Cambio puede escribir `FPLIN`. | Sin ruta |
 | Div. Sucursal | `EOC#2/10 → EPED#8` | Divide cantidad seleccionada, suma surtido a la partida origen, crea partida de destino y recalcula. | Sin ruta |
 | Duplicar | `EOC#2/11 → EOC#7` | Selecciona tipo en `FTIPMV`, consume `TINUM` y copia `FPENC`, `FPLIN` y `FCOMENT`. Shift filtra partidas marcadas con `PLCLASE='X'`. | Sin ruta |
 | Etiquetas | `EOC#2/12 → /263` en la ruta predeterminada | El reporte y el medio de impresión dependen de la configuración. La ruta predeterminada usa `FTIPMV` y las asignaciones de `FPLIN`. | Sin ruta |
-| Gen % | `EOC#2/13` | Para TUVANSA el procedimiento muestra `bye` y termina. Otras compañías tienen ramas específicas. | Sin ruta |
+| Gen % | `EOC#2/13` | Para TUVANSA el procedimiento muestra `bye` y termina antes de efectuar cálculos o consultas. | Mensaje local |
 | Imprimir | `EOC#2/14 → MOCOM/36` | Genera el reporte de orden con `#48=0`. El medio de impresión depende de `TIPRINTER` y existen rutinas por configuración. | Sin ruta |
 | Imprimir Conf. | `EOC#2/15 → MOCOM/36` | Usa `#48=1`; el filtro predeterminado de partidas incluye `PLASIGNADO>0`. | Sin ruta |
 | Piezas | `EOC#2/16 → EOC#18/240` | Lee `FCAJAS` por `CAJFACTURA=PENUM`. Muestra producto, serie, piezas, cantidad, almacén, documento y recepción, con suma de `CAJCANT`. Su botón interno Confirmar actualiza `FPLIN`. | Sin ruta |

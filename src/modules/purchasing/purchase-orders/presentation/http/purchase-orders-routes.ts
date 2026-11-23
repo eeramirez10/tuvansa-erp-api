@@ -17,6 +17,8 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.patch('/:purchaseOrderId/actions/classifications', controller.classify);
   router.get('/:purchaseOrderId/actions/confirmation', controller.getConfirmation);
   router.patch('/:purchaseOrderId/actions/confirmation', controller.confirm);
+  router.get('/:purchaseOrderId/actions/quote-conversion', controller.getConversion);
+  router.patch('/:purchaseOrderId/actions/quote-conversion', controller.convert);
   router.get('/:purchaseOrderId/actions/authorization', controller.getAuthorization);
   router.patch('/:purchaseOrderId/actions/authorization', controller.authorize);
   router.patch('/:purchaseOrderId/actions/authorization/supplier', controller.changeSupplier('authorization'));

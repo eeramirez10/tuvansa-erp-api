@@ -1,5 +1,6 @@
 import type { PurchaseOrder } from '../entities/purchase-order.js';
 import type { PurchaseOrderEditSnapshot } from './purchase-order-edit-data-source.js';
+import type { PurchaseOrderKindOverride } from './purchase-order-conversion-data-source.js';
 import type {
   PurchaseOrderNavigationDirection,
   PurchaseOrderPanelKey,
@@ -26,7 +27,7 @@ export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataS
   findByNumber(number: string, removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;
   search(
     criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[], removed?: PurchaseOrderIdentity[],
-    supplierChanges?: PurchaseOrderSupplierSearchOverride[],
+    supplierChanges?: PurchaseOrderSupplierSearchOverride[], kindOverrides?: PurchaseOrderKindOverride[],
   ): Promise<PurchaseOrderSearchResult>;
   findIdentity(id: number): Promise<PurchaseOrderIdentity | undefined>;
   findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection, removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;

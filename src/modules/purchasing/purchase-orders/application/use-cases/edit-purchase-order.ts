@@ -7,7 +7,7 @@ import type {
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
-import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions } from '../../domain/entities/purchase-order-edit.js';
+import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions, purchaseOrderStockDifference } from '../../domain/entities/purchase-order-edit.js';
 import type { PurchaseOrdersRepository } from '../../domain/repositories/purchase-orders-repository.js';
 import { loadPurchaseOrderWriteContext } from './load-purchase-order-write-context.js';
 
@@ -25,10 +25,10 @@ export class EditPurchaseOrder {
     const [context, changes] = await Promise.all([
       loadPurchaseOrderWriteContext(id, this.legacy, this.storage, this.creation), this.storage.findSupplierChanges([id]),
     ]);
-    const { base, rules, lines, stored, version } = context;
+    const { base, documentKind, rules, lines, stored, version } = context;
     const change = changes.find(({ number }) => number === base.number);
     let reason = '';
-    if (base.documentKind !== 'order') reason = 'Omnis permite editar partidas desde esta ventana sólo para pedidos.';
+    if (documentKind !== 'order') reason = 'Omnis permite editar partidas desde esta ventana sólo para pedidos.';
     else if (rules.companyId !== rules.activeCompanyId) reason = 'La orden pertenece a otra compañía.';
     else if (stored && stored.legacyVersion !== version) {
       reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
@@ -67,7 +67,7 @@ export class EditPurchaseOrder {
   }
 
   async save(id: number, input: PurchaseOrderEditInput) {
-    const { base, rules, lines, stored, version, editVersion, reason, local, change } = await this.context(id);
+    const { base, documentKind, rules, lines, stored, version, editVersion, reason, local, change } = await this.context(id);
     if (input.revision !== (stored?.revision ?? 0) || input.legacyVersion !== editVersion ||
       (stored && stored.legacyVersion !== version)) throw stale();
     if (reason) throw new ApplicationError(reason, 'PURCHASE_ORDER_EDIT_NOT_ALLOWED', this.storage.writable() ? 409 : 503);
@@ -78,7 +78,8 @@ export class EditPurchaseOrder {
       local ? { initial: false, supplierTaxType: change?.taxType ?? local.metadata.taxType } : undefined);
     if (update) {
       const { stock, ...document } = update;
-      const changes = local ? stock.map((item) => ({ ...item, nextReceiptAt: item.pending > 0 ? base.dates.from : null })) : stock;
+      const effectiveStock = documentKind === base.documentKind ? stock : purchaseOrderStockDifference(base, document.lines, documentKind);
+      const changes = local ? effectiveStock.map((item) => ({ ...item, nextReceiptAt: item.pending > 0 ? base.dates.from : null })) : effectiveStock;
       await this.storage.save({ id, number: base.number, legacyVersion: version, revision: input.revision, ...document }, changes, change?.revision ?? 0);
     }
     const saved = await this.orders.findById(id);

@@ -3,6 +3,7 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import { excludeRemovedPurchaseOrders } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride, PurchaseOrderSupplierSearchOverride } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
+import type { PurchaseOrderKindOverride } from '../../domain/datasources/purchase-order-conversion-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type {
   PurchaseOrderNavigationDirection,
@@ -281,7 +282,7 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
 
   async search(
     criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = [], removed: PurchaseOrderIdentity[] = [],
-    supplierChanges: PurchaseOrderSupplierSearchOverride[] = [],
+    supplierChanges: PurchaseOrderSupplierSearchOverride[] = [], kindOverrides: PurchaseOrderKindOverride[] = [],
   ): Promise<PurchaseOrderSearchResult> {
     const conditions = ['PESPEDIDO IN (2, 5)'];
     const parameters: Array<string | number> = [];
@@ -315,7 +316,13 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
         : `(${originalAgent} OR (FPENC.PESEQ, PENUM) IN (${orderPairs(matching)}))`);
       parameters.push(`${criteria.agent}%`, ...[...excluded, ...matching].flatMap((order) => [order.id, order.number]));
     }
-    if (criteria.documentType !== undefined) { conditions.push('PESPEDIDO = ?'); parameters.push(criteria.documentType); }
+    if (criteria.documentType !== undefined) {
+      const changed = excludeRemovedPurchaseOrders(kindOverrides, 'FPENC');
+      const matching = kindOverrides.filter(({ documentKind }) => (documentKind === 'order' ? 2 : 5) === criteria.documentType);
+      const matches = matching.length === 0 ? '' : ` OR (FPENC.PESEQ, FPENC.PENUM) IN (${matching.map(() => '(?, ?)').join(', ')})`;
+      conditions.push(`((PESPEDIDO = ?${changed.sql})${matches})`);
+      parameters.push(criteria.documentType, ...changed.parameters, ...matching.flatMap(({ id, number }) => [id, number]));
+    }
     const exclusions = excludeRemovedPurchaseOrders(removed, 'FPENC');
     const where = conditions.join(' AND ') + exclusions.sql;
     parameters.push(...exclusions.parameters);

@@ -10,6 +10,7 @@ import type { EditPurchaseOrder } from '../../application/use-cases/edit-purchas
 import type { CreatePurchaseOrder } from '../../application/use-cases/create-purchase-order.js';
 import type { RemovePurchaseOrder } from '../../application/use-cases/remove-purchase-order.js';
 import type { ConfirmPurchaseOrder } from '../../application/use-cases/confirm-purchase-order.js';
+import type { ConvertPurchaseOrder } from '../../application/use-cases/convert-purchase-order.js';
 import type { AuthorizePurchaseOrder } from '../../application/use-cases/authorize-purchase-order.js';
 import type { PurchaseOrderSupplierChangeMode } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { purchaseOrderAuthorizationLevels } from '../../domain/entities/purchase-order-authorization.js';
@@ -43,6 +44,7 @@ const revisionSchema = z.object({
 });
 const removalSchema = revisionSchema.extend({ number: numberParamsSchema.shape.purchaseOrderNumber }).strict();
 const confirmationSchema = revisionSchema.extend({ mode: z.enum(['confirm', 'unconfirm']) }).strict();
+const conversionSchema = revisionSchema.extend({ target: z.enum(['order', 'quote']) }).strict();
 const authorizationSchema = revisionSchema.extend({
   level: z.enum(purchaseOrderAuthorizationLevels),
   direction: z.enum(['approve', 'revoke']),
@@ -113,6 +115,7 @@ export class PurchaseOrdersController {
     private readonly removeOrder: RemovePurchaseOrder,
     private readonly confirmOrder: ConfirmPurchaseOrder,
     private readonly authorizeOrder: AuthorizePurchaseOrder,
+    private readonly convertOrder: ConvertPurchaseOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -253,6 +256,20 @@ export class PurchaseOrdersController {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.set('Cache-Control', 'no-store');
       response.json({ data: await this.authorizeOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  getConversion: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.convertOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  convert: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.convertOrder.execute(purchaseOrderId, conversionSchema.parse(request.body)) });
     } catch (error) { next(error); }
   };
 

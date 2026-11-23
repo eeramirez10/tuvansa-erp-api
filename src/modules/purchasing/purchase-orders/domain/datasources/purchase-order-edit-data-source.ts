@@ -54,11 +54,13 @@ export interface PurchaseOrderEditSnapshot extends PurchaseOrderIdentity {
   lines: PurchaseOrderLine[];
   totals: PurchaseOrderProps['totals'];
   amountInWords: string | null;
+  documentKind?: 'order' | 'quote';
 }
 
 export type PurchaseOrderStockChange = {
   productId: number;
   pending: number;
+  quotes?: number;
   nextReceiptAt: string | null;
 };
 

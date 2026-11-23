@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   PurchaseOrderEditInput, PurchaseOrderEditProduct, PurchaseOrderEditRules,
 } from '../src/modules/purchasing/purchase-orders/domain/datasources/purchase-order-edit-data-source.js';
-import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions, stockAfterPurchaseOrderRemoval } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
+import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions, purchaseOrderStockDifference, stockAfterPurchaseOrderRemoval } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
 import type { PurchaseOrderLine, PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 import { assignPurchaseOrderLines } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-confirmation.js';
 
@@ -65,6 +65,25 @@ describe('purchase order confirmation', () => {
     const reversed = assignPurchaseOrderLines(update!.lines, [first, oversupplied], 'unconfirm');
     expect(reversed?.lines.every((line) => line.assigned === 0 && !line.confirmed)).toBe(true);
     expect(reversed?.assigned).toBe(0);
+  });
+});
+
+describe('purchase order quote conversion', () => {
+  it('transfers only the signed balance between pending orders and quotes, including partially received lines', () => {
+    const lines = [
+      first,
+      { ...first, id: 21, ordered: 3, fulfilled: 4 },
+      { ...first, id: 22, productId: 11, ordered: 7, fulfilled: 7 },
+    ];
+    const order = { ...base, lines };
+    expect(purchaseOrderStockDifference(order, lines, 'quote')).toEqual([
+      { productId: 10, pending: -9, quotes: 9, nextReceiptAt: null },
+      { productId: 11, pending: 0, quotes: 0, nextReceiptAt: null },
+    ]);
+    expect(purchaseOrderStockDifference({ ...order, documentKind: 'quote' }, lines, 'order')[0]).toEqual(
+      { productId: 10, pending: 9, quotes: -9, nextReceiptAt: null },
+    );
+    expect(purchaseOrderStockDifference(order, lines, 'order')[0]?.pending).toBe(0);
   });
 });
 

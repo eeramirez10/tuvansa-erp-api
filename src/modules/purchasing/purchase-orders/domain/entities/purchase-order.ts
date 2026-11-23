@@ -81,7 +81,10 @@ export class PurchaseOrder {
     return PurchaseOrder.create({ ...this.props, supplier, ...(parameter === null ? {} : { supplierParameter: parameter }) });
   }
 
-  withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'>, includeLines: boolean): PurchaseOrder {
-    return PurchaseOrder.create({ ...this.props, totals: edit.totals, lines: includeLines ? edit.lines : [] });
+  withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'> & Partial<Pick<PurchaseOrderProps, 'documentKind'>>, includeLines: boolean): PurchaseOrder {
+    return PurchaseOrder.create({
+      ...this.props, documentKind: edit.documentKind ?? this.props.documentKind,
+      totals: edit.totals, lines: includeLines ? edit.lines : [],
+    });
   }
 }

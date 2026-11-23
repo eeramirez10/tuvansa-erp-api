@@ -31,20 +31,20 @@ export class AuthorizePurchaseOrder {
       this.classifications.find([id]),
       this.storage.findSupplierChanges([id]),
     ]);
-    const { base, rules, stored, version } = order;
+    const { base, documentKind, rules, stored, version } = order;
     const classification = classifications.find(({ number }) => number === base.number);
     const status = (classification?.current ?? base.classifications)[8] ?? '';
     const sourceReason = rules.companyId !== rules.activeCompanyId ? 'La orden pertenece a otra compañía.'
       : stored && stored.legacyVersion !== version ? 'La orden de origen cambió después de la edición en PostgreSQL.' : '';
     const supplierChange = supplierChanges.find(({ number }) => number === base.number);
     return {
-      base, version, status, sourceReason, supplier: supplierChange?.supplier ?? base.supplier,
+      base, documentKind, version, status, sourceReason, supplier: supplierChange?.supplier ?? base.supplier,
       supplierRevision: supplierChange?.revision ?? 0, revision: stored?.revision ?? 0, classificationRevision: classification?.revision ?? 0,
     };
   }
 
-  private authorizationReason({ base, sourceReason }: Awaited<ReturnType<AuthorizePurchaseOrder['context']>>) {
-    if (base.documentKind !== 'order') return 'La autorización está disponible para órdenes de compra.';
+  private authorizationReason({ documentKind, sourceReason }: Awaited<ReturnType<AuthorizePurchaseOrder['context']>>) {
+    if (documentKind !== 'order') return 'La autorización está disponible para órdenes de compra.';
     return sourceReason || (!this.storage.writable() ? 'La autorización de órdenes requiere PostgreSQL.' : '');
   }
 

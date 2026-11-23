@@ -8,13 +8,14 @@ export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProdu
     const product = await request;
     if (!product) return null;
     const details = product.toPrimitives();
-    const { pending, confirmed } = await purchaseOrderInventoryAdjustment(details.id);
-    if (pending === 0 && confirmed === 0) return product;
+    const { pending, confirmed, quotes } = await purchaseOrderInventoryAdjustment(details.id);
+    if (pending === 0 && confirmed === 0 && quotes === 0) return product;
     return Product.create({
       ...details,
       accumulated: {
         ...details.accumulated,
         supplierOrders: Number((details.accumulated.supplierOrders + pending).toFixed(2)),
+        supplierQuotes: Number((details.accumulated.supplierQuotes + quotes).toFixed(2)),
         confirmed: Number((details.accumulated.confirmed + confirmed).toFixed(3)),
       },
     });

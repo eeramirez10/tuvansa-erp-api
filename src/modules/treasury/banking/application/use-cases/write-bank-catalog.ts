@@ -8,17 +8,16 @@ import type {
 import type { BankAccount } from '../../domain/entities/bank-account.js';
 import {
   bankCatalogCurrencies, bankCatalogDefaults, bankCatalogEditableFields, bankCatalogFields, bankCatalogNatures,
-  bankCatalogSystemTypes, projectBankCatalog, type BankCatalogFields,
+  bankCatalogSystemTypes, projectBankCatalog, type BankCatalogFields, type BankCatalogInput,
 } from '../../domain/entities/bank-catalog.js';
 
 const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', dateStyle: 'short' });
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const invalid = (message: string) => new ApplicationError(message, 'INVALID_BANK_CATALOG', 422);
-const readOnlyControls = ['subAccounts', 'movements', 'nextCheckNumber', 'nextDepositNumber', 'nextTransferNumber'] as const;
-const accountingIdentityFields = new Set(['nature', 'systemType', 'currencyId', 'control.company', 'control.multiCompany']);
+const readOnlyControls = ['subAccounts', 'movements'] as const;
 const occupied = 'La cuenta tiene subcuentas, movimientos o saldos y no puede darse de baja.';
 
-function normalize(fields: BankCatalogFields): BankCatalogFields {
+function normalize<T extends BankCatalogInput>(fields: T): T {
   return { ...fields, control: { ...fields.control, customerNumber: fields.control.customerNumber.replace(/^0+(?=\d)/, '') || '0' } };
 }
 
@@ -29,11 +28,6 @@ function checkFields(fields: BankCatalogFields) {
     throw invalid('Selecciona una moneda, naturaleza y tipo disponibles.');
   }
   if (fields.control.manager.toUpperCase() === 'T') throw invalid('La clave de gerente T está reservada para el catálogo heredado.');
-}
-
-function changesAccountingIdentity(fields: BankCatalogFields, current: BankCatalogFields): boolean {
-  return fields.nature !== current.nature || fields.systemType !== current.systemType || fields.currencyId !== current.currencyId
-    || fields.control.company !== current.control.company || fields.control.multiCompany !== current.control.multiCompany;
 }
 
 export class WriteBankCatalog {
@@ -64,8 +58,10 @@ export class WriteBankCatalog {
     const children = catalog ? await catalog.hasChildren(code) : false;
     const account = projectBankCatalog(legacy, snapshot, children);
     if (!account) throw new NotFoundError('Cuenta bancaria');
+    const fields = bankCatalogFields(account);
+    fields.control.movements ||= Boolean(catalog && await catalog.hasPostings(id, code));
     return {
-      account, fields: bankCatalogFields(account), legacy, snapshotRevision: snapshot?.revision ?? 0,
+      account, fields, legacy, snapshotRevision: snapshot?.revision ?? 0,
       createdOn: snapshot?.createdOn ?? account.toPrimitives().createdAt ?? localDate.format(this.clock()),
     };
   }
@@ -97,27 +93,24 @@ export class WriteBankCatalog {
 
   async getEdit(id: number) {
     const [rules, state] = await Promise.all([
-      this.references.rules(), this.storage.read(null, async (catalog) => {
-        const current = await this.effective(id, catalog);
-        return { current, hasPostings: await catalog.hasPostings(id, current.fields.code) };
-      }),
+      this.references.rules(), this.storage.read(null, (catalog) => this.effective(id, catalog)),
     ]);
-    const current = state?.current ?? await this.effective(id);
+    const current = state ?? await this.effective(id);
     const reason = this.disabled(rules);
-    const hasMovements = current.fields.control.movements || state?.hasPostings
-      || (current.legacy !== null && await this.references.hasMovements(id));
-    const deleteReason = reason ?? await this.disabledRemoval(current.account, current.legacy !== null, Boolean(hasMovements));
+    const deleteReason = reason ?? await this.disabledRemoval(current.account, current.legacy !== null, current.fields.control.movements);
     return {
       fields: current.fields, options: this.options(rules), canWrite: !reason, reason,
       revision: digest({ revision: current.snapshotRevision, fields: current.fields, rules }),
-      editableFields: hasMovements ? bankCatalogEditableFields.filter((field) => !accountingIdentityFields.has(field)) : bankCatalogEditableFields,
+      editableFields: bankCatalogEditableFields,
       canDelete: !deleteReason, deleteReason,
     };
   }
 
-  async create(requestKey: string, input: BankCatalogFields) {
-    const fields = normalize({ ...input, currencyId: input.currencyId || 1 });
-    const fingerprint = digest(fields);
+  async create(requestKey: string, input: BankCatalogInput) {
+    const defaults = bankCatalogDefaults();
+    const normalized = normalize({ ...input, currencyId: input.currencyId || 1 });
+    const fields = { ...normalized, fiscalReports: normalized.fiscalReports ?? defaults.fiscalReports };
+    const fingerprint = digest(normalized);
     return this.storage.write(async (catalog) => {
       const saved = await catalog.findByRequest(requestKey, fingerprint);
       if (saved?.archived) throw new ConflictError('La cuenta de esta solicitud ya se dio de baja.', 'BANK_CATALOG_ARCHIVED');
@@ -126,9 +119,8 @@ export class WriteBankCatalog {
       const rules = await this.references.rules();
       this.assertWritable(rules);
       checkFields(fields);
-      const defaults = bankCatalogDefaults();
       if (readOnlyControls.some((key) => fields.control[key] !== defaults.control[key])) {
-        throw invalid('Los consecutivos y las marcas de movimientos o subcuentas se generan en el sistema.');
+        throw invalid('Las marcas de movimientos y subcuentas se determinan en el sistema.');
       }
       const level = rules.codeLengths.indexOf(fields.code.length);
       if (level < 0 || !/^\d+$/.test(fields.code)) {
@@ -154,8 +146,7 @@ export class WriteBankCatalog {
     });
   }
 
-  async update(id: number, revision: string, input: BankCatalogFields) {
-    const fields = normalize(input);
+  async update(id: number, revision: string, input: BankCatalogInput) {
     return this.storage.write(async (catalog) => {
       await catalog.lockAccount(id);
       const [rules, current] = await Promise.all([this.references.rules(), this.effective(id, catalog)]);
@@ -163,14 +154,11 @@ export class WriteBankCatalog {
       if (revision !== digest({ revision: current.snapshotRevision, fields: current.fields, rules })) {
         throw new ConflictError('La cuenta cambió. Vuelve a abrir Cambio.', 'BANK_CATALOG_CHANGED');
       }
+      const fields = normalize({ ...input, fiscalReports: input.fiscalReports ?? current.fields.fiscalReports });
       checkFields(fields);
       if (fields.code !== current.fields.code) throw invalid('El código contable queda fijo en Cambio.');
       if (readOnlyControls.some((key) => fields.control[key] !== current.fields.control[key])) {
-        throw invalid('Los consecutivos y las marcas de movimientos o subcuentas se generan en el sistema.');
-      }
-      if (changesAccountingIdentity(fields, current.fields) && (current.fields.control.movements
-        || await catalog.hasPostings(id, fields.code) || (current.legacy !== null && await this.references.hasMovements(id)))) {
-        throw invalid('La naturaleza, tipo, moneda y empresa quedan fijos en una cuenta con movimientos.');
+        throw invalid('Las marcas de movimientos y subcuentas se determinan en el sistema.');
       }
       const snapshot = await catalog.update({
         id, legacy: current.legacy !== null, fields, revision: current.snapshotRevision, createdOn: current.createdOn,
@@ -188,7 +176,7 @@ export class WriteBankCatalog {
       if (revision !== digest({ revision: current.snapshotRevision, fields: current.fields, rules })) {
         throw new ConflictError('La cuenta cambió. Vuelve a abrirla para darla de baja.', 'BANK_CATALOG_CHANGED');
       }
-      const blocked = await this.disabledRemoval(current.account, current.legacy !== null, await catalog.hasPostings(id, current.fields.code));
+      const blocked = await this.disabledRemoval(current.account, current.legacy !== null, current.fields.control.movements);
       if (blocked) throw new ConflictError(blocked, 'BANK_CATALOG_ACCOUNT_IN_USE');
       await catalog.archive({
         id, legacy: current.legacy !== null, fields: current.fields, revision: current.snapshotRevision, createdOn: current.createdOn,

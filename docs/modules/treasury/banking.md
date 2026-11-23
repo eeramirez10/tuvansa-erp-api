@@ -45,6 +45,22 @@ El módulo sigue Clean Architecture. Los contratos están en `domain/datasources
 
 Los endpoints de esta sección son relativos a `/api/treasury/bank-accounts`. Las capturas `bank-full-04-alta-key.png` y `bank-full-05-cambio.png` identifican las fichas nativas. El indicador `Movs` representa la existencia de movimientos (`MBANCO/466`).
 
+En **Alta** y **Cambio** se habilita la ficha de Bancos y el panel lateral
+**Acciones** muestra **OK** y **Cancelar**. Alta enfoca Código y presenta saldos
+vacíos. Cambio conserva el código de la cuenta y enfoca Familia. En
+`bank-inline-alta-toggled.png` y `bank-inline-edit-toggled.png` se verificó la
+edición de Control, No poder utilizar en pólizas, Presupuestable, Depósitos,
+Pagos, los indicadores fiscales y las opciones de ajuste por inflación.
+`bank-inline-edit-serials.png` muestra los tres consecutivos editables.
+Sub ctas, Movs y los saldos son de consulta.
+
+La propiedad `fields.fiscalReports` agrupa `annualInflationAdjustment`
+(`BFISCALINFLA`, de 0 a 2), `deductibleIetu` (`BDEDUCIETU`) y
+`nonDeductibleVat` (`BNODEDUCIIVA`). Alta usa sus valores predeterminados
+si faltan. Cambio conserva el valor actual cuando un cliente anterior omite
+esa propiedad. El catálogo web persiste esos valores y los consecutivos en
+`bank_catalog_accounts`.
+
 ## Acciones capturadas
 
 | Botón visible | Endpoint GET | SQL/origen |

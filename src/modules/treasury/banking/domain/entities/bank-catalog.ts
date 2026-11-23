@@ -1,13 +1,17 @@
 import { BankAccount, type BankAccountProps } from './bank-account.js';
 
 export type BankCatalogFields = Pick<BankAccountProps,
-  'code' | 'family' | 'accountNumber' | 'branch' | 'name' | 'nature' | 'systemType' | 'control' | 'prorationPercentages'
+  'code' | 'family' | 'accountNumber' | 'branch' | 'name' | 'nature' | 'systemType' | 'control' | 'prorationPercentages' | 'fiscalReports'
 > & { currencyId: number };
+
+export type BankCatalogInput = Omit<BankCatalogFields, 'fiscalReports'> & {
+  fiscalReports?: BankCatalogFields['fiscalReports'] | undefined;
+};
 
 export interface BankCatalogSnapshot {
   id: number;
   legacy: boolean;
-  fields: BankCatalogFields;
+  fields: BankCatalogInput;
   revision: number;
   createdOn: string;
   archived?: boolean;
@@ -20,11 +24,11 @@ export const bankCatalogNatures = [
   { id: 'debtor', name: 'Deudora' }, { id: 'creditor', name: 'Acreedora' },
 ] as const;
 export const bankCatalogSystemTypes = [
-  { id: 'bank', name: 'Banco' }, { id: 'expense', name: 'Gastos' }, { id: 'other', name: 'Otro' },
+  { id: 'bank', name: 'Banco' }, { id: 'expense', name: 'Gasto' }, { id: 'other', name: 'Otro' },
 ] as const;
 
 const editableControl = [
-  'manager', 'phone', 'customerNumber', 'controlEnabled', 'preventJournalEntries',
+  'manager', 'phone', 'customerNumber', 'controlEnabled', 'nextCheckNumber', 'nextDepositNumber', 'nextTransferNumber', 'preventJournalEntries',
   'format', 'budgetable', 'company', 'deposits', 'payments', 'multiCompany',
 ] as const satisfies readonly (keyof BankCatalogFields['control'])[];
 
@@ -32,7 +36,10 @@ export const bankCatalogEditableFields = [
   'family', 'accountNumber', 'branch', 'name', 'nature', 'systemType', 'currencyId',
   ...editableControl.map((field) => `control.${field}`),
   'prorationPercentages.sales', 'prorationPercentages.inventory', 'prorationPercentages.distribution', 'prorationPercentages.advance',
+  'fiscalReports.annualInflationAdjustment', 'fiscalReports.deductibleIetu', 'fiscalReports.nonDeductibleVat',
 ];
+
+const defaultFiscalReports = { annualInflationAdjustment: 0, deductibleIetu: false, nonDeductibleVat: false };
 
 export function bankCatalogDefaults(): BankCatalogFields {
   return {
@@ -43,12 +50,13 @@ export function bankCatalogDefaults(): BankCatalogFields {
       budgetable: false, company: 0, deposits: false, payments: false, multiCompany: 0,
     },
     prorationPercentages: { sales: 0, inventory: 0, distribution: 0, advance: 0 },
+    fiscalReports: { ...defaultFiscalReports },
   };
 }
 
 export function bankCatalogFields(account: BankAccount): BankCatalogFields {
-  const { code, family, accountNumber, branch, name, nature, systemType, currency, control, prorationPercentages } = account.toPrimitives();
-  return { code, family, accountNumber, branch, name, nature, systemType, currencyId: currency.id, control, prorationPercentages };
+  const { code, family, accountNumber, branch, name, nature, systemType, currency, control, prorationPercentages, fiscalReports } = account.toPrimitives();
+  return { code, family, accountNumber, branch, name, nature, systemType, currencyId: currency.id, control, prorationPercentages, fiscalReports };
 }
 
 function localBase(snapshot: BankCatalogSnapshot): BankAccountProps {
@@ -59,7 +67,7 @@ function localBase(snapshot: BankCatalogSnapshot): BankAccountProps {
     currency: { id: currencyId, name: currencyId === 2 ? 'DOLARES' : 'PESOS' },
     balances: { current: 0, bank: 0, previous: 0, inTransit: 0 },
     currencyBalances: { current: 0, month12: 0, previous: 0 },
-    fiscalReports: { annualInflationAdjustment: 0, deductibleIetu: false, nonDeductibleVat: false },
+    fiscalReports: fields.fiscalReports ?? { ...defaultFiscalReports },
     ledger: { firstPeriod: months(), secondPeriod: months() },
   };
 }
@@ -76,6 +84,7 @@ export function projectBankCatalog(
   const currencyId = stored?.currencyId ?? baseline.currency.id;
   return BankAccount.create({
     ...baseline,
+    fiscalReports: stored?.fiscalReports ?? baseline.fiscalReports,
     ...(stored ? {
       code: stored.code, family: stored.family, accountNumber: stored.accountNumber, branch: stored.branch, name: stored.name,
       nature: stored.nature, systemType: stored.systemType, prorationPercentages: stored.prorationPercentages,
@@ -85,9 +94,12 @@ export function projectBankCatalog(
       ...baseline.control, ...stored?.control,
       subAccounts: baseline.control.subAccounts || hasLocalChildren,
       movements: baseline.control.movements,
-      nextCheckNumber: baseline.control.nextCheckNumber,
-      nextDepositNumber: baseline.control.nextDepositNumber,
-      nextTransferNumber: baseline.control.nextTransferNumber,
+      // Las fichas guardadas antes de poder editar consecutivos conservan los contadores de origen.
+      ...(stored?.fiscalReports === undefined ? {
+        nextCheckNumber: baseline.control.nextCheckNumber,
+        nextDepositNumber: baseline.control.nextDepositNumber,
+        nextTransferNumber: baseline.control.nextTransferNumber,
+      } : {}),
     },
   });
 }

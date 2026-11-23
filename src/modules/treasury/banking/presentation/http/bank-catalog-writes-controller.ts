@@ -35,6 +35,11 @@ const fields = z.strictObject({
     multiCompany: short,
   }),
   prorationPercentages: z.strictObject({ sales: percent, inventory: percent, distribution: percent, advance: percent }),
+  fiscalReports: z.strictObject({
+    annualInflationAdjustment: z.int().min(0).max(2),
+    deductibleIetu: z.boolean(),
+    nonDeductibleVat: z.boolean(),
+  }).optional(),
 });
 const createInput = z.strictObject({ requestKey: z.uuid(), fields });
 const updateInput = z.strictObject({ revision: z.string().regex(/^[0-9a-f]{64}$/), fields });

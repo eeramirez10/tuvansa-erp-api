@@ -14,6 +14,7 @@ export type PurchaseOrderCreateDefaults = {
   periodStart: string | null;
   periodEnd: string | null;
   warehouse: string;
+  selectWarehouse: boolean;
   taxPercentage: number;
   discountLocked: boolean;
   maxLines: number;
@@ -21,6 +22,8 @@ export type PurchaseOrderCreateDefaults = {
   exchangeRates: number[];
   taxRates: number[];
 };
+
+export type PurchaseOrderWarehouse = { code: string; description: string };
 
 export type PurchaseOrderSupplier = {
   supplier: PurchaseOrderProps['supplier'];
@@ -75,7 +78,7 @@ export type NewPurchaseOrder = {
 export interface PurchaseOrderCreateLegacyDataSource extends Pick<PurchaseOrderEditLegacyDataSource, 'findProducts' | 'searchProducts'> {
   creationDefaults(): Promise<PurchaseOrderCreateDefaults | null>;
   creationSuppliers(query: string, exact?: boolean): Promise<PurchaseOrderSupplier[]>;
-  hasWarehouse(code: string): Promise<boolean>;
+  creationWarehouses(): Promise<PurchaseOrderWarehouse[]>;
   hasPurchaseAgent(code: string): Promise<boolean>;
 }
 

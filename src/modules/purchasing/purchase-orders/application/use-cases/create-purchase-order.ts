@@ -2,13 +2,19 @@ import { createHash } from 'node:crypto';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type {
-  PurchaseOrderCreateInput, PurchaseOrderCreateLegacyDataSource, PurchaseOrderCreateStorage,
+  PurchaseOrderCreateDefaults, PurchaseOrderCreateInput, PurchaseOrderCreateLegacyDataSource, PurchaseOrderCreateStorage, PurchaseOrderWarehouse,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import { buildPurchaseOrderEdit, productEditOptions } from '../../domain/entities/purchase-order-edit.js';
 import type { PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrdersRepository } from '../../domain/repositories/purchase-orders-repository.js';
 
 const invalid = (message: string) => new ApplicationError(message, 'INVALID_PURCHASE_ORDER', 422);
+
+function warehouseSelection(defaults: PurchaseOrderCreateDefaults, options: PurchaseOrderWarehouse[]) {
+  const preferred = options.find(({ code }) => code === defaults.warehouse) ?? options[0];
+  const warehouses = defaults.selectWarehouse ? options : preferred ? [preferred] : [];
+  return { warehouse: preferred?.code ?? '', warehouses, selectWarehouse: warehouses.length > 1 };
+}
 
 export class CreatePurchaseOrder {
   constructor(
@@ -24,8 +30,12 @@ export class CreatePurchaseOrder {
   }
 
   async get() {
-    const { movement, today, from, dueAt, warehouse, taxPercentage, discountLocked, maxLines } = await this.defaults();
-    return { movement, today, from, dueAt, warehouse, taxPercentage, discountLocked, maxLines, canWrite: this.storage.writable() };
+    const [defaults, warehouses] = await Promise.all([this.defaults(), this.legacy.creationWarehouses()]);
+    const { movement, today, from, dueAt, taxPercentage, discountLocked, maxLines } = defaults;
+    return {
+      movement, today, from, dueAt, taxPercentage, discountLocked, maxLines, canWrite: this.storage.writable(),
+      ...warehouseSelection(defaults, warehouses),
+    };
   }
 
   private async supplier(code: string) {
@@ -56,15 +66,17 @@ export class CreatePurchaseOrder {
     const existing = await this.storage.findLocalRequest(input.requestKey, fingerprint);
     if (existing) return this.readSaved(existing.id);
 
-    const [defaults, supplier, validWarehouse] = await Promise.all([
-      this.defaults(), this.supplier(input.supplierCode), this.legacy.hasWarehouse(input.warehouse),
+    const [defaults, supplier, warehouses] = await Promise.all([
+      this.defaults(), this.supplier(input.supplierCode), this.legacy.creationWarehouses(),
     ]);
     const { orderedAt, from, dueAt } = input;
     if ((defaults.periodStart && orderedAt < defaults.periodStart) || (defaults.periodEnd && orderedAt > defaults.periodEnd)) {
       throw invalid('La fecha de la orden está fuera del periodo de captura.');
     }
     if (orderedAt > from || from > dueAt) throw invalid('Las fechas deben estar en orden: Fecha, Desde y Vence.');
-    if (!validWarehouse) throw invalid('El almacén no existe.');
+    if (!warehouseSelection(defaults, warehouses).warehouses.some(({ code }) => code === input.warehouse)) {
+      throw invalid('El almacén no está habilitado para el alta de órdenes de compra.');
+    }
     if (input.lines.some((line) => line.id !== null || line.quantity < 0)) {
       throw invalid('Cada partida nueva requiere una cantidad positiva y un producto del catálogo.');
     }

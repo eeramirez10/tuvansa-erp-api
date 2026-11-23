@@ -14,6 +14,7 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Flecha anterior | `GET /:purchaseOrderId/previous` | Orden por `PENUM` |
 | Flecha siguiente | `GET /:purchaseOrderId/next` | Orden por `PENUM` |
 | Hoja / Nueva orden de compra | `GET /create` | Movimiento O en `FTIPMV`, periodo y reglas de `FCIA` |
+| Nueva orden de compra / Almacén | `GET /create` | Catálogo `FALMCAT`, consulta derivada de `EALM#1/240` |
 | Nueva orden de compra / Proveedor | `GET /create/suppliers?q=...` | Proveedores activos de `FPRV` |
 | Nueva orden de compra / Producto | `GET /create/products?supplierCode=...&q=...` | `FINV`, `FUNIDAD` y condiciones de compra del proveedor |
 | Nueva orden de compra / OK | `POST /` | Alta transaccional en PostgreSQL |
@@ -143,6 +144,10 @@ Las reglas de guardado provienen del código exportado. El recorrido de Omnis fu
 
 `EOC#1/420` calcula el precio sugerido a partir de `ILISTA5` o `ILISTA6` y los descuentos del proveedor. `403` convierte cantidad y precio a la unidad de almacenamiento. `406` lleva únicamente partidas de cantidad positiva a `MBASE/121`, incluida la captura de **Pzas.**, y actualiza fecha prevista y pendiente de proveedor. El subtotal, descuentos, IEPS, cargos e IVA se derivan de las fórmulas de `EOC#1` y `MBASE/122`.
 
-La ventana web adapta el movimiento O de TUVANSA y usa almacén 01 como valor inicial. El folio web se asigna al guardar con una secuencia propia, formato `OW00000001`. El **OK** guarda encabezado, partidas, totales, importe en letra y pendiente en una sola transacción. La orden se puede consultar por identificador o folio, localizar en la búsqueda y editar con control de revisión. La clave UUID de la petición permite reintentar el mismo guardado sin duplicar la orden.
+La ventana web adapta el movimiento O de TUVANSA. El folio web se asigna al guardar con una secuencia propia, formato `OW00000001`. El **OK** guarda encabezado, partidas, totales, importe en letra y pendiente en una sola transacción. La orden se puede consultar por identificador o folio, localizar en la búsqueda y editar con control de revisión. La clave UUID de la petición permite reintentar el mismo guardado sin duplicar la orden.
 
-Los catálogos y la configuración se leen de MySQL. El flujo y las fórmulas se leyeron en la biblioteca de Omnis 7. La conexión nativa devolvió un error al abrir el alta durante este contraste. El alta web, su borrador y su persistencia se verifican en PostgreSQL de pruebas. La captura posterior de comentarios de `MOCOM/50` y las variantes automáticas de otros alias de empresa quedan pendientes.
+**Almacén** se abre antes de la captura si `CIACOMPORTA[37]` está habilitado y hay más de una opción, como en `EALM#1/100` y `/241`. Al cancelar el selector se aplica el almacén predeterminado. El encabezado muestra el almacén seleccionado para el borrador y `POST /` valida el código contra los mismos almacenes.
+
+`EALM#1/240` usa `FALMCAT.CATALM` y `CATDESCR`, filtrados por tipo, compañía y sesión. La consulta web es **derivada** de ese código. Para el perfil inicial de México replica la lista observada en Omnis (`01, 11, 12, 13, 97, 99`), dentro de la compañía activa y los almacenes compartidos. La API usa el alcance configurado en `PURCHASE_ORDER_WAREHOUSES` en vez de una sesión de Omnis. El primer código configurado es el predeterminado si está en el catálogo. Para otra compañía sin un alcance configurado sólo se consultan almacenes de catálogo sin restricción por usuario.
+
+Los catálogos y la configuración se leen de MySQL. El flujo y las fórmulas se leyeron en la biblioteca de Omnis 7. El selector de almacenes se contrastó en ejecución y con el formato exportado `EALM#1`. El alta web, su borrador y su persistencia se verifican en PostgreSQL de pruebas. La captura posterior de comentarios de `MOCOM/50` y las variantes automáticas de otros alias de empresa quedan pendientes.

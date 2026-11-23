@@ -85,6 +85,7 @@ Content-Type: application/json
 }
 
 ### Hoja: abrir Nueva orden de compra
+# Devuelve almacén predeterminado, lista de almacenes y si se debe abrir el selector.
 GET {{baseUrl}}/purchasing/purchase-orders/create
 
 ### Nueva orden: proveedor por código o nombre
@@ -94,7 +95,8 @@ GET {{baseUrl}}/purchasing/purchase-orders/create/suppliers?q={{creationSupplier
 GET {{baseUrl}}/purchasing/purchase-orders/create/products?supplierCode={{creationSupplier}}&q=01300958
 
 ### Nueva orden: OK (crea una orden en PostgreSQL de pruebas)
-# Usa las fechas del GET /create. Cambia el UUID para cada alta y consérvalo al reintentarlo.
+# Usa las fechas y un código de la lista de almacenes del GET /create.
+# Cambia el UUID para cada alta y consérvalo al reintentarlo.
 POST {{baseUrl}}/purchasing/purchase-orders
 Content-Type: application/json
 

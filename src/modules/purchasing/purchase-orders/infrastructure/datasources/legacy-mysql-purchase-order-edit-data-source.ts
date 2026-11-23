@@ -5,7 +5,7 @@ import type {
   PurchaseOrderEditLegacyDataSource, PurchaseOrderEditProduct, PurchaseOrderEditRules,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type {
-  PurchaseOrderCreateDefaults, PurchaseOrderCreateLegacyDataSource, PurchaseOrderSupplier,
+  PurchaseOrderCreateDefaults, PurchaseOrderCreateLegacyDataSource, PurchaseOrderSupplier, PurchaseOrderWarehouse,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { LegacyMysqlPurchaseOrdersDataSource } from './legacy-mysql-purchase-orders-data-source.js';
 
@@ -27,12 +27,13 @@ type UnitRow = RowDataPacket & { code: string; type: number; equivalence: number
 
 const currencies = Array.from({ length: 10 }, (_, index) => `FCIA.CIAPDD${index}`).join(', ');
 const exchangeRates = Array.from({ length: 10 }, (_, index) => `FCIA.CIATIP${index}`).join(', ');
-const purchaseOrderWarehouse = '01';
+const company = env.PURCHASE_ORDER_EDIT_COMPANY_ID;
+const warehouseCodes = env.PURCHASE_ORDER_WAREHOUSES ?? (company === 1 ? ['01', '11', '12', '13', '97', '99'] : []);
 const mexicoDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
 
 type DefaultsRow = RowDataPacket & {
   movement: string; alias: string; periodStart: string | null; periodEnd: string | null; maxLines: number;
-  discountLocked: number; tax0: number; tax1: number; tax2: number;
+  discountLocked: number; selectWarehouse: number; warehouse: string; tax0: number; tax1: number; tax2: number;
 };
 type SupplierRow = RulesRow & {
   id: number; code: string; name: string; terms: number; taxType: number;
@@ -93,7 +94,8 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
       `SELECT TIDESCR AS movement, TILARGO AS maxLines, CIAALIAS AS alias,
         NULLIF(CIAFI, '1900-12-31') AS periodStart, NULLIF(CIAFF, '1900-12-31') AS periodEnd,
         TIIVA0 AS tax0, TIIVA1 AS tax1, TIIVA2 AS tax2,
-        SUBSTRING(CIACOMPORTA, 95, 1) = '1' AS discountLocked, ${exchangeRates},
+        SUBSTRING(CIACOMPORTA, 95, 1) = '1' AS discountLocked,
+        SUBSTRING(CIACOMPORTA, 37, 1) = '1' AS selectWarehouse, CIAALM AS warehouse, ${exchangeRates},
         TICOML1, TICOML2, TICOML3, TICOML4, TICOML5
        FROM FTIPMV JOIN FCIA ON FCIA.CIASEQ=1
        WHERE TICLA='O' AND (TIMODULO=6 OR SUBSTRING(CIACOMPORTA, 76, 1)<>'1')
@@ -105,7 +107,9 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     const dueAt = new Date(`${today}T00:00:00Z`);
     if (row.alias === 'STYLO') dueAt.setUTCDate(dueAt.getUTCDate() + 30);
     return {
-      today, from: today, dueAt: dueAt.toISOString().slice(0, 10), warehouse: purchaseOrderWarehouse,
+      today, from: today, dueAt: dueAt.toISOString().slice(0, 10),
+      warehouse: warehouseCodes[0] ?? row.warehouse,
+      selectWarehouse: Boolean(row.selectWarehouse),
       movement: row.movement,
       periodStart: row.periodStart, periodEnd: row.periodEnd, maxLines: Number(row.maxLines),
       taxPercentage: Number(row.tax0), taxRates: [row.tax0, row.tax1, row.tax2].map(Number),
@@ -143,9 +147,21 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     }));
   }
 
-  async hasWarehouse(code: string): Promise<boolean> {
-    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>('SELECT 1 AS found FROM FALM WHERE ALMNUM=? LIMIT 1', [code]);
-    return rows.length > 0;
+  async creationWarehouses(): Promise<PurchaseOrderWarehouse[]> {
+    // EALM#1/240 filtra con el usuario de Omnis. La API usa el alcance de captura configurado.
+    const scope = warehouseCodes.length > 0
+      ? `CATALM IN (${warehouseCodes.map(() => '?').join(', ')})`
+      : "CATUSUARIOS=''";
+    const [rows] = await legacyMysqlPool.execute<(RowDataPacket & PurchaseOrderWarehouse)[]>(
+      `SELECT CATALM AS code, CATDESCR AS description FROM FALMCAT
+       WHERE CATTIPO='' AND CATMULTICIA IN (0, ?) AND CATALM<>'' AND ${scope}
+       ORDER BY CATALM, CATSEQ`, [company, ...warehouseCodes],
+    );
+    const warehouses = new Map<string, PurchaseOrderWarehouse>();
+    for (const { code, description } of rows) {
+      if (!warehouses.has(code)) warehouses.set(code, { code, description });
+    }
+    return [...warehouses.values()];
   }
 
   async hasPurchaseAgent(code: string): Promise<boolean> {

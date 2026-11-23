@@ -29,6 +29,8 @@ const envSchema = z.object({
   // Optional: without Neon, the API stays available for legacy reads only.
   NEON_DATABASE_URL: z.string().trim().default(''),
   PURCHASE_ORDER_EDIT_COMPANY_ID: z.coerce.number().int().min(1).max(255).default(1),
+  PURCHASE_ORDER_WAREHOUSES: z.string().trim().transform((value) => value.split(',').map((code) => code.trim().toUpperCase()))
+    .pipe(z.array(z.string().regex(/^[A-Z0-9]{1,10}$/))).optional(),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
   INVENTORY_CLASSIFICATION_PILOT_PRODUCTS: productPilots,
   INVENTORY_OTHER_DATA_PILOT_PRODUCTS: productPilots,

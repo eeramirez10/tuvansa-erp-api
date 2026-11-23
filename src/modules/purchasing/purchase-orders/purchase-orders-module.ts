@@ -10,6 +10,7 @@ import { CreatePurchaseOrder } from './application/use-cases/create-purchase-ord
 import { RemovePurchaseOrder } from './application/use-cases/remove-purchase-order.js';
 import { ConfirmPurchaseOrder } from './application/use-cases/confirm-purchase-order.js';
 import { ConvertPurchaseOrder } from './application/use-cases/convert-purchase-order.js';
+import { EditPurchaseOrderComments } from './application/use-cases/edit-purchase-order-comments.js';
 import { AuthorizePurchaseOrder } from './application/use-cases/authorize-purchase-order.js';
 import { MysqlPurchaseOrderAuthorizationAccess } from './infrastructure/datasources/mysql-purchase-order-authorization-access.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from './infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
@@ -41,6 +42,7 @@ export const createPurchaseOrdersModule = (): Router => {
     new ConfirmPurchaseOrder(capture, edits, edits, repository),
     new AuthorizePurchaseOrder(capture, edits, edits, classifications, repository, new MysqlPurchaseOrderAuthorizationAccess()),
     new ConvertPurchaseOrder(capture, edits, edits, repository),
+    new EditPurchaseOrderComments(capture, edits, edits, repository),
   );
   return createPurchaseOrdersRouter(controller);
 };

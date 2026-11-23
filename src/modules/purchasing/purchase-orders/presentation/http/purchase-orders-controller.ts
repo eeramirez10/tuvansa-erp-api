@@ -11,6 +11,7 @@ import type { CreatePurchaseOrder } from '../../application/use-cases/create-pur
 import type { RemovePurchaseOrder } from '../../application/use-cases/remove-purchase-order.js';
 import type { ConfirmPurchaseOrder } from '../../application/use-cases/confirm-purchase-order.js';
 import type { ConvertPurchaseOrder } from '../../application/use-cases/convert-purchase-order.js';
+import type { EditPurchaseOrderComments } from '../../application/use-cases/edit-purchase-order-comments.js';
 import type { AuthorizePurchaseOrder } from '../../application/use-cases/authorize-purchase-order.js';
 import type { PurchaseOrderSupplierChangeMode } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { purchaseOrderAuthorizationLevels } from '../../domain/entities/purchase-order-authorization.js';
@@ -45,6 +46,25 @@ const revisionSchema = z.object({
 const removalSchema = revisionSchema.extend({ number: numberParamsSchema.shape.purchaseOrderNumber }).strict();
 const confirmationSchema = revisionSchema.extend({ mode: z.enum(['confirm', 'unconfirm']) }).strict();
 const conversionSchema = revisionSchema.extend({ target: z.enum(['order', 'quote']) }).strict();
+const commentsSchema = revisionSchema.extend({
+  fields: z.strictObject({
+    from: z.iso.date().nullable(),
+    dueAt: z.iso.date().nullable(),
+    terms: z.int().min(0).max(999),
+    supplierOrderNumber: z.string().max(36).toUpperCase(),
+    department: z.string().max(11).toUpperCase(),
+    discountPercentages: z.tuple([scaledNumber(2), scaledNumber(2), scaledNumber(2)]),
+    exchangeRate: scaledNumber(8),
+    warehouse: z.string().max(6).toUpperCase(),
+    currencyId: z.int().min(0).max(9),
+    lines: z.tuple([z.string().max(100), z.string().max(100), z.string().max(100), z.string().max(140), z.string().max(3000)]),
+    otherLabel: z.string().max(10),
+    freight: scaledNumber(2),
+    insurance: scaledNumber(2),
+    other: scaledNumber(2),
+    confirmedAt: z.iso.date().nullable(),
+  }),
+}).strict();
 const authorizationSchema = revisionSchema.extend({
   level: z.enum(purchaseOrderAuthorizationLevels),
   direction: z.enum(['approve', 'revoke']),
@@ -116,6 +136,7 @@ export class PurchaseOrdersController {
     private readonly confirmOrder: ConfirmPurchaseOrder,
     private readonly authorizeOrder: AuthorizePurchaseOrder,
     private readonly convertOrder: ConvertPurchaseOrder,
+    private readonly editComments: EditPurchaseOrderComments,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -270,6 +291,20 @@ export class PurchaseOrdersController {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json({ data: await this.convertOrder.execute(purchaseOrderId, conversionSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getCommentsEditor: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.editComments.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  saveComments: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.editComments.execute(purchaseOrderId, commentsSchema.parse(request.body)) });
     } catch (error) { next(error); }
   };
 

@@ -15,6 +15,7 @@ import {
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
 import type { PurchaseOrderConversionStorage, PurchaseOrderKindOverride } from '../../domain/datasources/purchase-order-conversion-data-source.js';
+import type { PurchaseOrderCommentsStorage, PurchaseOrderCommentSearchOverride } from '../../domain/datasources/purchase-order-comments-data-source.js';
 import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
 import type { PurchaseOrderAuthorizationEvent, PurchaseOrderAuthorizationInput, PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeMode, PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierChoice } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
@@ -141,7 +142,7 @@ type Stored = {
   number: string;
   revision: number;
   legacyVersion: string;
-  document: Pick<PurchaseOrderEditSnapshot, 'lines' | 'totals' | 'amountInWords' | 'documentKind'>;
+  document: Pick<PurchaseOrderEditSnapshot, 'lines' | 'totals' | 'amountInWords' | 'documentKind' | 'comments'>;
 };
 
 type LocalRow = { id: string; number: string; fingerprint: string; header: NewPurchaseOrder['header']; metadata: PurchaseOrderLocalMetadata };
@@ -149,7 +150,8 @@ const asOrder = ({ id, number, header }: LocalRow) => PurchaseOrder.create({ ...
 const requestConflict = () => new ConflictError('La clave de alta ya se usó para una orden con otros datos.', 'PURCHASE_ORDER_REQUEST_CONFLICT');
 
 export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage,
-  PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage, PurchaseOrderSupplierChangeStorage, PurchaseOrderConversionStorage {
+  PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage, PurchaseOrderSupplierChangeStorage,
+  PurchaseOrderConversionStorage, PurchaseOrderCommentsStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -242,6 +244,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       const values: unknown[] = [];
       const param = (value: unknown) => `$${values.push(value)}`;
       const conditions: string[] = [];
+      const supplierOrderNumber = "COALESCE(edit.document#>>'{comments,fields,supplierOrderNumber}', header->>'supplierOrderNumber')";
       if (criteria.documentType !== undefined) {
         const kind = criteria.documentType === 2 ? 'order' : 'quote';
         conditions.push(`COALESCE(edit.document->>'documentKind', header->>'documentKind') = ${param(kind)}`);
@@ -252,13 +255,14 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       if (orderNumber !== undefined) conditions.push(`number ILIKE ${param(orderNumber + '%')}`);
       if (criteria.query !== undefined) {
         const variable = param('%' + criteria.query + '%');
-        conditions.push(`(number ILIKE ${variable} OR header->>'supplierOrderNumber' ILIKE ${variable}
+        conditions.push(`(number ILIKE ${variable} OR ${supplierOrderNumber} ILIKE ${variable}
           OR header#>>'{supplier,code}' ILIKE ${variable} OR header#>>'{supplier,name}' ILIKE ${variable})`);
       }
-      if (criteria.supplierOrderNumber !== undefined) conditions.push(`header->>'supplierOrderNumber' ILIKE ${param(criteria.supplierOrderNumber + '%')}`);
+      if (criteria.supplierOrderNumber !== undefined) conditions.push(`${supplierOrderNumber} ILIKE ${param(criteria.supplierOrderNumber + '%')}`);
       if (criteria.supplierCode !== undefined) conditions.push(`header#>>'{supplier,code}' ILIKE ${param(criteria.supplierCode + '%')}`);
       if (criteria.orderedAt !== undefined) conditions.push(`header#>>'{dates,orderedAt}' = ${param(criteria.orderedAt)}`);
-      if (criteria.dueAt !== undefined) conditions.push(`header#>>'{dates,dueAt}' = ${param(criteria.dueAt)}`);
+      if (criteria.dueAt !== undefined) conditions.push(`(CASE WHEN edit.document ? 'comments' THEN edit.document#>>'{comments,fields,dueAt}'
+        ELSE header#>>'{dates,dueAt}' END) = ${param(criteria.dueAt)}`);
       if (criteria.agent !== undefined) {
         const isOriginal = `header#>>'{classifications,0}' ILIKE ${param(criteria.agent + '%')}`;
         const withoutOverrides = excluded.length === 0 ? isOriginal
@@ -343,6 +347,17 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     });
   }
 
+  findCommentOverrides(): Promise<PurchaseOrderCommentSearchOverride[]> {
+    return this.readLocal<PurchaseOrderCommentSearchOverride[]>([], async (client) => {
+      const { rows } = await client.query<Omit<PurchaseOrderCommentSearchOverride, 'id'> & { id: string }>(
+        `SELECT order_id AS id, order_number AS number, document#>>'{comments,fields,dueAt}' AS "dueAt",
+          document#>>'{comments,fields,supplierOrderNumber}' AS "supplierOrderNumber"
+         FROM tuvansa.purchase_order_edits WHERE document ? 'comments'`,
+      );
+      return rows.map(({ id, ...row }) => ({ ...row, id: Number(id) }));
+    });
+  }
+
   async remove(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<void> {
     const { id, number, revision, legacyVersion, lines, totals, amountInWords } = snapshot;
     await this.transaction(async (client) => {
@@ -381,6 +396,12 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     await this.transaction(async (client) => {
       await this.saveRevision(client, snapshot, 'conversion');
       await this.saveStock(client, snapshot.id, snapshot.number, stock, true);
+    });
+  }
+
+  async saveComments(snapshot: PurchaseOrderEditSnapshot): Promise<void> {
+    await this.transaction(async (client) => {
+      await this.saveRevision(client, snapshot, 'comments');
     });
   }
 
@@ -495,11 +516,11 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   }
 
   private async saveRevision(
-    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation' | 'conversion', supplierRevision?: number,
+    client: PostgresClient, snapshot: PurchaseOrderEditSnapshot, operation: 'edit' | 'confirmation' | 'conversion' | 'comments', supplierRevision?: number,
   ) {
     await lockPurchaseOrderWrite(client, snapshot.id);
     await assertActivePurchaseOrder(client, snapshot);
-    const { id, number, legacyVersion, revision, lines, totals, amountInWords, documentKind } = snapshot;
+    const { id, number, legacyVersion, revision, lines, totals, amountInWords, documentKind, comments } = snapshot;
     if (supplierRevision !== undefined) {
       const { rows: [change] } = await client.query<{ revision: number }>(
         `SELECT revision FROM tuvansa.purchase_order_supplier_changes
@@ -509,7 +530,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
         throw new ConflictError('La orden cambió desde que abriste el editor. Vuelve a abrirlo.', 'PURCHASE_ORDER_EDIT_STALE');
       }
     }
-    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords, documentKind })];
+    const values = [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords, documentKind, comments })];
     const result = revision === 0
       ? await client.query<{ revision: number }>(
         `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
@@ -525,6 +546,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
         edit: ['Otra sesión cambió la orden. Vuelve a abrir el editor.', 'PURCHASE_ORDER_EDIT_STALE'],
         confirmation: ['La orden cambió. Vuelve a abrir la confirmación.', 'PURCHASE_ORDER_CONFIRMATION_STALE'],
         conversion: ['El documento cambió. Vuelve a abrir Cotiz.', 'PURCHASE_ORDER_CONVERSION_STALE'],
+        comments: ['La orden cambió. Vuelve a abrir Comentarios.', 'PURCHASE_ORDER_COMMENTS_STALE'],
       } as const;
       const [message, code] = errors[operation];
       throw new ConflictError(message, code);

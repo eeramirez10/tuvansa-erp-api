@@ -8,6 +8,7 @@ import type {
 import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions, purchaseOrderStockDifference } from '../../domain/entities/purchase-order-edit.js';
+import { applyPurchaseOrderCommentFields } from '../../domain/entities/purchase-order-comments.js';
 import type { PurchaseOrdersRepository } from '../../domain/repositories/purchase-orders-repository.js';
 import { loadPurchaseOrderWriteContext } from './load-purchase-order-write-context.js';
 
@@ -34,9 +35,11 @@ export class EditPurchaseOrder {
       reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
     } else if (lines.some((line) => line.assigned !== 0)) reason = 'Desconfirma las partidas antes de editar la orden.';
     else if (!this.storage.writable()) reason = 'El guardado de órdenes requiere PostgreSQL.';
+    const effectiveRules = stored?.comments
+      ? { ...rules, currencyId: stored.comments.fields.currencyId, currencyName: stored.comments.currencyName } : rules;
     return {
       ...context, reason, change,
-      rules: change ? { ...rules, supplierCode: change.supplier.code, supplierDiscounts: change.supplierDiscounts } : rules,
+      rules: change ? { ...effectiveRules, supplierCode: change.supplier.code, supplierDiscounts: change.supplierDiscounts } : effectiveRules,
       editVersion: change ? createHash('sha256').update(`${version}/supplier/${change.revision}`).digest('hex') : version,
     };
   }
@@ -74,12 +77,13 @@ export class EditPurchaseOrder {
 
     const codes = [...new Set(input.lines.map((line) => line.productCode).filter(Boolean))];
     const products = await this.legacy.findProducts(codes, rules.supplierUnits);
-    const update = buildPurchaseOrderEdit(base, lines, input, rules, products,
+    const header = stored?.comments ? applyPurchaseOrderCommentFields(base, stored.comments.fields) : base;
+    const update = buildPurchaseOrderEdit(header, lines, input, rules, products,
       local ? { initial: false, supplierTaxType: change?.taxType ?? local.metadata.taxType } : undefined);
     if (update) {
       const { stock, ...document } = update;
       const effectiveStock = documentKind === base.documentKind ? stock : purchaseOrderStockDifference(base, document.lines, documentKind);
-      const changes = local ? effectiveStock.map((item) => ({ ...item, nextReceiptAt: item.pending > 0 ? base.dates.from : null })) : effectiveStock;
+      const changes = local ? effectiveStock.map((item) => ({ ...item, nextReceiptAt: item.pending > 0 ? header.dates.from : null })) : effectiveStock;
       await this.storage.save({ id, number: base.number, legacyVersion: version, revision: input.revision, ...document }, changes, change?.revision ?? 0);
     }
     const saved = await this.orders.findById(id);

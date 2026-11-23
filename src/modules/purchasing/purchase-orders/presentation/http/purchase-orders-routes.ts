@@ -25,6 +25,8 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.get('/:purchaseOrderId/actions/change-supplier', controller.getSupplierAction);
   router.patch('/:purchaseOrderId/actions/change-supplier', controller.changeSupplier('action'));
   router.get('/:purchaseOrderId/actions/comments', controller.panel('comments'));
+  router.get('/:purchaseOrderId/actions/comments/editor', controller.getCommentsEditor);
+  router.patch('/:purchaseOrderId/actions/comments', controller.saveComments);
   router.get('/:purchaseOrderId/actions/ct', controller.panel('ct'));
   router.get('/:purchaseOrderId/actions/pieces', controller.panel('pieces'));
   router.get('/:purchaseOrderId/edit', controller.getEditor);

@@ -1,5 +1,6 @@
 import type { PurchaseOrder, PurchaseOrderLine, PurchaseOrderProps } from '../entities/purchase-order.js';
 import type { PurchaseOrderIdentity } from '../repositories/purchase-orders-repository.js';
+import type { PurchaseOrderCommentsSnapshot } from '../entities/purchase-order-comments.js';
 
 export interface PurchaseOrderEditRules {
   companyId: number;
@@ -55,6 +56,7 @@ export interface PurchaseOrderEditSnapshot extends PurchaseOrderIdentity {
   totals: PurchaseOrderProps['totals'];
   amountInWords: string | null;
   documentKind?: 'order' | 'quote';
+  comments?: PurchaseOrderCommentsSnapshot;
 }
 
 export type PurchaseOrderStockChange = {

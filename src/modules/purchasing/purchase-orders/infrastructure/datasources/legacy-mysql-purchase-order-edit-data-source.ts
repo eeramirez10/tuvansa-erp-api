@@ -68,6 +68,15 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
 
   findById(id: number) { return this.orders.findById(id); }
 
+  readComments(id: number) { return this.orders.getPanel(id, 'comments'); }
+
+  async commentCurrencyName(id: number): Promise<string> {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { currency: string | null }>>(
+      `SELECT ELT(? + 1, ${currencies}) AS currency FROM FCIA WHERE CIASEQ=1`, [id],
+    );
+    return rows[0]?.currency ?? '';
+  }
+
   async rules(id: number): Promise<PurchaseOrderEditRules | null> {
     const [rows] = await legacyMysqlPool.execute<RulesRow[]>(
       `SELECT PEMULTICIA AS companyId,

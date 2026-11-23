@@ -127,14 +127,21 @@ export function buildPurchaseOrderEdit(
   if (seen.size !== current.length) throw invalidLine('Faltan partidas de la orden. Para retirar una partida borra su código.');
   if (!changed) return null;
 
+  const discountFactor = base.discountPercentages.reduce((factor, value) => factor * (1 - value / 100), 1);
+  const productFor = (line: PurchaseOrderLine) => byCode.get(line.productCode.trim().toUpperCase());
+  const exciseTax = !capture ? base.totals.exciseTax : capture.supplierTaxType === 2 ? 0 : round(lines.reduce((total, line) => {
+    const rate = productFor(line)?.exciseTaxPercentage ?? 0;
+    return total + line.ordered * line.price * (1 - line.discount / 100) * rate / 100;
+  }, 0) * discountFactor, 2);
+  const totalized = totalizePurchaseOrder({ ...base, totals: { ...base.totals, exciseTax } }, lines, (line) => Boolean(productFor(line)?.taxable));
+  return { lines, ...totalized, stock: purchaseOrderStockDifference(base, lines) };
+}
+
+export function totalizePurchaseOrder(
+  base: PurchaseOrderProps, lines: PurchaseOrderLine[], taxable: (line: PurchaseOrderLine) => boolean,
+) {
   const totals = { ...base.totals, assigned: 0, ordered: 0, fulfilled: 0, remaining: 0, subtotal: 0, discount: 0, tax: 0, total: 0 };
   const discountFactor = base.discountPercentages.reduce((factor, value) => factor * (1 - value / 100), 1);
-  if (capture) {
-    totals.exciseTax = capture.supplierTaxType === 2 ? 0 : round(lines.reduce((total, line) => {
-      const rate = byCode.get(line.productCode.trim().toUpperCase())?.exciseTaxPercentage ?? 0;
-      return total + line.ordered * line.price * (1 - line.discount / 100) * rate / 100;
-    }, 0) * discountFactor, 2);
-  }
   const charges = totals.exciseTax + totals.freight + totals.insurance + totals.other;
   const taxRate = base.taxPercentage / 100;
   totals.tax = round(charges * taxRate, 2);
@@ -144,7 +151,7 @@ export function buildPurchaseOrderEdit(
     totals.assigned = round(totals.assigned + line.assigned, 3);
     const net = line.ordered * line.price * (1 - line.discount / 100);
     totals.subtotal = round(totals.subtotal + net, 2);
-    if (byCode.get(line.productCode.trim().toUpperCase())?.taxable) totals.tax = round(totals.tax + net * discountFactor * taxRate, 2);
+    if (taxable(line)) totals.tax = round(totals.tax + net * discountFactor * taxRate, 2);
   }
   totals.remaining = round(totals.ordered - totals.fulfilled, 3);
   totals.discount = round(totals.subtotal * (1 - discountFactor), 2);
@@ -152,7 +159,7 @@ export function buildPurchaseOrderEdit(
   if (!Number.isSafeInteger(Math.round(totals.total * 100))) throw invalidLine('El total excede el rango de importes admitido.');
   const totalInWords = (totals.total < 0 ? 'MENOS ' : '') + amountInWords(Math.abs(totals.total));
 
-  return { lines, totals, amountInWords: totalInWords, stock: purchaseOrderStockDifference(base, lines) };
+  return { totals, amountInWords: totalInWords };
 }
 
 export function purchaseOrderStockDifference(

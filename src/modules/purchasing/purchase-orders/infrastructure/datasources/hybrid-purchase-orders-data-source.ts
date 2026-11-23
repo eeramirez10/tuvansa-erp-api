@@ -2,6 +2,8 @@ import type { LegacyPurchaseOrdersDataSource, PurchaseOrderClassificationStorage
 import type { PurchaseOrderEditStorage } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderConversionStorage } from '../../domain/datasources/purchase-order-conversion-data-source.js';
+import type { PurchaseOrderCommentsStorage } from '../../domain/datasources/purchase-order-comments-data-source.js';
+import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
@@ -30,7 +32,8 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     private readonly dataSource: LegacyPurchaseOrdersDataSource,
     private readonly classificationStorage: PurchaseOrderClassificationStorage,
     private readonly editStorage: PurchaseOrderEditStorage & Pick<PurchaseOrderAuthorizationStorage, 'findAuthorizationEvents'> &
-      Pick<PurchaseOrderSupplierChangeStorage, 'findSupplierChanges'> & Pick<PurchaseOrderConversionStorage, 'findKindOverrides'>,
+      Pick<PurchaseOrderSupplierChangeStorage, 'findSupplierChanges'> & Pick<PurchaseOrderConversionStorage, 'findKindOverrides'> &
+      Pick<PurchaseOrderCommentsStorage, 'findCommentOverrides'>,
     private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
@@ -76,11 +79,13 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   }
 
   async search(criteria: PurchaseOrderSearchCriteria): Promise<PurchaseOrderSearchResult> {
-    const [agents, removed, supplierChanges, kinds] = await Promise.all([
+    const [agents, removed, supplierChanges, kinds, comments] = await Promise.all([
       criteria.agent === undefined ? undefined : this.classificationStorage.agentOverrides(criteria.agent),
       this.editStorage.findRemoved(),
       criteria.query === undefined && criteria.supplierCode === undefined ? [] : this.editStorage.findSupplierChanges(),
       criteria.documentType === undefined ? [] : this.editStorage.findKindOverrides(),
+      criteria.query === undefined && criteria.dueAt === undefined && criteria.supplierOrderNumber === undefined
+        ? [] : this.editStorage.findCommentOverrides(),
     ]);
     const query = normalizeSearch(criteria.query ?? '');
     const code = normalizeSearch(criteria.supplierCode ?? '');
@@ -90,16 +95,17 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
       codeMatches: normalizeSearch(supplier.code).startsWith(code),
     }));
     const legacyKinds = kinds.filter(({ id }) => !isLocalPurchaseOrderId(id));
+    const legacyComments = comments.filter(({ id }) => !isLocalPurchaseOrderId(id));
     const local = await this.creation.searchLocal(criteria,
       agents?.filter((order) => !order.matches) ?? [], agents?.filter((order) => order.matches) ?? [], removed);
     if (local.total === 0) {
-      const result = await this.dataSource.search(criteria, agents, removed, supplierFilters, legacyKinds);
+      const result = await this.dataSource.search(criteria, agents, removed, supplierFilters, legacyKinds, legacyComments);
       return { ...result, items: await this.withChanges(result.items, false) };
     }
     const legacyOffset = Math.max(0, criteria.offset - local.total);
     const offset = criteria.offset - legacyOffset;
     const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit },
-      agents, removed, supplierFilters, legacyKinds);
+      agents, removed, supplierFilters, legacyKinds, legacyComments);
     const items = [...legacy.items, ...local.items].sort(sortOrders).slice(offset, offset + criteria.limit);
     return { items: await this.withChanges(items, false), total: legacy.total + local.total };
   }
@@ -141,7 +147,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
           terms: metadata.terms, currencyId: metadata.rules.currencyId, currencyName: metadata.rules.currencyName,
           exchangeRate: metadata.exchangeRate, onAccount: metadata.onAccount, labels: metadata.labels, createdAt: metadata.createdAt,
         },
-      });
+      }, edit);
     }
     if (key !== 'comments' && key !== 'ct') return this.dataSource.getPanel(id, key);
     const edits = await this.editStorage.find([id]);
@@ -149,27 +155,46 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     if (!panel) return null;
     const edit = edits.find((item) => item.number === panel.purchaseOrder.number);
     if (key === 'ct') return edit ? { ...panel, source: 'mysql+postgres' } : panel;
-    if (!edit) return this.withAuthorizationComments(panel);
-    const items = [...panel.items];
-    if (typeof edit.amountInWords === 'string') items[0] = { ...items[0], amountInWords: edit.amountInWords };
-    return this.withAuthorizationComments({
-      ...panel, source: 'mysql+postgres', items, summary: { ...panel.summary, totals: edit.totals, lines: edit.lines },
-    });
+    return this.withAuthorizationComments(panel, edit);
   }
 
-  private async withAuthorizationComments(panel: PurchaseOrderPanelResult): Promise<PurchaseOrderPanelResult> {
+  private async withAuthorizationComments(panel: PurchaseOrderPanelResult, edit?: PurchaseOrderEditSnapshot): Promise<PurchaseOrderPanelResult> {
     const [events, changes] = await Promise.all([
       this.editStorage.findAuthorizationEvents(panel.purchaseOrder),
       this.editStorage.findSupplierChanges([panel.purchaseOrder.id]),
     ]);
     const change = changes.find(({ number }) => number === panel.purchaseOrder.number);
-    if (events.length === 0 && !change) return panel;
+    if (events.length === 0 && !change && !edit) return panel;
     const items = [...panel.items];
+    const summary = { ...panel.summary };
+    if (edit) {
+      summary.totals = edit.totals;
+      summary.lines = edit.lines;
+      if (typeof edit.amountInWords === 'string') items[0] = { ...items[0], amountInWords: edit.amountInWords };
+    }
+    if (edit?.comments) {
+      const { fields, currencyName } = edit.comments;
+      const [comments, line2, line3, line4, line5] = fields.lines;
+      items[0] = { ...items[0], comments, line2, line3, line4, line5 };
+      summary.terms = fields.terms;
+      summary.exchangeRate = fields.exchangeRate;
+      summary.currencyId = fields.currencyId;
+      summary.currencyName = currencyName;
+      summary.supplierOrderNumber = fields.supplierOrderNumber;
+      summary.department = fields.department;
+      summary.warehouse = fields.warehouse;
+      summary.otherLabel = fields.otherLabel;
+      summary.dates = { ...(summary.dates as object | undefined), from: fields.from, dueAt: fields.dueAt };
+      summary.discountPercentages = fields.discountPercentages;
+    }
     const initialLine = String(items[0]?.line4 ?? '');
     const notes = events.map(({ level, direction, actorId, occurredAt }) =>
       `, ${direction === 'revoke' ? '-' : ''}${level} usr:${actorId} ${authorizationDate.format(new Date(occurredAt))}`);
-    if (notes.length > 0) items[0] = { ...items[0], line4: initialLine + notes.join('') };
-    const summary = { ...panel.summary };
+    if (notes.length > 0) {
+      const history = notes.join('');
+      items[0] = { ...items[0], line4: initialLine + history };
+      summary.authorizationHistory = history.replace(/^, /, '');
+    }
     if (change) {
       summary.supplier = change.supplier;
       if (change.supplierParameter !== null) summary.supplierParameter = change.supplierParameter;
@@ -177,7 +202,12 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     const levelD = events.findLast(({ level }) => level === 'D');
     if (levelD) summary.authorizedBy = levelD.direction === 'approve' ? levelD.actorId : 0;
     const levelC = events.findLast(({ level, direction }) => level === 'C' && direction === 'approve');
-    if (levelC) summary.modifiedAt = authorizationDateTime.format(new Date(levelC.occurredAt));
+    const manual = edit?.comments?.manualConfirmation;
+    if (levelC && (!manual || Date.parse(levelC.occurredAt) >= Date.parse(manual.changedAt))) {
+      summary.modifiedAt = authorizationDateTime.format(new Date(levelC.occurredAt));
+    } else if (manual) {
+      summary.modifiedAt = manual.date;
+    }
     return { ...panel, items, summary, source: panel.source === 'mysql' ? 'mysql+postgres' : panel.source };
   }
 

@@ -36,7 +36,7 @@ El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor
 |---|---|---|
 | Auxiliar | `GET /:id/actions/auxiliar` | `FDOC`, `DREFER=PENUM`, `DEST=0`, `DMULTICIA=1` |
 | Clasificar | `GET /:id/actions/classifications` | Valores de `PEPAR1..PEPAR9` y PostgreSQL cuando existe una revisión local. Opciones `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)`, orden `AGNUM`. `MBASE/91` lee los rótulos de `FYG.YGKEY='ABITITPAR2'`, con respaldo de `FCIA.CIAPAR1..9` si falta esa entrada. |
-| Comentarios | `GET /:id/actions/comments` | `FCOMENT`, `COMSEQFACT=10000000+PESEQ`. Lectura adaptada según `EOC#6` para el encabezado y `FTIPMV.TICOML1..5` para los rótulos. |
+| Comentarios | `GET /:id/actions/comments`, `GET /:id/actions/comments/editor`, `PATCH /:id/actions/comments` | `FCOMENT`, `COMSEQFACT=10000000+PESEQ`. Lectura adaptada según `EOC#6` y `FTIPMV.TICOML1..5`. Guardado derivado en PostgreSQL. |
 | CT | `GET /:id/actions/ct` | Consulta derivada de `EOC#6AA/240–241`. `FPLIN` por `PESEQ`, raíz y color según `FCIA`, tallas de producto raíz en `FUNIDAD`. Devuelve Pedido, Surtido y Resta por raíz y por celda. |
 | Piezas | `GET /:id/actions/pieces` | Consulta derivada de `EOC#18/240`. `FCAJAS.CAJFACTURA=PENUM`, producto de `FINV` y suma de `CAJCANT`. |
 
@@ -46,9 +46,29 @@ El buscador reproduce los campos observados: **Pedido, Ped. Proveedor, Proveedor
 
 La persistencia derivada usa `tuvansa.purchase_order_classifications` en el PostgreSQL configurado por `NEON_DATABASE_URL`. La tabla se crea mediante migración al guardar por primera vez. Los GET conservan MySQL como fuente de catálogo y partidas y aplican los nueve valores locales donde hay una revisión guardada, incluida la búsqueda por Agente. MySQL permanece en lectura.
 
-**Comentarios** es de consulta. Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas se conservan deshabilitados.
+Los controles **Cambio** de CT y **Confirmar** e **Imprimir** de Piezas siguen pendientes de migración.
 
 La verificación web cubrió acceso directo, menú, buscador, flechas y apertura de los cinco paneles. En Neon de pruebas se guardaron dos revisiones desde el flujo de Clasificar y se comprobó la consulta posterior, la búsqueda por agente y el rechazo de una revisión obsoleta. Se retiró el registro de prueba de PostgreSQL y se verificó el valor original en MySQL. La lectura de Piezas con filas y la cuadrícula de CT con tallas configuradas también se verifican con pruebas de datos simulados.
+
+## Edición de Comentarios
+
+`EOC#2/6 → /421 → EOC#6` prepara las modificaciones de `FCOMENT` y `FPENC`.
+Los rótulos de COML1 a COML5 provienen de `FTIPMV`. Las capturas exportadas
+`20261120-EOC6-FIELDS-PROCEDURES` y `20261120-MBASE-122-OC` documentan los
+campos y el recálculo.
+
+**OK** envía `{revision, legacyVersion, fields}` y guarda en la revisión de la
+orden en PostgreSQL. **Cancelar** descarta el borrador. Los cambios de
+descuentos y cargos recalculan los totales y el importe con letra con
+`MBASE/122–123` como referencia. Se conserva el IEPS guardado. La fecha
+manual de confirmación y la bitácora de autorización conservan su precedencia
+por fecha de escritura. Las firmas se proyectan aparte del texto editable
+COML4. El buscador incorpora el número del proveedor y el vencimiento efectivos.
+
+Chrome y Neon verificaron el guardado y la cancelación, el total y el importe
+con letra, la búsqueda, la revisión obsoleta, un guardado idéntico y la
+conservación de los cambios tras editar partidas. Se retiró la orden de prueba
+y se verificaron los acumulados iniciales.
 
 ## Cotiz y Gen %
 

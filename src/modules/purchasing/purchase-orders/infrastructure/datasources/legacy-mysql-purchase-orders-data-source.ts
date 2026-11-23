@@ -4,6 +4,7 @@ import { excludeRemovedPurchaseOrders } from '../../../../../shared/infrastructu
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride, PurchaseOrderSupplierSearchOverride } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderKindOverride } from '../../domain/datasources/purchase-order-conversion-data-source.js';
+import type { PurchaseOrderCommentSearchOverride } from '../../domain/datasources/purchase-order-comments-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type {
   PurchaseOrderNavigationDirection,
@@ -283,27 +284,38 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
   async search(
     criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = [], removed: PurchaseOrderIdentity[] = [],
     supplierChanges: PurchaseOrderSupplierSearchOverride[] = [], kindOverrides: PurchaseOrderKindOverride[] = [],
+    commentOverrides: PurchaseOrderCommentSearchOverride[] = [],
   ): Promise<PurchaseOrderSearchResult> {
     const conditions = ['PESPEDIDO IN (2, 5)'];
     const parameters: Array<string | number> = [];
-    const supplierCondition = (original: string, values: string[], field: 'queryMatches' | 'codeMatches') => {
-      const matches = supplierChanges.filter((change) => change[field]);
-      const changed = excludeRemovedPurchaseOrders(supplierChanges, 'FPENC');
+    const overlaid = (original: string, values: (string | number)[], overrides: PurchaseOrderIdentity[], matches: PurchaseOrderIdentity[]) => {
+      const changed = excludeRemovedPurchaseOrders(overrides, 'FPENC');
       parameters.push(...values, ...changed.parameters, ...matches.flatMap(({ id, number }) => [id, number]));
       const newMatches = matches.length > 0 ? ` OR (FPENC.PESEQ, FPENC.PENUM) IN (${matches.map(() => '(?, ?)').join(', ')})` : '';
       return `((${original})${changed.sql}${newMatches})`;
     };
+    const normalize = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toUpperCase();
     if (criteria.query !== undefined) {
       const query = `%${criteria.query}%`;
-      parameters.push(query, query);
-      const supplier = supplierCondition('UPPER(PRVCOD) LIKE UPPER(?) OR UPPER(PRVNOM) LIKE UPPER(?)', [query, query], 'queryMatches');
-      conditions.push(`(UPPER(PENUM) LIKE UPPER(?) OR UPPER(PENUMELLOS) LIKE UPPER(?) OR ${supplier})`);
+      const normalized = normalize(criteria.query);
+      parameters.push(query);
+      const reference = overlaid('UPPER(PENUMELLOS) LIKE UPPER(?)', [query], commentOverrides,
+        commentOverrides.filter(({ supplierOrderNumber }) => normalize(supplierOrderNumber).includes(normalized)));
+      const supplier = overlaid('UPPER(PRVCOD) LIKE UPPER(?) OR UPPER(PRVNOM) LIKE UPPER(?)', [query, query],
+        supplierChanges, supplierChanges.filter(({ queryMatches }) => queryMatches));
+      conditions.push(`(UPPER(PENUM) LIKE UPPER(?) OR ${reference} OR ${supplier})`);
     }
     if (criteria.orderNumber !== undefined) { conditions.push('PENUM LIKE ?'); parameters.push(`${criteria.orderNumber}%`); }
-    if (criteria.supplierOrderNumber !== undefined) { conditions.push('PENUMELLOS LIKE ?'); parameters.push(`${criteria.supplierOrderNumber}%`); }
-    if (criteria.supplierCode !== undefined) conditions.push(supplierCondition('PRVCOD LIKE ?', [`${criteria.supplierCode}%`], 'codeMatches'));
+    if (criteria.supplierOrderNumber !== undefined) {
+      const normalized = normalize(criteria.supplierOrderNumber);
+      conditions.push(overlaid('PENUMELLOS LIKE ?', [`${criteria.supplierOrderNumber}%`], commentOverrides,
+        commentOverrides.filter(({ supplierOrderNumber }) => normalize(supplierOrderNumber).startsWith(normalized))));
+    }
+    if (criteria.supplierCode !== undefined) conditions.push(overlaid('PRVCOD LIKE ?', [`${criteria.supplierCode}%`],
+      supplierChanges, supplierChanges.filter(({ codeMatches }) => codeMatches)));
     if (criteria.orderedAt !== undefined) { conditions.push('PEFECHA = ?'); parameters.push(criteria.orderedAt); }
-    if (criteria.dueAt !== undefined) { conditions.push('PEVENCE = ?'); parameters.push(criteria.dueAt); }
+    if (criteria.dueAt !== undefined) conditions.push(overlaid('PEVENCE = ?', [criteria.dueAt], commentOverrides,
+      commentOverrides.filter(({ dueAt }) => dueAt === criteria.dueAt)));
     if (criteria.agent !== undefined) {
       const matching = agents.filter((order) => order.matches);
       const excluded = agents.filter((order) => !order.matches);
@@ -317,11 +329,8 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
       parameters.push(`${criteria.agent}%`, ...[...excluded, ...matching].flatMap((order) => [order.id, order.number]));
     }
     if (criteria.documentType !== undefined) {
-      const changed = excludeRemovedPurchaseOrders(kindOverrides, 'FPENC');
       const matching = kindOverrides.filter(({ documentKind }) => (documentKind === 'order' ? 2 : 5) === criteria.documentType);
-      const matches = matching.length === 0 ? '' : ` OR (FPENC.PESEQ, FPENC.PENUM) IN (${matching.map(() => '(?, ?)').join(', ')})`;
-      conditions.push(`((PESPEDIDO = ?${changed.sql})${matches})`);
-      parameters.push(criteria.documentType, ...changed.parameters, ...matching.flatMap(({ id, number }) => [id, number]));
+      conditions.push(overlaid('PESPEDIDO = ?', [criteria.documentType], kindOverrides, matching));
     }
     const exclusions = excludeRemovedPurchaseOrders(removed, 'FPENC');
     const where = conditions.join(' AND ') + exclusions.sql;

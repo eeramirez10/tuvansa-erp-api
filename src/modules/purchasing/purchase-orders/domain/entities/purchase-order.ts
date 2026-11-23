@@ -1,3 +1,5 @@
+import { applyPurchaseOrderCommentFields, type PurchaseOrderCommentsSnapshot } from './purchase-order-comments.js';
+
 export type PurchaseOrderDocumentKind = 'order' | 'quote' | 'unknown';
 
 export interface PurchaseOrderLine {
@@ -81,9 +83,11 @@ export class PurchaseOrder {
     return PurchaseOrder.create({ ...this.props, supplier, ...(parameter === null ? {} : { supplierParameter: parameter }) });
   }
 
-  withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'> & Partial<Pick<PurchaseOrderProps, 'documentKind'>>, includeLines: boolean): PurchaseOrder {
+  withEditedLines(edit: Pick<PurchaseOrderProps, 'lines' | 'totals'> &
+    Partial<Pick<PurchaseOrderProps, 'documentKind'>> & { comments?: PurchaseOrderCommentsSnapshot }, includeLines: boolean): PurchaseOrder {
+    const header = edit.comments ? applyPurchaseOrderCommentFields(this.props, edit.comments.fields) : this.props;
     return PurchaseOrder.create({
-      ...this.props, documentKind: edit.documentKind ?? this.props.documentKind,
+      ...header, documentKind: edit.documentKind ?? this.props.documentKind,
       totals: edit.totals, lines: includeLines ? edit.lines : [],
     });
   }

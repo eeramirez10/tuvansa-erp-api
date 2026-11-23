@@ -16,6 +16,9 @@
 @conversionVersion = copiar-version-del-GET-quote-conversion
 @conversionRevision = 1
 @conversionTarget = quote
+@commentsId = copiar-id-de-orden-de-prueba
+@commentsVersion = copiar-version-del-GET-comments-editor
+@commentsRevision = 1
 @authorizationId = copiar-id-de-orden-de-prueba
 @authorizationVersion = copiar-version-del-GET-authorization
 @authorizationRevision = 0
@@ -236,4 +239,33 @@ Content-Type: application/json
   "revision": {{conversionRevision}},
   "legacyVersion": "{{conversionVersion}}",
   "target": "{{conversionTarget}}"
+}
+
+### Consultar el editor de Comentarios
+GET {{baseUrl}}/purchasing/purchase-orders/{{commentsId}}/actions/comments/editor
+
+### Guardar Comentarios en una orden de prueba
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{commentsId}}/actions/comments
+Content-Type: application/json
+
+{
+  "revision": {{commentsRevision}},
+  "legacyVersion": "{{commentsVersion}}",
+  "fields": {
+    "from": "2026-11-23",
+    "dueAt": "2026-11-30",
+    "terms": 21,
+    "supplierOrderNumber": "PRUEBA",
+    "department": "COMPRAS",
+    "discountPercentages": [0, 0, 0],
+    "exchangeRate": 1,
+    "warehouse": "01",
+    "currencyId": 1,
+    "lines": ["Entrega", "", "", "", "Observaciones"],
+    "otherLabel": "",
+    "freight": 10,
+    "insurance": 0,
+    "other": 0,
+    "confirmedAt": null
+  }
 }

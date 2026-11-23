@@ -1,5 +1,9 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import type { BankAccountsDataSource } from '../../../../treasury/banking/domain/datasources/bank-accounts-data-source.js';
+import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
+import { permitsBankPosting } from '../../../../treasury/banking/domain/entities/bank-posting-role.js';
+import { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
   SupplierPaymentBank, SupplierPaymentReferences, SupplierPaymentSettings,
 } from '../../domain/datasources/supplier-payment-data-source.js';
@@ -10,11 +14,33 @@ interface ConfigurationRow extends RowDataPacket {
   supplierAccountName: string;
 }
 
-interface BankRow extends RowDataPacket, SupplierPaymentBank {}
+interface BankIdRow extends RowDataPacket { id: number }
 
 export class MysqlSupplierPaymentReferences implements SupplierPaymentReferences {
-  async settings(companyId: number, supplierId: number): Promise<SupplierPaymentSettings | null> {
-    const [[configuration], [banks]] = await Promise.all([
+  constructor(private readonly accounts: Pick<BankAccountsDataSource, 'findById'> = new BankAccountsWithCatalogDataSource()) {}
+
+  private async banks(companyId: number, selectedBankId?: number, lookup?: BankAccountLookup): Promise<SupplierPaymentBank[]> {
+    const ids = selectedBankId === undefined ? await this.nativeCandidates(companyId) : [selectedBankId];
+    const find: BankAccountLookup = lookup ?? (async (id) => (await this.accounts.findById(id))?.toPrimitives() ?? null);
+    const found = await Promise.all(ids.map(find));
+    return found.flatMap((account) => account && permitsBankPosting(account, companyId, 'payments')
+      ? [{ id: account.id, code: account.code.trim(), name: account.name.trim() }] : []);
+  }
+
+  private async nativeCandidates(companyId: number): Promise<number[]> {
+    // El permiso de pagos se lee del catálogo efectivo porque Cambio lo puede editar.
+    const [rows] = await legacyMysqlPool.execute<BankIdRow[]>(
+      `SELECT BSEQ AS id FROM FBENC
+       WHERE BTIPO = 0 AND BMOVS = 1 AND BMONEDA = 1
+         AND BCIA IN (0,?) AND BMULTICIA IN (0,?) AND TRIM(BCOD) <> ''
+       ORDER BY BCOD,BSEQ`,
+      [companyId, companyId],
+    );
+    return rows.map(({ id }) => id);
+  }
+
+  async settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup): Promise<SupplierPaymentSettings | null> {
+    const [[configuration], bankAccounts] = await Promise.all([
       legacyMysqlPool.execute<ConfigurationRow[]>(
         `SELECT TRIM(c.CIAPOLIZAEGR) AS policyType, TRIM(s.PRVCTA) AS supplierAccount, TRIM(a.BNOMBRE) AS supplierAccountName
          FROM FCIA c
@@ -33,18 +59,11 @@ export class MysqlSupplierPaymentReferences implements SupplierPaymentReferences
          ORDER BY a.BSEQ LIMIT 2`,
         [supplierId, companyId],
       ),
-      legacyMysqlPool.execute<BankRow[]>(
-        `SELECT BSEQ AS id, TRIM(BCOD) AS code, TRIM(BNOMBRE) AS name
-         FROM FBENC
-         WHERE BTIPO = 0 AND BMOVS = 1 AND BPAGOS = 1 AND BMONEDA = 1
-           AND BCIA IN (0,?) AND BMULTICIA IN (0,?) AND TRIM(BCOD) <> ''
-         ORDER BY BCOD,BSEQ`,
-        [companyId, companyId],
-      ),
+      this.banks(companyId, selectedBankId, lookup),
     ]);
     const [rules] = configuration;
     if (!rules || configuration.length !== 1) return null;
     const { policyType, supplierAccount, supplierAccountName } = rules;
-    return { policyType, supplierAccount, supplierAccountName, bankAccounts: banks.map(({ id, code, name }) => ({ id, code, name })) };
+    return { policyType, supplierAccount, supplierAccountName, bankAccounts };
   }
 }

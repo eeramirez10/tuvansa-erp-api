@@ -1,4 +1,5 @@
 import type { Router } from 'express';
+import { BankAccountsWithCatalogDataSource } from '../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import { CaptureSupplierPayment } from './application/use-cases/capture-supplier-payment.js';
 import { GetFirstSupplier } from './application/use-cases/get-first-supplier.js';
 import { GetSupplier } from './application/use-cases/get-supplier.js';
@@ -17,6 +18,7 @@ import { createSuppliersRouter } from './presentation/http/suppliers-routes.js';
 
 export const createSuppliersModule = (): Router => {
   const dataSource = new SuppliersWithPurchaseReceptionsDataSource();
+  const bankCatalog = new BankAccountsWithCatalogDataSource();
   const repository = new SuppliersRepositoryImpl(dataSource);
   const panelsRepository = new SupplierPanelsRepositoryImpl(
     new SupplierPanelsWithPurchaseReceptionsDataSource(),
@@ -28,7 +30,9 @@ export const createSuppliersModule = (): Router => {
     new NavigateSupplier(repository),
     new GetSupplierPanel(panelsRepository),
     new GetSupplierClassifications(panelsRepository),
-    new CaptureSupplierPayment(new PostgresSupplierPayments(), new MysqlSupplierPaymentReferences()),
+    new CaptureSupplierPayment(
+      new PostgresSupplierPayments(undefined, undefined, bankCatalog), new MysqlSupplierPaymentReferences(bankCatalog),
+    ),
   );
 
   return createSuppliersRouter(controller);

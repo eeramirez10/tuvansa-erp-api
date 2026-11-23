@@ -6,6 +6,7 @@ import { isLocalSupplierPaymentId } from '../../../../accounts-payable/suppliers
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
+import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
 import { AccountingPolicy, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
 import type {
@@ -30,7 +31,7 @@ interface LocalPolicyHeader {
 interface LocalPolicyRecord extends LocalPolicyHeader {
   lines: {
     account: string; department: string; debit: number; credit: number;
-    reference?: string; accountName?: string; accountId?: number; reconciled?: boolean;
+    id?: number; reference?: string; accountName?: string; accountId?: number; reconciled?: boolean;
   }[];
 }
 
@@ -72,9 +73,25 @@ const collectionLines = `jsonb_build_array(
     jsonb_build_object('account', posting.client_account, 'accountName', posting.client_account_name,
       'department', '', 'debit', 0, 'credit', posting.amount, 'reference', remission.number)
   )`;
+const transferFields = `
+    transfer.id, transfer.policy_number AS number, transfer.company_id AS company, transfer.user_id AS "userId",
+    transfer.date::text AS date, coalesce(nullif(transfer.reference,''),transfer.number) AS cheque,
+    transfer.beneficiary, ''::text AS family, transfer.description AS concept,
+    transfer.created_at AS "auditAt", 1::float8 AS "exchangeRate"`;
+const transferLines = (settlements: string) => `(
+    SELECT jsonb_agg(jsonb_build_object(
+      'id', posting.id, 'account', posting.bank_code, 'accountId', posting.bank_account_id,
+      'accountName', posting.bank_name, 'department', '',
+      'debit', greatest(posting.amount, 0), 'credit', greatest(-posting.amount, 0),
+      'reference', transfer.reference, 'reconciled', settlement.statement_date IS NOT NULL
+    ) ORDER BY posting.id)
+    FROM tuvansa.bank_transfer_movements AS posting
+    ${settlements}
+    WHERE posting.transfer_id=transfer.id AND posting.company_id=transfer.company_id
+  )`;
 const money = (amount: number) => Number(amount.toFixed(2));
 const isLocalPolicyId = (id: number) =>
-  isLocalPurchaseReceptionId(id) || isLocalSupplierPaymentId(id) || isLocalCustomerCollectionId(id);
+  isLocalPurchaseReceptionId(id) || isLocalSupplierPaymentId(id) || isLocalCustomerCollectionId(id) || isLocalBankTransferId(id);
 
 async function readLocalPolicies<T>(
   fallback: T, detail: boolean, read: (client: PostgresClient, view: string) => Promise<T>,
@@ -83,13 +100,15 @@ async function readLocalPolicies<T>(
   let client: PostgresClient | undefined;
   try {
     client = await connectPostgres();
-    const { rows: [tables] } = await client.query<{ receipts: boolean; payments: boolean; collections: boolean }>(
+    const { rows: [tables] } = await client.query<{ receipts: boolean; payments: boolean; collections: boolean; transfers: boolean }>(
       `SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS receipts,
               to_regclass('tuvansa.supplier_payments') IS NOT NULL AS payments,
-              to_regclass('tuvansa.customer_collections') IS NOT NULL AS collections`,
+              to_regclass('tuvansa.customer_collections') IS NOT NULL AS collections,
+              to_regclass('tuvansa.bank_transfers') IS NOT NULL
+                AND to_regclass('tuvansa.bank_transfer_movements') IS NOT NULL AS transfers`,
     );
     const withLines = (sql: string) => detail ? sql : "'[]'::jsonb";
-    const settlements = detail && (tables?.payments || tables?.collections)
+    const settlements = detail && (tables?.payments || tables?.collections || tables?.transfers)
       ? joinBankReconciliation(await bankReconciliationsAvailable(client)) : '';
     const views: string[] = [];
     if (tables?.receipts) views.push(
@@ -105,6 +124,10 @@ async function readLocalPolicies<T>(
       `SELECT ${collectionFields}, ${withLines(collectionLines)} AS lines FROM tuvansa.customer_collections AS posting
        JOIN tuvansa.sales_remissions AS remission ON remission.id = posting.remission_id AND remission.company_id = posting.company_id
        ${settlements} WHERE posting.company_id = 1`,
+    );
+    if (tables?.transfers) views.push(
+      `SELECT ${transferFields}, ${withLines(transferLines(settlements))} AS lines
+       FROM tuvansa.bank_transfers AS transfer WHERE transfer.company_id=1`,
     );
     return views.length ? await read(client, views.join(' UNION ALL ')) : fallback;
   } catch (error) {
@@ -144,10 +167,10 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
     const code = row.code.trim();
     if (!accounts.has(code)) accounts.set(code, row);
   }
-  return localPolicy(record, record.lines.map(({ account, accountId, accountName, department, debit, credit, reference, reconciled }, index) => {
+  return localPolicy(record, record.lines.map(({ id, account, accountId, accountName, department, debit, credit, reference, reconciled }, index) => {
     const details = accounts.get(account);
     return {
-      id: index + 1, accountId: accountId ?? details?.id ?? 0, accountCode: account, accountName: accountName ?? details?.name ?? '',
+      id: id ?? index + 1, accountId: accountId ?? details?.id ?? 0, accountCode: account, accountName: accountName ?? details?.name ?? '',
       debit, credit, reference: reference ?? '', exchangeRate: record.exchangeRate, costCenter: Number(department) || 0,
       reconciled: reconciled ?? false, accountType: details?.type ?? 0,
     };

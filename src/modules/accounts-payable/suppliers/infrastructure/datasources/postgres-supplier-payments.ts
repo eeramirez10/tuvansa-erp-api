@@ -6,6 +6,7 @@ import {
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import type { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
   SupplierPaymentCommand, SupplierPaymentDataSource, SupplierPaymentIdentity, SupplierPaymentResult, SupplierPaymentTarget,
 } from '../../domain/datasources/supplier-payment-data-source.js';
@@ -96,6 +97,7 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
   constructor(
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured: () => boolean = postgresConfigured,
+    private readonly bankCatalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>,
   ) {}
 
   writable() { return this.configured(); }
@@ -193,7 +195,11 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
     const target = await this.findTarget(client, identity, true);
     if (!target) throw new NotFoundError('Recepción local del proveedor');
     validateSupplierPayment(target, input);
-    const { bank, policyType, supplierAccount, supplierAccountName } = await resolvePosting();
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:' || $1::text || ':' || $2::text, 0))",
+      [companyId, input.bankAccountId],
+    );
+    const { bank, policyType, supplierAccount, supplierAccountName } = await resolvePosting(this.bankCatalog?.lookupOn(client));
 
     const { rows: [allocation] } = await client.query<{ id: string; sequence: number }>(
       `INSERT INTO tuvansa.supplier_payment_bank_counters(bank_account_id,mode,sequence) VALUES ($1,$2,1)

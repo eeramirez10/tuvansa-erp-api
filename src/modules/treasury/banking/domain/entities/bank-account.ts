@@ -9,6 +9,8 @@ export interface BankAccountMonthlyValues {
   budget: number;
 }
 
+export type BankAccountLookup = (id: number) => Promise<BankAccountProps | null>;
+
 export interface BankAccountProps {
   id: number;
   code: string;

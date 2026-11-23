@@ -3,12 +3,14 @@ import { readCustomerCollections } from '../../../../accounts-receivable/clients
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
 import { bankReconciliationsAvailable, joinBankReconciliation, readBankReconciliationState } from './bank-reconciliation-reads.js';
-import { LegacyMysqlBankAccountsDataSource } from './legacy-mysql-bank-accounts-data-source.js';
+import { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 import { LegacyMysqlBankPanelsDataSource } from './legacy-mysql-bank-panels-data-source.js';
+import { readBankTransfers } from './postgres-bank-transfers.js';
 
 const money = (value: number) => Number(value.toFixed(2));
+const emptyPostings = { amount: 0, hasMovements: false };
 
-export class BankAccountsWithLocalPostingsDataSource extends LegacyMysqlBankAccountsDataSource {
+export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCatalogDataSource {
   override findById(id: number) { return this.withPostings(super.findById(id)); }
   override findByCode(code: string) { return this.withPostings(super.findByCode(code)); }
 
@@ -16,25 +18,37 @@ export class BankAccountsWithLocalPostingsDataSource extends LegacyMysqlBankAcco
     const account = await source;
     if (!account) return null;
     const data = account.toPrimitives();
-    const [payments, collections, reconciled] = await Promise.all([
-      readSupplierPayments(0, async (client) => {
-        const { rows: [row] } = await client.query<{ amount: number }>(
-          'SELECT coalesce(sum(amount),0)::float8 AS amount FROM tuvansa.supplier_payments WHERE bank_account_id=$1 AND company_id=1', [data.id],
+    const [payments, collections, transfers, reconciled] = await Promise.all([
+      readSupplierPayments(emptyPostings, async (client) => {
+        const { rows: [row] } = await client.query<typeof emptyPostings>(
+          `SELECT coalesce(sum(amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements"
+           FROM tuvansa.supplier_payments WHERE bank_account_id=$1 AND company_id=1`, [data.id],
         );
-        return row?.amount ?? 0;
+        return row ?? emptyPostings;
       }),
-      readCustomerCollections(0, async (client) => {
-        const { rows: [row] } = await client.query<{ amount: number }>(
-          'SELECT coalesce(sum(amount),0)::float8 AS amount FROM tuvansa.customer_collections WHERE bank_account_id=$1 AND company_id=1', [data.id],
+      readCustomerCollections(emptyPostings, async (client) => {
+        const { rows: [row] } = await client.query<typeof emptyPostings>(
+          `SELECT coalesce(sum(amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements"
+           FROM tuvansa.customer_collections WHERE bank_account_id=$1 AND company_id=1`, [data.id],
         );
-        return row?.amount ?? 0;
+        return row ?? emptyPostings;
+      }),
+      readBankTransfers(emptyPostings, async (client) => {
+        const { rows: [row] } = await client.query<typeof emptyPostings>(
+          `SELECT coalesce(sum(amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements"
+           FROM tuvansa.bank_transfer_movements WHERE bank_account_id=$1 AND company_id=1`,
+          [data.id],
+        );
+        return row ?? emptyPostings;
       }),
       readBankReconciliationState(1, data.id),
     ]);
-    const net = money(collections - payments);
-    if (net === 0 && reconciled.delta === 0) return account;
+    const net = money(collections.amount - payments.amount + transfers.amount);
+    const movements = data.control.movements || payments.hasMovements || collections.hasMovements || transfers.hasMovements;
+    if (net === 0 && reconciled.delta === 0 && movements === data.control.movements) return account;
     return BankAccount.create({
       ...data,
+      control: { ...data.control, movements },
       balances: {
         ...data.balances,
         current: net === 0 ? data.balances.current : money(data.balances.current + net),
@@ -61,6 +75,7 @@ interface LocalBankRow {
 
 interface BankPaymentRow extends LocalBankRow { mode: 'check' | 'transfer' }
 interface BankCollectionRow extends LocalBankRow { reference: string }
+interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string }
 
 const bankRow = ({ id, number, policyNumber, date, beneficiary, description, userId, statementDate }: LocalBankRow) => ({
   movementId: Number(id), policyId: Number(id), checkNumber: number,
@@ -77,6 +92,10 @@ const collectionRow = (row: BankCollectionRow) => ({
   ...bankRow(row), bankNumber: row.reference || row.number,
   movementType: 'PC', charge: Number(row.amount), credit: 0, mode: 'deposit',
 });
+const transferRow = (row: BankTransferRow) => ({
+  ...bankRow(row), policyId: Number(row.policyId), bankNumber: row.reference || row.number, movementType: row.movementType,
+  charge: Math.max(Number(row.amount), 0), credit: Math.max(-Number(row.amount), 0), mode: 'transfer',
+});
 
 const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' || key === 'automatic-reconciliation';
 
@@ -85,12 +104,13 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const base = await super.getPanel(id, key, options);
     const keys: BankPanelKey[] = ['auxiliary', 'reconciliation', 'automatic-reconciliation', 'authorization-review', 'payments', 'deposits'];
     if (!keys.includes(key) || (!base.available && key !== 'payments' && key !== 'deposits')) return base;
-    const [payments, collections, reconciliation] = await Promise.all([
+    const [payments, collections, transfers, reconciliation] = await Promise.all([
       key === 'deposits' ? [] : this.paymentRows(id, key, options),
       key === 'payments' ? [] : this.collectionRows(id, key, options),
+      key === 'payments' || key === 'deposits' ? [] : this.transferRows(id, key, options),
       pendingReconciliation(key) ? readBankReconciliationState(1, id) : null,
     ]);
-    const local = [...payments, ...collections].sort((a, b) =>
+    const local = [...payments, ...collections, ...transfers].sort((a, b) =>
       a.policyDate.localeCompare(b.policyDate) || a.movementId - b.movementId);
     const summary = { ...base.summary };
     if (reconciliation?.lastStatementDate) summary.lastStatementDate = reconciliation.lastStatementDate;
@@ -110,8 +130,9 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const source = [...base.source];
     if (payments.length) source.push('supplier_payments');
     if (collections.length) source.push('customer_collections');
+    if (transfers.length) source.push('bank_transfers');
     const manual = key === 'reconciliation';
-    const items = [...base.items, ...local.map((row) => manual ? { ...row, canReconcile: true } : row)];
+    const items = [...base.items, ...local.map((row) => pendingReconciliation(key) ? { ...row, canReconcile: true } : row)];
     const panel = { ...base, available: true, source, readOnly: manual ? false : base.readOnly, items, summary };
     delete panel.reason;
     return panel;
@@ -159,6 +180,29 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
          ORDER BY posting.date, posting.id LIMIT 32767`, [id, start, end],
       );
       return rows.map(collectionRow);
+    });
+  }
+
+  private transferRows(id: number, key: BankPanelKey, { fiscalYear, asOfDate }: BankPanelOptions) {
+    const start = key === 'auxiliary' ? `${fiscalYear}-01-01` : null;
+    const end = key === 'automatic-reconciliation' ? asOfDate : null;
+    return readBankTransfers<ReturnType<typeof transferRow>[]>([], async (client) => {
+      const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
+      const { rows } = await client.query<BankTransferRow>(
+        `SELECT posting.id::text, transfer.id::text AS "policyId", transfer.number, transfer.policy_number AS "policyNumber",
+                transfer.date::text, posting.amount::text, transfer.description, transfer.reference,
+                transfer.user_id AS "userId", transfer.beneficiary, transfer.movement_type AS "movementType",
+                settlement.statement_date::text AS "statementDate"
+         FROM tuvansa.bank_transfer_movements AS posting
+         JOIN tuvansa.bank_transfers AS transfer ON transfer.id = posting.transfer_id AND transfer.company_id = posting.company_id
+         ${join}
+         WHERE posting.bank_account_id = $1 AND posting.company_id = 1
+           AND ($2::date IS NULL OR transfer.date >= $2) AND ($3::date IS NULL OR transfer.date <= $3)
+           ${pendingReconciliation(key) ? 'AND settlement.statement_date IS NULL' : ''}
+         ORDER BY transfer.date, posting.id LIMIT 32767`,
+        [id, start, end],
+      );
+      return rows.map(transferRow);
     });
   }
 }

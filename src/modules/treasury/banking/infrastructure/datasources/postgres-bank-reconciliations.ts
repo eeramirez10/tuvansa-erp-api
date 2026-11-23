@@ -12,6 +12,8 @@ import type {
 } from '../../domain/datasources/bank-reconciliation-data-source.js';
 import { bankCents, reconcileMovements } from '../../domain/entities/bank-reconciliation.js';
 import { bankReconciliationsAvailable, bankReconciliationState } from './bank-reconciliation-reads.js';
+import { bankTransfersAvailable, isLocalBankTransferMovementId } from './postgres-bank-transfers.js';
+import type { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 
 // Derivada: guarda el corte y relaciona el asiento bancario web con su conciliación.
 const migrations = [{
@@ -52,6 +54,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
   constructor(
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured = postgresConfigured,
+    private readonly catalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>,
   ) {}
 
   writable() { return this.configured(); }
@@ -108,7 +111,8 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
   private async pendingMovements(client: PostgresClient, companyId: number, accountId: number, ids: number[]) {
     const payments = ids.filter(isLocalSupplierPaymentId);
     const deposits = ids.filter(isLocalCustomerCollectionId);
-    if (payments.length + deposits.length !== ids.length) return [];
+    const transfers = ids.filter(isLocalBankTransferMovementId);
+    if (payments.length + deposits.length + transfers.length !== ids.length) return [];
     const movements: BankReconciliationMovement[] = [];
     if (payments.length && await supplierPaymentsAvailable(client)) {
       const { rows } = await client.query<BankReconciliationMovement>(
@@ -130,6 +134,17 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
       );
       movements.push(...rows);
     }
+    if (transfers.length && await bankTransfersAvailable(client)) {
+      const { rows } = await client.query<BankReconciliationMovement>(
+        `SELECT leg.id::float8 AS id, t.date::text, leg.amount::float8 AS amount
+         FROM tuvansa.bank_transfer_movements leg
+         JOIN tuvansa.bank_transfers t ON t.id=leg.transfer_id AND t.company_id=leg.company_id
+         WHERE leg.company_id=$1 AND leg.bank_account_id=$2 AND leg.id=ANY($3::bigint[])
+           AND NOT EXISTS (SELECT 1 FROM tuvansa.bank_reconciliation_movements m WHERE m.movement_id=leg.id)
+         FOR KEY SHARE OF leg`, [companyId, accountId, transfers],
+      );
+      movements.push(...rows);
+    }
     return movements;
   }
 
@@ -142,7 +157,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
 
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:' || $1::text || ':' || $2::text,0))",
       [companyId, bankAccountId]);
-    const opening = await command.bankOpeningBalance();
+    const opening = await command.bankOpeningBalance(this.catalog?.lookupOn(client));
     const { delta, lastStatementDate } = await bankReconciliationState(client, companyId, bankAccountId);
     const movements = await this.pendingMovements(client, companyId, bankAccountId, input.movementIds);
     if (movements.length !== input.movementIds.length) {

@@ -165,8 +165,14 @@ export class LegacyMysqlBankAccountsDataSource implements BankAccountsDataSource
   }
 
   async findFirst(): Promise<BankAccount | null> {
+    return this.findFirstExcluding([]);
+  }
+
+  async findFirstExcluding(excluded: number[]): Promise<BankAccount | null> {
+    const filter = excluded.length ? `AND BSEQ NOT IN (${excluded.map(() => '?').join(',')})` : '';
     const [rows] = await legacyMysqlPool.execute<IdCodeRow[]>(
-      `SELECT BSEQ AS id, BCOD AS code FROM FBENC WHERE ${eligible} ORDER BY BCOD, BSEQ LIMIT 1`,
+      `SELECT BSEQ AS id, BCOD AS code FROM FBENC WHERE ${eligible} ${filter} ORDER BY BCOD, BSEQ LIMIT 1`,
+      excluded,
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
@@ -178,22 +184,35 @@ export class LegacyMysqlBankAccountsDataSource implements BankAccountsDataSource
     );
     const current = currentRows[0];
     if (current === undefined) return null;
+    return this.findAdjacentByCode(current.code, direction);
+  }
+
+  async findAdjacentByCode(code: string, direction: BankAccountNavigationDirection, excluded: number[] = []): Promise<BankAccount | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
+    const filter = excluded.length ? `AND BSEQ NOT IN (${excluded.map(() => '?').join(',')})` : '';
     const [rows] = await legacyMysqlPool.execute<IdCodeRow[]>(
       `SELECT BSEQ AS id, BCOD AS code
          FROM FBENC
-        WHERE ${eligible} AND BCOD ${operator} ?
+        WHERE ${eligible} AND BCOD ${operator} ? ${filter}
         ORDER BY BCOD ${order}, BSEQ ${order}
         LIMIT 1`,
-      [current.code],
+      [code, ...excluded],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
 
   async search(criteria: BankAccountSearchCriteria): Promise<BankAccountSearchResult> {
+    return this.searchExcluding(criteria, []);
+  }
+
+  async searchExcluding(criteria: BankAccountSearchCriteria, excludedIds: number[]): Promise<BankAccountSearchResult> {
     const conditions = [eligible];
     const parameters: Array<string | number> = [];
+    if (excludedIds.length > 0) {
+      conditions.push(`BSEQ NOT IN (${excludedIds.map(() => '?').join(',')})`);
+      parameters.push(...excludedIds);
+    }
     if (criteria.query !== undefined) {
       conditions.push('(BCOD LIKE ? OR BCTA LIKE ? OR UPPER(BNOMBRE) LIKE UPPER(?))');
       parameters.push(`${criteria.query}%`, `%${criteria.query}%`, `%${criteria.query}%`);

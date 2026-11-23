@@ -6,7 +6,7 @@
 - Maestro de cuentas: `FBENC`; movimientos bancarios: `FBANMOV`; pólizas: `FPOLIZA`.
 - Cuenta bancaria contrastada en la base actual: `1102100001` (`FBENC.BSEQ=6610`).
 - Prefijo API: `/api/treasury/bank-accounts`.
-- Alcance actual: consultas de Bancos y registro de conciliación manual de depósitos y pagos web en México.
+- Alcance actual: mantenimiento del catálogo, consultas contables y registro en PostgreSQL de operaciones bancarias migradas para México. Las consultas leen el histórico de Omnis desde MySQL.
 
 El módulo sigue Clean Architecture. Los contratos están en `domain/datasources` y
 `domain/repositories`; las consultas legacy viven únicamente en
@@ -35,6 +35,16 @@ El módulo sigue Clean Architecture. Los contratos están en `domain/datasources
 | Reportes fiscales | `fiscalReports.*` | `BFISCALINFLA`, `BDEDUCIETU`, `BNODEDUCIIVA` |
 | Mayor | `ledger.firstPeriod`, `ledger.secondPeriod` | `BS*`, `BSC*`, `BSA*`, `BSP01..BSP24` |
 
+## Alta, Cambio y Baja
+
+| Control | Endpoint | Procedimiento y datos |
+| --- | --- | --- |
+| Alta, OK, Cancelar | `GET /create`, `POST /` | `MBANCO/24` y `MBANCO/70`. Propone cuenta Otro, naturaleza deudora y moneda base. Los niveles de `FCIA` requieren el código padre cuando corresponde y evitan que una cuenta con movimientos tenga hijos. Guarda en `bank_catalog_accounts` con clave de reintento. |
+| Cambio, OK, Cancelar | `GET /:id/edit`, `PATCH /:id` | `MBANCO/22`. Con Contabilidad activa, el código queda fijo. La revisión protege de cambios concurrentes. |
+| Baja y confirmación | `GET /:id/edit`, `DELETE /:id` | `MBANCO/23`. Impide la baja con subcuentas, movimientos o saldos. La baja conserva el código y quita la cuenta del buscador y de la navegación. |
+
+Los endpoints de esta sección son relativos a `/api/treasury/bank-accounts`. Las capturas `bank-full-04-alta-key.png` y `bank-full-05-cambio.png` identifican las fichas nativas. El indicador `Movs` representa la existencia de movimientos (`MBANCO/466`).
+
 ## Acciones capturadas
 
 | Botón visible | Endpoint GET | SQL/origen |
@@ -43,19 +53,30 @@ El módulo sigue Clean Architecture. Los contratos están en `domain/datasources
 | Depósitos | `/:bankAccountId/actions/deposits` | OMNIS indica que el movimiento se genera mediante póliza. La vista web consulta los depósitos registrados en Cobranza |
 | Pagos | `/:bankAccountId/actions/payments` | Para los pagos locales consulta el abono y la póliza en PostgreSQL |
 | Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA` para la consulta histórica. Los movimientos web pendientes se pueden seleccionar |
-| Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC`; pendientes sin tránsito hasta la fecha indicada |
-| Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal |
-| Gastos por prv. | `/:bankAccountId/actions/supplier-expenses` | La apertura sólo cargó configuración de sesión; el alta/pago se conserva deshabilitado |
-| Mayor | `/:bankAccountId/actions/general-ledger` | Valores mensuales ya cargados desde `FBENC` |
-| Mayor C.C. | `/:bankAccountId/actions/cost-center-ledger?costCenter=1` | Catálogo `FALMCAT` (`CATTIPO='CEN'`) y registro exacto `FCCBENC.BCCKEY='01'+C.C.+BCOD` |
-| Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'` |
-| Clasificar | `/:bankAccountId/actions/classifiers` | Nueve lecturas de `FAG`, `AGT=1..9` y `AGTIPO=3` |
-| Traspasos entre Cuentas | `/:bankAccountId/actions/transfer` | Configuración exacta `FTIPMV.TICLA='3'`; la operación permanece deshabilitada |
-| Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0` |
+| Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC` e importación CSV o TSV. El botón **Registra** usa el mismo POST de Conciliar. |
+| Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal. La web muestra comentarios, póliza y fecha de conciliación cuando existen. |
+| Gastos por prv. | `/:bankAccountId/actions/supplier-expenses/capture` | Consulta recepciones web pendientes. El POST en `/:bankAccountId/actions/supplier-expenses` registra un pago `PP` por cheque para la cuenta abierta. |
+| Mayor | `/:bankAccountId/actions/general-ledger` | Meses de `FBENC` más cargos y abonos web del ejercicio. **Iguales** y **Cambiar** guardan los doce meses del primer periodo con PATCH en la misma ruta. |
+| Mayor C.C. | `/:bankAccountId/actions/cost-center-ledger?costCenter=1` | Centros de `FALMCAT` (`CATTIPO='CEN'`) y registro `FCCBENC.BCCKEY='01'+C.C.+BCOD`. El PATCH guarda el primer presupuesto del centro seleccionado. |
+| Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'`. El PATCH marca la revisión de partidas web aplicadas con `*`. |
+| Clasificar | `/:bankAccountId/actions/classifiers` | Nueve niveles de `FAG`, `AGT=1..9` y `AGTIPO=3`, con valores de `FBENC.BPAR1..9`. El PATCH guarda las claves disponibles. |
+| Traspasos entre Cuentas | `/:bankAccountId/actions/transfer/capture` | `FTIPMV.TICLA='3'` y `FCIA.CIAPOLIZACONT`. El POST en `/:bankAccountId/actions/transfer` registra una póliza de diario con dos partidas. |
+| Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0`. Consulta, comentarios e impresión si hay una póliza seleccionada. |
 
 Todos los paneles devuelven `button`, `section`, `source`, `available`,
 `readOnly`, `items` y, cuando corresponde, `summary`. Los requests
-reproducibles están en `http/treasury/bank-accounts.http`.
+reproducibles están en `http/treasury/bank-accounts.http` y
+`http/treasury/bank-catalog-and-actions.http`. Presupuestos, clasificadores y
+revisión se guardan en `bank_panel_settings` con revisión por cuenta, operación
+y centro cuando corresponde.
+
+## Traspasos y conciliación por archivo
+
+**Traspasos entre Cuentas** abre la cuenta destino y permite elegir otra cuenta en pesos con permiso de pagos. La cuenta destino debe admitir depósitos. La captura nativa `bank-full-08-transfer.png` muestra el tipo 3 y el modo **Traspas**. La web asigna un folio `BW`, crea el cargo, el abono y una póliza de diario aplicada en la misma transacción. Cada partida se concilia en su propia cuenta. La operación registra el asiento en PostgreSQL.
+
+**Concilia Automático** compara las partidas pendientes con un archivo CSV o TSV. El archivo debe contener las columnas `Fecha`, `Referencia`, `Ingresos` y `Egresos`, con fecha `AAAA-MM-DD` o `DD/MM/AAAA` y punto decimal. La vista selecciona coincidencias únicas por referencia e importe firmado. **Liga** permite resolver filas ambiguas con una partida pendiente del mismo importe y signo. Se pueden quitar coincidencias antes de registrar. La captura nativa `bank-full-24-auto-open.png` muestra la comparación de los dos auxiliares. El CSV y el TSV son formatos de intercambio de la web.
+
+La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza. **Gastos por prv.** permite pagar recepciones locales y el gasto fiscal GA conserva su flujo pendiente. La modalidad **Cheque** de traspaso y **Imprimir cheque** dependen del flujo y formato bancario nativo. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. El cambio de estado de partidas históricas a tránsito y la operación nativa **Traspasa +** quedan pendientes.
 
 ## Pagos de recepciones migradas
 
@@ -73,7 +94,7 @@ En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` 
 
 | Vista y control | Endpoint | Procedencia y efecto |
 | --- | --- | --- |
-| Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura de consulta histórica y SQL derivado de `supplier_payments`, `customer_collections` y `bank_reconciliation_movements`. Sólo los depósitos y pagos web pendientes son seleccionables |
+| Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura histórica y SQL derivado de `supplier_payments`, `customer_collections`, `bank_transfer_movements` y `bank_reconciliation_movements`. Los pagos, depósitos y traspasos web pendientes son seleccionables |
 | Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
 | Conciliar / Registrar | `POST /api/treasury/bank-accounts/:id/actions/reconciliation` | SQL derivado. Registra un corte en `bank_reconciliations` y las partidas en `bank_reconciliation_movements` en la misma transacción |
 | Conciliar / Cancelar | Cerrar la ventana | Descarta la selección |

@@ -25,8 +25,8 @@ export class CaptureBankReconciliation {
     if (existing) return existing;
     return this.storage.commit({
       companyId, bankAccountId, input, fingerprint,
-      bankOpeningBalance: async () => {
-        const account = (await this.accounts.findById(bankAccountId))?.toPrimitives();
+      bankOpeningBalance: async (lookup = async (id) => (await this.accounts.findById(id))?.toPrimitives() ?? null) => {
+        const account = await lookup(bankAccountId);
         if (!account) throw new NotFoundError('Cuenta bancaria');
         if (account.currency.id !== 1 || account.systemType !== 'bank'
             || ![0, companyId].includes(account.control.company) || ![0, companyId].includes(account.control.multiCompany)) {

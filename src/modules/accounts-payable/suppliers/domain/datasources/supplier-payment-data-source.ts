@@ -1,3 +1,5 @@
+import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
+
 export type SupplierPaymentMode = 'transfer' | 'check';
 
 export interface SupplierPaymentInput {
@@ -49,7 +51,7 @@ export interface SupplierPaymentSettings {
 }
 
 export interface SupplierPaymentReferences {
-  settings(companyId: number, supplierId: number): Promise<SupplierPaymentSettings | null>;
+  settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup): Promise<SupplierPaymentSettings | null>;
 }
 
 export interface SupplierPaymentIdentity {
@@ -63,7 +65,7 @@ export interface SupplierPaymentCommand {
   userId: number;
   input: SupplierPaymentInput;
   fingerprint: string;
-  resolvePosting(): Promise<{
+  resolvePosting(lookup?: BankAccountLookup): Promise<{
     policyType: string;
     supplierAccount: string;
     supplierAccountName: string;

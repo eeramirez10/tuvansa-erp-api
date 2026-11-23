@@ -1,0 +1,161 @@
+@baseUrl = http://localhost:3000/api
+@banks = {{baseUrl}}/treasury/bank-accounts
+@bankAccountId = 6610
+@sourceBankId = 6611
+@catalogCode = 1102100997
+@catalogRevision = sustituir-revision-de-edicion
+@panelRevision = 0
+@costCenter = 1
+@movementId = 7700000000000
+@date = 2026-11-23
+@receiptId = 0
+@supplierId = 0
+@receiptRevision = sustituir-revision-de-recepcion
+
+### Alta, valores iniciales y niveles de código
+GET {{banks}}/create
+
+### Alta en el entorno de pruebas
+# Cambiar el código por uno disponible y la clave por un UUID nuevo.
+POST {{banks}}
+Content-Type: application/json
+
+{
+  "requestKey": "491c1944-70e3-4aa5-b572-c2aaab906c30",
+  "fields": {
+    "code": "{{catalogCode}}",
+    "family": "",
+    "accountNumber": "",
+    "branch": "",
+    "name": "CUENTA PRUEBA WEB",
+    "nature": "debtor",
+    "systemType": "other",
+    "currencyId": 1,
+    "control": {
+      "manager": "", "phone": "", "customerNumber": "0",
+      "controlEnabled": false, "nextCheckNumber": 0, "nextDepositNumber": 0, "nextTransferNumber": 0,
+      "subAccounts": false, "preventJournalEntries": false, "format": "", "movements": false,
+      "budgetable": false, "company": 0, "deposits": false, "payments": false, "multiCompany": 0
+    },
+    "prorationPercentages": { "sales": 0, "inventory": 0, "distribution": 0, "advance": 0 }
+  }
+}
+
+### Cambio y Baja, consultar revisión y elegibilidad
+GET {{banks}}/{{bankAccountId}}/edit
+
+### Cambio, copiar los campos de GET /edit y editar los habilitados
+PATCH {{banks}}/{{bankAccountId}}
+Content-Type: application/json
+
+{
+  "revision": "{{catalogRevision}}",
+  "fields": {
+    "code": "{{catalogCode}}",
+    "family": "",
+    "accountNumber": "",
+    "branch": "",
+    "name": "CUENTA PRUEBA CORREGIDA",
+    "nature": "debtor",
+    "systemType": "other",
+    "currencyId": 1,
+    "control": {
+      "manager": "", "phone": "", "customerNumber": "0",
+      "controlEnabled": false, "nextCheckNumber": 0, "nextDepositNumber": 0, "nextTransferNumber": 0,
+      "subAccounts": false, "preventJournalEntries": false, "format": "", "movements": false,
+      "budgetable": false, "company": 0, "deposits": false, "payments": false, "multiCompany": 0
+    },
+    "prorationPercentages": { "sales": 0, "inventory": 0, "distribution": 0, "advance": 0 }
+  }
+}
+
+### Baja de la cuenta de prueba con su revisión vigente
+DELETE {{banks}}/{{bankAccountId}}
+Content-Type: application/json
+
+{ "revision": "{{catalogRevision}}", "confirmed": true }
+
+### Traspasos, origen disponible para la cuenta destino
+GET {{banks}}/{{bankAccountId}}/actions/transfer/capture
+
+### Registrar traspaso en el entorno de pruebas
+POST {{banks}}/{{bankAccountId}}/actions/transfer
+Content-Type: application/json
+
+{
+  "requestKey": "cc47f080-9679-4d54-84c7-86aa46127ab8",
+  "sourceBankAccountId": {{sourceBankId}},
+  "date": "{{date}}",
+  "amount": 25.12,
+  "reference": "PRUEBA01",
+  "beneficiary": "TESORERÍA PRUEBAS",
+  "description": "Registro de prueba"
+}
+
+### Mayor, consultar presupuesto
+GET {{banks}}/{{bankAccountId}}/actions/general-ledger
+
+### Mayor, guardar doce meses de presupuesto
+PATCH {{banks}}/{{bankAccountId}}/actions/general-ledger
+Content-Type: application/json
+
+{ "revision": {{panelRevision}}, "values": [10,10,10,12,12,12,14,14,14,16,16,16] }
+
+### Mayor C.C., consultar centros y presupuesto
+GET {{banks}}/{{bankAccountId}}/actions/cost-center-ledger?costCenter={{costCenter}}
+
+### Mayor C.C., guardar presupuesto del centro configurado
+PATCH {{banks}}/{{bankAccountId}}/actions/cost-center-ledger?costCenter={{costCenter}}
+Content-Type: application/json
+
+{ "revision": {{panelRevision}}, "values": [10,10,10,12,12,12,14,14,14,16,16,16] }
+
+### Clasificar, consultar las nueve listas
+GET {{banks}}/{{bankAccountId}}/actions/classifiers
+
+### Clasificar, guardar claves tomadas de las listas vigentes
+PATCH {{banks}}/{{bankAccountId}}/actions/classifiers
+Content-Type: application/json
+
+{ "revision": {{panelRevision}}, "values": ["","","","","","","","",""] }
+
+### Revisar, consultar partidas web elegibles
+GET {{banks}}/{{bankAccountId}}/actions/authorization-review
+
+### Revisar, registrar una partida elegible
+PATCH {{banks}}/{{bankAccountId}}/actions/authorization-review
+Content-Type: application/json
+
+{ "revision": {{panelRevision}}, "movementIds": [{{movementId}}] }
+
+### Gastos por prv., consultar recepciones y revisiones
+GET {{banks}}/{{bankAccountId}}/actions/supplier-expenses/capture
+
+### Gastos por prv., registrar pago de una recepción de pruebas
+POST {{banks}}/{{bankAccountId}}/actions/supplier-expenses
+Content-Type: application/json
+
+{
+  "requestKey": "4f038099-35d4-470d-82f6-31f6dfc04a95",
+  "receiptId": {{receiptId}},
+  "supplierId": {{supplierId}},
+  "revision": "{{receiptRevision}}",
+  "amount": 15,
+  "date": "{{date}}",
+  "description": "Pago de prueba"
+}
+
+### Concilia Automático, pendientes al corte
+GET {{banks}}/{{bankAccountId}}/actions/automatic-reconciliation?asOfDate={{date}}
+
+### Concilia Automático, registrar las partidas emparejadas de una cuenta de prueba
+POST {{banks}}/{{bankAccountId}}/actions/reconciliation
+Content-Type: application/json
+
+{
+  "requestKey": "f693d179-75fe-4395-88aa-eee5b8e8c0b0",
+  "movementIds": [{{movementId}}],
+  "statementDate": "{{date}}",
+  "statementBalance": 25.12,
+  "expectedBankBalance": 0
+}

@@ -3,7 +3,7 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type {
-  SupplierPaymentDataSource, SupplierPaymentIdentity, SupplierPaymentInput, SupplierPaymentReferences, SupplierPaymentSettings,
+  SupplierPaymentCommand, SupplierPaymentDataSource, SupplierPaymentIdentity, SupplierPaymentInput, SupplierPaymentReferences, SupplierPaymentSettings,
 } from '../../domain/datasources/supplier-payment-data-source.js';
 import { supplierPaymentReason } from '../../domain/entities/supplier-payment.js';
 
@@ -65,8 +65,8 @@ export class CaptureSupplierPayment {
     if (previous) return previous;
 
     await this.target(identity);
-    const resolvePosting = async () => {
-      const settings = await this.references.settings(identity.companyId, identity.supplierId);
+    const resolvePosting: SupplierPaymentCommand['resolvePosting'] = async (lookup) => {
+      const settings = await this.references.settings(identity.companyId, identity.supplierId, input.bankAccountId, lookup);
       if (!settings) throw new ConflictError(settingsUnavailable, 'SUPPLIER_PAYMENT_CONFIG_UNAVAILABLE');
       const bank = this.bankAccounts(settings).find(({ id }) => id === input.bankAccountId);
       if (!bank) throw new ConflictError(bankUnavailable, 'SUPPLIER_PAYMENT_BANK_UNAVAILABLE');

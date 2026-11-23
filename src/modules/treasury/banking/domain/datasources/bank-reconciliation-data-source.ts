@@ -1,3 +1,5 @@
+import type { BankAccountLookup } from '../entities/bank-account.js';
+
 export interface BankReconciliationInput {
   requestKey: string;
   movementIds: number[];
@@ -26,7 +28,7 @@ export interface BankReconciliationCommand {
   bankAccountId: number;
   input: BankReconciliationInput;
   fingerprint: string;
-  bankOpeningBalance(): Promise<number>;
+  bankOpeningBalance(lookup?: BankAccountLookup): Promise<number>;
 }
 
 export interface BankReconciliationDataSource {

@@ -71,6 +71,7 @@ export interface PurchaseOrderEditLegacyDataSource {
 
 export interface PurchaseOrderEditStorage {
   writable(): boolean;
+  findRemoved(ids?: number[]): Promise<PurchaseOrderIdentity[]>;
   find(ids: number[]): Promise<PurchaseOrderEditSnapshot[]>;
   save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<PurchaseOrderEditSnapshot>;
 }

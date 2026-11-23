@@ -3,6 +3,7 @@ import { GetProductPanel } from '../src/modules/inventories/products/application
 import { SetProductBlockStatus } from '../src/modules/inventories/products/application/use-cases/set-product-block-status.js';
 import { LegacyMysqlProductPanelsDataSource } from '../src/modules/inventories/products/infrastructure/datasources/legacy-mysql-product-panels-data-source.js';
 import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
+import * as purchaseOrderRemovalSource from '../src/shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import type {
   ProductPanelResult,
   ProductPanelsRepository,
@@ -10,6 +11,10 @@ import type {
 
 vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({
   legacyMysqlPool: { execute: vi.fn() },
+}));
+vi.mock('../src/shared/infrastructure/datasources/postgres-purchase-order-removals.js', async (importOriginal) => ({
+  ...await importOriginal<typeof purchaseOrderRemovalSource>(),
+  legacyPurchaseOrderRemovals: vi.fn(async () => []),
 }));
 
 const panel: ProductPanelResult = {
@@ -288,6 +293,7 @@ describe('Inventarios PT - botones laterales', () => {
 
   it('limita los pedidos a proveedor a la compañía y calcula Por llegar con cantidades sin convertir', async () => {
     const execute = vi.mocked(legacyMysqlPool.execute).mockReset();
+    vi.mocked(purchaseOrderRemovalSource.legacyPurchaseOrderRemovals).mockResolvedValueOnce([{ id: 42, number: 'OC00042' }]);
     execute
       .mockResolvedValueOnce([[panel.product], []])
       .mockResolvedValueOnce([[{ remaining: 40, assigned: 10 }], []])
@@ -300,10 +306,12 @@ describe('Inventarios PT - botones laterales', () => {
     for (const query of [total?.[0], page?.[0]]) {
       expect(query).toEqual(expect.stringContaining('fpenc.PEMULTICIA = 1'));
       expect(query).toEqual(expect.stringContaining('AND PLSURT < PLCANT'));
+      expect(query).toEqual(expect.stringContaining('AND (fpenc.PESEQ, fpenc.PENUM) NOT IN ((?, ?))'));
     }
     expect(total?.[0]).toEqual(expect.stringContaining('SUM(PLCANT), 0) - COALESCE(SUM(PLSURT)'));
     expect(page?.[0]).toEqual(expect.stringContaining('SELECT COML4 FROM fcoment'));
-    expect(page?.[1]).toEqual([panel.product.id, 10, 20]);
+    expect(total?.[1]).toEqual([panel.product.id, 42, 'OC00042']);
+    expect(page?.[1]).toEqual([panel.product.id, 42, 'OC00042', 10, 20]);
     expect(result).toMatchObject({
       supplierOrdersTotals: { remaining: 40 },
       items: [{ quantity: 20, factor: 10 }],

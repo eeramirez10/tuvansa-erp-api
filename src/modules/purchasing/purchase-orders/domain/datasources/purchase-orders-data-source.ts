@@ -23,9 +23,10 @@ export interface PurchaseOrdersDataSource {
 }
 
 export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataSource, 'getPanel' | 'search' | 'findAdjacent' | 'saveClassifications'> {
-  search(criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[]): Promise<PurchaseOrderSearchResult>;
+  findByNumber(number: string, removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;
+  search(criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[], removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult>;
   findIdentity(id: number): Promise<PurchaseOrderIdentity | undefined>;
-  findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null>;
+  findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection, removed?: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;
   getClassifications(id: number, local?: PurchaseOrder): Promise<PurchaseOrderClassificationPanel | null>;
   getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[], local?: PurchaseOrderIdentity): Promise<PurchaseOrderPanelResult | null>;
 }

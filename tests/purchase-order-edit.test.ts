@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   PurchaseOrderEditInput, PurchaseOrderEditProduct, PurchaseOrderEditRules,
 } from '../src/modules/purchasing/purchase-orders/domain/datasources/purchase-order-edit-data-source.js';
-import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
+import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions, stockAfterPurchaseOrderRemoval } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
 import type { PurchaseOrderLine, PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 
 const first: PurchaseOrderLine = {
@@ -34,6 +34,21 @@ const draft: PurchaseOrderEditInput = {
   revision: 0, legacyVersion: 'a'.repeat(64), removeZero: false,
   lines: [{ id: 20, productCode: 'A', quantity: 2, price: 15, unit: 'CJ', discount: 0, branch: 1, pieces: '' }],
 };
+
+describe('purchase order removal stock', () => {
+  it('subtracts legacy pending quantities only and combines lines of the same product', () => {
+    const lines = [
+      { ...first, ordered: 12, fulfilled: 2 },
+      { ...first, ordered: 2.555, fulfilled: 1.2 },
+      { ...first, ordered: 1, fulfilled: 2 },
+      { ...first, productId: 11, ordered: 2, fulfilled: 2 },
+    ];
+    expect(stockAfterPurchaseOrderRemoval(lines)).toEqual([
+      { productId: first.productId, pending: -11.355, nextReceiptAt: null },
+    ]);
+    expect(stockAfterPurchaseOrderRemoval([])).toEqual([]);
+  });
+});
 
 describe('purchase order edit rules', () => {
   it('applies the unit factor, preserves received quantities and calculates native taxes and stock deltas', () => {

@@ -8,6 +8,7 @@ import type { SearchPurchaseOrders } from '../../application/use-cases/search-pu
 import type { UpdatePurchaseOrderClassifications } from '../../application/use-cases/update-purchase-order-classifications.js';
 import type { EditPurchaseOrder } from '../../application/use-cases/edit-purchase-order.js';
 import type { CreatePurchaseOrder } from '../../application/use-cases/create-purchase-order.js';
+import type { RemovePurchaseOrder } from '../../application/use-cases/remove-purchase-order.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
 const idParamsSchema = z.object({ purchaseOrderId: z.coerce.number().int().positive() });
@@ -32,9 +33,12 @@ const lineSchema = z.object({
   branch: z.number().int().min(-2147483648).max(2147483647),
   pieces: z.string().max(1000),
 }).strict();
-const editSchema = z.object({
+const revisionSchema = z.object({
   revision: z.number().int().min(0).max(2147483647),
   legacyVersion: z.string().regex(/^[0-9a-f]{64}$/),
+});
+const removalSchema = revisionSchema.extend({ number: numberParamsSchema.shape.purchaseOrderNumber }).strict();
+const editSchema = revisionSchema.extend({
   removeZero: z.boolean(),
   lines: z.array(lineSchema),
 }).strict();
@@ -88,6 +92,7 @@ export class PurchaseOrdersController {
     private readonly updateClassifications: UpdatePurchaseOrderClassifications,
     private readonly editOrder: EditPurchaseOrder,
     private readonly createOrder: CreatePurchaseOrder,
+    private readonly removeOrder: RemovePurchaseOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -193,5 +198,19 @@ export class PurchaseOrdersController {
   create: RequestHandler = async (request, response, next) => {
     try { response.status(201).json({ data: await this.createOrder.save(createSchema.parse(request.body)) }); }
     catch (error) { next(error); }
+  };
+
+  getRemoval: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.removeOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  remove: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.json({ data: await this.removeOrder.execute(purchaseOrderId, removalSchema.parse(request.body)) });
+    } catch (error) { next(error); }
   };
 }

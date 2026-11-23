@@ -5,6 +5,7 @@ import {
   type PostgresClient, type PostgresConnectionFactory,
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { assertActivePurchaseOrder, lockPurchaseOrderWrite } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import type { PurchaseOrderAgentOverride, PurchaseOrderClassificationStorage } from '../../domain/datasources/purchase-orders-data-source.js';
 import type {
   PurchaseOrderClassificationUpdate, PurchaseOrderIdentity, SavedPurchaseOrderClassifications,
@@ -84,22 +85,31 @@ export class PostgresPurchaseOrderClassifications implements PurchaseOrderClassi
       });
       await this.migration;
 
-      const values = [order.id, order.number, JSON.stringify(update.current)];
-      const returning = 'RETURNING current_values AS current, revision';
-      const { rows } = update.revision === 0
-        ? await client.query<PurchaseOrderClassificationUpdate>(
-          `INSERT INTO tuvansa.purchase_order_classifications (order_id, order_number, current_values, revision)
-           VALUES ($1, $2, $3::jsonb, 1) ON CONFLICT (order_id, order_number) DO NOTHING ${returning}`, values,
-        )
-        : await client.query<PurchaseOrderClassificationUpdate>(
-          `UPDATE tuvansa.purchase_order_classifications
-           SET current_values = $3::jsonb, revision = revision + 1, updated_at = now()
-           WHERE order_id = $1 AND order_number = $2 AND revision = $4 ${returning}`, [...values, update.revision],
-        );
-      if (!rows[0]) {
-        throw new ConflictError('Otra sesión cambió la clasificación. Vuelve a abrir la ventana.', 'PURCHASE_ORDER_CLASSIFICATIONS_STALE');
+      await client.query('BEGIN');
+      try {
+        await lockPurchaseOrderWrite(client, order.id);
+        await assertActivePurchaseOrder(client, order);
+        const values = [order.id, order.number, JSON.stringify(update.current)];
+        const returning = 'RETURNING current_values AS current, revision';
+        const { rows } = update.revision === 0
+          ? await client.query<PurchaseOrderClassificationUpdate>(
+            `INSERT INTO tuvansa.purchase_order_classifications (order_id, order_number, current_values, revision)
+             VALUES ($1, $2, $3::jsonb, 1) ON CONFLICT (order_id, order_number) DO NOTHING ${returning}`, values,
+          )
+          : await client.query<PurchaseOrderClassificationUpdate>(
+            `UPDATE tuvansa.purchase_order_classifications
+             SET current_values = $3::jsonb, revision = revision + 1, updated_at = now()
+             WHERE order_id = $1 AND order_number = $2 AND revision = $4 ${returning}`, [...values, update.revision],
+          );
+        if (!rows[0]) {
+          throw new ConflictError('Otra sesión cambió la clasificación. Vuelve a abrir la ventana.', 'PURCHASE_ORDER_CLASSIFICATIONS_STALE');
+        }
+        await client.query('COMMIT');
+        return { ...order, ...rows[0] };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
       }
-      return { ...order, ...rows[0] };
     });
   }
 }

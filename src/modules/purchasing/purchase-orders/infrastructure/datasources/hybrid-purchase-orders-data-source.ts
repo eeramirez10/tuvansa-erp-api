@@ -46,37 +46,45 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   }
 
   private async orderById(id: number): Promise<PurchaseOrder | null> {
-    return (await this.creation.findLocal(id))?.order ?? this.dataSource.findById(id);
+    const [local, removed] = await Promise.all([this.creation.findLocal(id), this.editStorage.findRemoved([id])]);
+    const order = local?.order ?? await this.dataSource.findById(id);
+    return order && !removed.some(({ number }) => number === order.identity.number) ? order : null;
   }
 
   findById(id: number): Promise<PurchaseOrder | null> { return this.classifiedOrder(this.orderById(id)); }
   async findByNumber(number: string): Promise<PurchaseOrder | null> {
-    const local = await this.creation.findLocalByNumber(number);
-    return this.classifiedOrder(local ? Promise.resolve(local.order) : this.dataSource.findByNumber(number));
+    const [local, removed] = await Promise.all([this.creation.findLocalByNumber(number), this.editStorage.findRemoved()]);
+    if (local && !removed.some(({ id, number }) => id === local.order.identity.id && number === local.order.identity.number)) {
+      return this.classifiedOrder(Promise.resolve(local.order));
+    }
+    return this.classifiedOrder(this.dataSource.findByNumber(number, removed));
   }
 
   async search(criteria: PurchaseOrderSearchCriteria): Promise<PurchaseOrderSearchResult> {
-    const agents = criteria.agent === undefined ? undefined : await this.classificationStorage.agentOverrides(criteria.agent);
+    const [agents, removed] = await Promise.all([
+      criteria.agent === undefined ? undefined : this.classificationStorage.agentOverrides(criteria.agent),
+      this.editStorage.findRemoved(),
+    ]);
     const local = await this.creation.searchLocal(criteria,
-      agents?.filter((order) => !order.matches) ?? [], agents?.filter((order) => order.matches) ?? []);
+      agents?.filter((order) => !order.matches) ?? [], agents?.filter((order) => order.matches) ?? [], removed);
     if (local.total === 0) {
-      const result = await this.dataSource.search(criteria, agents);
+      const result = await this.dataSource.search(criteria, agents, removed);
       return { ...result, items: await this.withChanges(result.items, false) };
     }
     const legacyOffset = Math.max(0, criteria.offset - local.total);
     const offset = criteria.offset - legacyOffset;
-    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit }, agents);
+    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit }, agents, removed);
     const items = [...legacy.items, ...local.items].sort(sortOrders).slice(offset, offset + criteria.limit);
     return { items: await this.withChanges(items, false), total: legacy.total + local.total };
   }
 
   async findAdjacent(id: number, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
-    const localOrder = await this.creation.findLocal(id);
-    const current = localOrder?.order.identity ?? await this.dataSource.findIdentity(id);
+    const [localOrder, removed] = await Promise.all([this.creation.findLocal(id), this.editStorage.findRemoved()]);
+    const current = localOrder?.order.identity ?? await this.dataSource.findIdentity(id) ?? removed.find((row) => row.id === id);
     if (!current) return null;
     const { number } = current;
     const [local, legacy] = await Promise.all([
-      this.creation.findLocalAdjacent(number, direction), this.dataSource.findAdjacentByNumber(number, direction),
+      this.creation.findLocalAdjacent(number, direction, removed), this.dataSource.findAdjacentByNumber(number, direction, removed),
     ]);
     const closest = local && legacy
       ? (direction === 'previous' ? sortOrders(local, legacy) > 0 : sortOrders(local, legacy) < 0) ? local : legacy
@@ -87,6 +95,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   async getPanel(id: number, key: PurchaseOrderPanelKey): Promise<PurchaseOrderPanelResult | null> {
     if (key === 'classifications') return this.getClassifications(id);
     const local = await this.creation.findLocal(id);
+    if (await this.isRemoved(id, local?.order.identity)) return null;
     if (local) {
       const { order, metadata } = local;
       if (key === 'receipts' || key === 'pieces') {
@@ -122,6 +131,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
 
   async getClassifications(id: number): Promise<PurchaseOrderClassificationPanel | null> {
     const local = await this.creation.findLocal(id);
+    if (await this.isRemoved(id, local?.order.identity)) return null;
     const panel = await this.dataSource.getClassifications(id, local?.order);
     if (!panel) return null;
     const stored = (await this.classificationStorage.find([id])).find((row) => row.number === panel.purchaseOrder.number);
@@ -139,5 +149,12 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
 
   saveClassifications(order: PurchaseOrderIdentity, update: PurchaseOrderClassificationUpdate): Promise<SavedPurchaseOrderClassifications> {
     return this.classificationStorage.save(order, update);
+  }
+
+  private async isRemoved(id: number, local?: PurchaseOrderIdentity): Promise<boolean> {
+    const removed = await this.editStorage.findRemoved([id]);
+    if (removed.length === 0) return false;
+    const current = local ?? await this.dataSource.findIdentity(id);
+    return !current || removed.some(({ number }) => number === current.number);
   }
 }

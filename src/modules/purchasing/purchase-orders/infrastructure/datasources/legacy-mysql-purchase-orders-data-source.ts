@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { excludeRemovedPurchaseOrders } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderAgentOverride } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditSnapshot } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
@@ -7,6 +8,7 @@ import type {
   PurchaseOrderNavigationDirection,
   PurchaseOrderClassificationPanel,
   PurchaseOrderClassifier,
+  PurchaseOrderIdentity,
   PurchaseOrderPanelKey,
   PurchaseOrderPanelResult,
   PurchaseOrderSearchCriteria,
@@ -270,11 +272,12 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
     return this.header('FPENC.PESEQ = ?', [id]);
   }
 
-  findByNumber(number: string): Promise<PurchaseOrder | null> {
-    return this.header('FPENC.PENUM = ?', [number]);
+  findByNumber(number: string, removed: PurchaseOrderIdentity[] = []): Promise<PurchaseOrder | null> {
+    const exclusions = excludeRemovedPurchaseOrders(removed, 'FPENC');
+    return this.header(`FPENC.PENUM = ?${exclusions.sql}`, [number, ...exclusions.parameters]);
   }
 
-  async search(criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = []): Promise<PurchaseOrderSearchResult> {
+  async search(criteria: PurchaseOrderSearchCriteria, agents: PurchaseOrderAgentOverride[] = [], removed: PurchaseOrderIdentity[] = []): Promise<PurchaseOrderSearchResult> {
     const conditions = ['PESPEDIDO IN (2, 5)'];
     const parameters: Array<string | number> = [];
     if (criteria.query !== undefined) {
@@ -299,7 +302,9 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
       parameters.push(`${criteria.agent}%`, ...[...excluded, ...matching].flatMap((order) => [order.id, order.number]));
     }
     if (criteria.documentType !== undefined) { conditions.push('PESPEDIDO = ?'); parameters.push(criteria.documentType); }
-    const where = conditions.join(' AND ');
+    const exclusions = excludeRemovedPurchaseOrders(removed, 'FPENC');
+    const where = conditions.join(' AND ') + exclusions.sql;
+    parameters.push(...exclusions.parameters);
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
       `SELECT ${selectHeader}
        FROM FPENC
@@ -318,15 +323,16 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
     return { items: rows.map((row) => toPurchaseOrder(row, [])), total: countRows[0]?.total ?? 0 };
   }
 
-  async findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
+  async findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection, removed: PurchaseOrderIdentity[] = []): Promise<PurchaseOrder | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
+    const exclusions = excludeRemovedPurchaseOrders(removed, 'FPENC');
     const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
       `SELECT PESEQ AS id, PENUM AS number
        FROM FPENC
-       WHERE PESPEDIDO IN (2, 5) AND PENUM ${operator} ?
+       WHERE PESPEDIDO IN (2, 5) AND PENUM ${operator} ?${exclusions.sql}
        ORDER BY PENUM ${order}, PESEQ ${order} LIMIT 1`,
-      [number],
+      [number, ...exclusions.parameters],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }

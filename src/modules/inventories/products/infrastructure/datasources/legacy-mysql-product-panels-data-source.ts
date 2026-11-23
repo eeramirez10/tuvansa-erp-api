@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { excludeRemovedPurchaseOrders, legacyPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import type { ProductPanelsDataSource } from '../../domain/datasources/product-panels-data-source.js';
 import type {
   ProductPanelCriteria,
@@ -429,7 +430,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       LEFT JOIN fprv ON fplin.PRVSEQ=fprv.PRVSEQ
       LEFT JOIN fpenc ON fplin.PESEQ=fpenc.PESEQ
       WHERE ICOD>=? AND ICOD<=CONCAT(?, 'z') AND fprv.PRVSEQ<>0
-      AND PESPEDIDO IN (2,3) ORDER BY ICOD, PLSEQ`, parameterMode: 'code-range',
+      AND PESPEDIDO IN (2,3)`, parameterMode: 'code-range',
   },
   'supplier-quotes': {
     section: 'queries', button: 'Cotizado a proveedores',
@@ -634,11 +635,14 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const documentType = panel === 'customer-orders' ? 1 : panel === 'customer-quotes' ? 4 : undefined;
     const hasFulfillmentFilter = documentType !== undefined || panel === 'supplier-orders';
     const fulfillmentFilter = hasFulfillmentFilter && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
+    const removed = panel === 'supplier-orders' || panel === 'supplier-orders-ct' ? await legacyPurchaseOrderRemovals() : [];
+    const exclusions = excludeRemovedPurchaseOrders(removed, 'fpenc');
     const salesOrder = customerSalesSortFields[criteria.customerSalesSort ?? (panel === 'sales-by-branch' ? 'branch' : 'code')];
     const salesTie = salesOrder === 'branch' ? 'customerCode, id' : 'id';
     const order = panel === 'ledger' ? ' ORDER BY finv.ISEQ, faxinv.AISEQ'
       : documentType !== undefined ? ' ORDER BY PEDESDE, FPLIN.PLSEQ'
       : panel === 'supplier-orders' ? ' ORDER BY finv.ISEQ, FPLIN.PLSEQ'
+      : panel === 'supplier-orders-ct' ? ' ORDER BY ICOD, PLSEQ'
       : panel === 'customer-sales' || panel === 'sales-by-branch' ? ` ORDER BY ${salesOrder}, ${salesTie}` : '';
     const openingStock = ledger?.warehouse === undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
@@ -646,7 +650,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       ? await this.getOrderTotals(product.id, `${customerOrdersScope} AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
       : undefined;
     const supplierOrdersTotals = panel === 'supplier-orders'
-      ? await this.getOrderTotals(product.id, `${supplierOrderScope}${fulfillmentFilter}`)
+      ? await this.getOrderTotals(product.id, `${supplierOrderScope}${fulfillmentFilter}${exclusions.sql}`, exclusions.parameters)
       : undefined;
     const customerSalesTotals = panel === 'customer-sales' || panel === 'customer-sales-detail' || panel === 'sales-by-branch'
       ? await this.getCustomerSalesTotals(product.id, panel === 'sales-by-branch' ? customerMovementScope : customerSalesScope)
@@ -655,10 +659,11 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       ? await this.getProductRootRange(product)
       : parametersFor(definition.parameterMode, product);
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
-      `${definition.sql}${conditions.sql}${fulfillmentFilter}${order} LIMIT ? OFFSET ?`,
+      `${definition.sql}${conditions.sql}${fulfillmentFilter}${exclusions.sql}${order} LIMIT ? OFFSET ?`,
       [
         ...params,
         ...conditions.params,
+        ...exclusions.parameters,
         criteria.limit,
         criteria.offset,
       ],
@@ -823,6 +828,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
   private async getOrderTotals(
     productId: number,
     scope: string,
+    parameters: Array<string | number> = [],
   ): Promise<NonNullable<ProductPanelResult['customerOrdersTotals']>> {
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & {
       remaining: number | string; assigned: number | string;
@@ -830,7 +836,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       `SELECT COALESCE(SUM(PLCANT), 0) - COALESCE(SUM(PLSURT), 0) AS remaining,
         COALESCE(SUM(PLASIGNADO), 0) AS assigned
        ${scope}`,
-      [productId],
+      [productId, ...parameters],
     );
     return {
       remaining: Number(rows[0]?.remaining ?? 0),

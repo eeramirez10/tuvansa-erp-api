@@ -4,6 +4,10 @@
 @editOrderId = 93984
 @editRevision = 0
 @legacyVersion = copiar-del-GET-edit
+@removalId = copiar-id-de-orden-de-prueba
+@removalNumber = copiar-folio-del-GET-removal
+@removalVersion = copiar-del-GET-removal
+@removalRevision = 0
 @creationSupplier = 35436
 @creationDate = 2026-11-23
 @creationRequestKey = 92bc9c06-bd13-4533-9de7-d2fa4e380ae2
@@ -46,6 +50,20 @@ GET {{baseUrl}}/purchasing/purchase-orders/{{purchaseOrderId}}/actions/pieces
 
 ### Lápiz: abrir Cambio de orden de compra
 GET {{baseUrl}}/purchasing/purchase-orders/{{editOrderId}}/edit
+
+### Papelera: consultar si se puede dar de baja una orden
+GET {{baseUrl}}/purchasing/purchase-orders/{{removalId}}/removal
+
+### Papelera: confirmar baja en PostgreSQL de pruebas
+# Sustituye el ID por una orden de prueba y copia folio, revisión y versión del GET.
+DELETE {{baseUrl}}/purchasing/purchase-orders/{{removalId}}
+Content-Type: application/json
+
+{
+  "number": "{{removalNumber}}",
+  "revision": {{removalRevision}},
+  "legacyVersion": "{{removalVersion}}"
+}
 
 ### Cambio de orden de compra: validar el producto o buscar por descripción
 GET {{baseUrl}}/purchasing/purchase-orders/{{editOrderId}}/edit/products?q=01202259

@@ -87,7 +87,7 @@ export interface PurchaseOrderCreateStorage {
   findLocal(id: number): Promise<LocalPurchaseOrder | null>;
   findLocalByNumber(number: string): Promise<LocalPurchaseOrder | null>;
   findLocalRequest(requestKey: string, fingerprint: string): Promise<PurchaseOrderIdentity | null>;
-  searchLocal(criteria: PurchaseOrderSearchCriteria, excluded: PurchaseOrderIdentity[], matching: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult>;
-  findLocalAdjacent(number: string, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null>;
+  searchLocal(criteria: PurchaseOrderSearchCriteria, excluded: PurchaseOrderIdentity[], matching: PurchaseOrderIdentity[], removed: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult>;
+  findLocalAdjacent(number: string, direction: PurchaseOrderNavigationDirection, removed: PurchaseOrderIdentity[]): Promise<PurchaseOrder | null>;
   create(requestKey: string, fingerprint: string, order: NewPurchaseOrder): Promise<PurchaseOrderIdentity>;
 }

@@ -11,6 +11,16 @@ const round = (value: number, digits: number) => {
 };
 const invalidLine = (message: string) => new ApplicationError(message, 'INVALID_PURCHASE_ORDER_LINE', 422);
 
+export function stockAfterPurchaseOrderRemoval(legacyLines: PurchaseOrderLine[]): PurchaseOrderStockChange[] {
+  const stock = new Map<number, number>();
+  for (const line of legacyLines) {
+    const remaining = Math.max(line.ordered - line.fulfilled, 0);
+    stock.set(line.productId, round((stock.get(line.productId) ?? 0) - remaining, 3));
+  }
+  return [...stock].filter(([, pending]) => pending !== 0)
+    .map(([productId, pending]) => ({ productId, pending, nextReceiptAt: null }));
+}
+
 export const displayPurchaseOrderEditLines = (lines: PurchaseOrderLine[]) => lines.map((line) => {
   const factor = line.factor || 1;
   return {

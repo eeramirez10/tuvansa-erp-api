@@ -4,6 +4,7 @@ import {
   connectPostgres, postgresConfigured, postgresUnavailable, type PostgresClient, type PostgresConnectionFactory,
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { assertActivePurchaseOrder, lockPurchaseOrderWrite, readPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import type {
   PurchaseOrderEditSnapshot, PurchaseOrderEditStorage, PurchaseOrderStockChange,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
@@ -11,6 +12,7 @@ import {
   isLocalPurchaseOrderId, localPurchaseOrderIdStart, localPurchaseOrderNumber,
   type LocalPurchaseOrder, type NewPurchaseOrder, type PurchaseOrderCreateStorage, type PurchaseOrderLocalMetadata,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
+import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrderIdentity, PurchaseOrderNavigationDirection, PurchaseOrderSearchCriteria, PurchaseOrderSearchResult } from '../../domain/repositories/purchase-orders-repository.js';
 
@@ -53,6 +55,19 @@ const migrations = [{
       FOREIGN KEY (id, number) REFERENCES tuvansa.purchase_order_edits(order_id, order_number)
     );
   `,
+}, {
+  id: 'purchase_order_removal',
+  sql: `
+    CREATE TABLE tuvansa.purchase_order_removals (
+      order_id bigint NOT NULL,
+      order_number varchar(15) NOT NULL,
+      legacy boolean NOT NULL,
+      removed_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (order_id, order_number),
+      FOREIGN KEY (order_id, order_number)
+        REFERENCES tuvansa.purchase_order_edits(order_id, order_number) ON DELETE CASCADE
+    );
+  `,
 }];
 
 type Stored = {
@@ -67,7 +82,7 @@ type LocalRow = { id: string; number: string; fingerprint: string; header: NewPu
 const asOrder = ({ id, number, header }: LocalRow) => PurchaseOrder.create({ ...header, id: Number(id), number });
 const requestConflict = () => new ConflictError('La clave de alta ya se usó para una orden con otros datos.', 'PURCHASE_ORDER_REQUEST_CONFLICT');
 
-export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage {
+export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -153,13 +168,15 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     return this.readLocal<PurchaseOrderIdentity | null>(null, (client) => this.byRequest(client, requestKey, fingerprint));
   }
 
-  async searchLocal(criteria: PurchaseOrderSearchCriteria, excluded: PurchaseOrderIdentity[], matching: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult> {
+  async searchLocal(criteria: PurchaseOrderSearchCriteria, excluded: PurchaseOrderIdentity[], matching: PurchaseOrderIdentity[], removed: PurchaseOrderIdentity[]): Promise<PurchaseOrderSearchResult> {
     const empty = { items: [], total: 0 };
     if (criteria.documentType === 5) return empty;
     return this.readLocal<PurchaseOrderSearchResult>(empty, async (client) => {
       const values: unknown[] = [];
       const param = (value: unknown) => `$${values.push(value)}`;
       const conditions: string[] = [];
+      const removedIds = removed.filter(({ id }) => isLocalPurchaseOrderId(id)).map(({ id }) => id);
+      if (removedIds.length > 0) conditions.push(`NOT (id=ANY(${param(removedIds)}::bigint[]))`);
       const orderNumber = criteria.orderNumber;
       if (orderNumber !== undefined) conditions.push(`number ILIKE ${param(orderNumber + '%')}`);
       if (criteria.query !== undefined) {
@@ -187,13 +204,14 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     });
   }
 
-  findLocalAdjacent(number: string, direction: PurchaseOrderNavigationDirection) {
+  findLocalAdjacent(number: string, direction: PurchaseOrderNavigationDirection, removed: PurchaseOrderIdentity[]) {
     return this.readLocal<PurchaseOrder | null>(null, async (client) => {
       const comparison = direction === 'previous' ? '<' : '>';
       const order = direction === 'previous' ? 'DESC' : 'ASC';
       const { rows } = await client.query<LocalRow>(
-        `SELECT id, number, header FROM tuvansa.purchase_orders WHERE number ${comparison} $1
-         ORDER BY number COLLATE "C" ${order} LIMIT 1`, [number],
+        `SELECT id, number, header FROM tuvansa.purchase_orders
+         WHERE number ${comparison} $1 AND NOT (id=ANY($2::bigint[]))
+         ORDER BY number COLLATE "C" ${order} LIMIT 1`, [number, removed.filter(({ id }) => isLocalPurchaseOrderId(id)).map(({ id }) => id)],
       );
       return rows[0] ? asOrder(rows[0]) : null;
     });
@@ -237,8 +255,40 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     });
   }
 
+  async findRemoved(ids?: number[]): Promise<PurchaseOrderIdentity[]> {
+    if (!this.writable() || ids?.length === 0) return [];
+    return this.connection((client) => readPurchaseOrderRemovals(client, ids));
+  }
+
+  async remove(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<void> {
+    const { id, number, revision, legacyVersion, lines, totals, amountInWords } = snapshot;
+    await this.transaction(async (client) => {
+      await lockPurchaseOrderWrite(client, id);
+      const removed = await readPurchaseOrderRemovals(client, [id]);
+      if (removed.some((order) => order.number === number)) return;
+      const { rows: [current] } = await client.query<Pick<Stored, 'revision' | 'legacyVersion'>>(
+        `SELECT revision, legacy_version AS "legacyVersion" FROM tuvansa.purchase_order_edits
+         WHERE order_id=$1 AND order_number=$2`, [id, number],
+      );
+      if (revision !== (current?.revision ?? 0) || (current && current.legacyVersion !== legacyVersion)) {
+        throw new ConflictError('La orden cambió. Vuelve a abrir la baja y revisa sus datos.', 'PURCHASE_ORDER_REMOVAL_STALE');
+      }
+      if (!current) {
+        await client.query(
+          `INSERT INTO tuvansa.purchase_order_edits(order_id, order_number, revision, legacy_version, document)
+           VALUES($1,$2,1,$3,$4::jsonb)`, [id, number, legacyVersion, JSON.stringify({ lines, totals, amountInWords })],
+        );
+      }
+      await client.query('INSERT INTO tuvansa.purchase_order_removals(order_id,order_number,legacy) VALUES($1,$2,$3)',
+        [id, number, !isLocalPurchaseOrderId(id)]);
+      await this.saveStock(client, id, number, stock, false);
+    });
+  }
+
   async save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[]): Promise<PurchaseOrderEditSnapshot> {
     return this.transaction(async (client) => {
+      await lockPurchaseOrderWrite(client, snapshot.id);
+      await assertActivePurchaseOrder(client, snapshot);
       const lines = await this.allocateLineIds(client, snapshot.lines);
       const document = { lines, totals: snapshot.totals, amountInWords: snapshot.amountInWords };
       const { id, number, legacyVersion, revision } = snapshot;
@@ -269,8 +319,8 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     return lines.map((line) => line.id === 0 ? { ...line, id: Number(rows[index++]!.id) } : line);
   }
 
-  private async saveStock(client: PostgresClient, id: number, number: string, stock: PurchaseOrderStockChange[]) {
-    const { rows } = isLocalPurchaseOrderId(id) ? { rows: [] } : await client.query<{ productId: string; nextReceiptAt: string }>(
+  private async saveStock(client: PostgresClient, id: number, number: string, stock: PurchaseOrderStockChange[], preserveReceiptDates = !isLocalPurchaseOrderId(id)) {
+    const { rows } = !preserveReceiptDates ? { rows: [] } : await client.query<{ productId: string; nextReceiptAt: string }>(
       `SELECT product_id AS "productId", next_receipt_at::text AS "nextReceiptAt"
        FROM tuvansa.purchase_order_stock_deltas WHERE order_id=$1 AND order_number=$2 AND next_receipt_at IS NOT NULL`, [id, number],
     );

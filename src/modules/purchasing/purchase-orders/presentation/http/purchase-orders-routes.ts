@@ -19,6 +19,8 @@ export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController)
   router.get('/:purchaseOrderId/actions/pieces', controller.panel('pieces'));
   router.get('/:purchaseOrderId/edit', controller.getEditor);
   router.get('/:purchaseOrderId/edit/products', controller.searchEditorProducts);
+  router.get('/:purchaseOrderId/removal', controller.getRemoval);
+  router.delete('/:purchaseOrderId', controller.remove);
   router.patch('/:purchaseOrderId', controller.saveEdition);
   router.get('/:purchaseOrderId', controller.getById);
   return router;

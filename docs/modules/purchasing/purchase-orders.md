@@ -18,6 +18,8 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Nueva orden de compra / Proveedor | `GET /create/suppliers?q=...` | Proveedores activos de `FPRV` |
 | Nueva orden de compra / Producto | `GET /create/products?supplierCode=...&q=...` | `FINV`, `FUNIDAD` y condiciones de compra del proveedor |
 | Nueva orden de compra / OK | `POST /` | Alta transaccional en PostgreSQL |
+| Papelera / Baja de orden de compra | `GET /:purchaseOrderId/removal` | `FPENC`, `FPLIN` y revisión local vigente |
+| Baja de orden de compra / Sí | `DELETE /:purchaseOrderId` | Baja transaccional y ajuste del pendiente en PostgreSQL |
 | Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
 | Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
 | Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
@@ -151,3 +153,13 @@ La ventana web adapta el movimiento O de TUVANSA. El folio web se asigna al guar
 `EALM#1/240` usa `FALMCAT.CATALM` y `CATDESCR`, filtrados por tipo, compañía y sesión. La consulta web es **derivada** de ese código. Para el perfil inicial de México replica la lista observada en Omnis (`01, 11, 12, 13, 97, 99`), dentro de la compañía activa y los almacenes compartidos. La API usa el alcance configurado en `PURCHASE_ORDER_WAREHOUSES` en vez de una sesión de Omnis. El primer código configurado es el predeterminado si está en el catálogo. Para otra compañía sin un alcance configurado sólo se consultan almacenes de catálogo sin restricción por usuario.
 
 Los catálogos y la configuración se leen de MySQL. El flujo y las fórmulas se leyeron en la biblioteca de Omnis 7. El selector de almacenes se contrastó en ejecución y con el formato exportado `EALM#1`. El alta web, su borrador y su persistencia se verifican en PostgreSQL de pruebas. La captura posterior de comentarios de `MOCOM/50` y las variantes automáticas de otros alias de empresa quedan pendientes.
+
+## Baja de orden de compra
+
+`MCONTROL/6` llama a `MOCOM/22`. El procedimiento exige una orden de la compañía activa con `PESPEDIDO=2` y verifica que no haya partidas confirmadas (`PLASIGNADO`) antes de mostrar **Sí / No** con `PENUM` y `PRVCOD`. Se observó el aviso en Omnis 7 con `O000001` y se eligió **No**.
+
+Al confirmar, `MOCOM/22 → MBASE/124` resta a `FINV.IPEDPRV` el pendiente de la partida, `max(PLCANT-PLSURT, 0)`. `MBASE/72` elimina las partidas y el encabezado. La regla permite recepciones parciales y conserva sus documentos. `MOCOM/2` y `EOC#8` corresponden a otra acción del menú.
+
+La API aplica esa regla en PostgreSQL con un registro de baja por identificador y folio. Excluye la orden de detalle, buscador, flechas y consultas de compras. El catálogo abre la siguiente disponible y usa la anterior al llegar al final. Para órdenes web retira su contribución al pendiente. Para las heredadas descuenta las partidas aún pendientes en la lectura de MySQL, de modo que una recepción posterior en el sistema de origen no duplique el descuento. Los paneles de Inventarios **Ordenado a proveedor** y **CT** excluyen las bajas. Los documentos de recepción conservan su referencia.
+
+`DELETE` recibe `number`, `revision` y `legacyVersion` del GET de confirmación. Revalida tipo, compañía, confirmaciones y versión. La baja y el ajuste se guardan en la misma transacción. Repetir la confirmación devuelve la baja aplicada sin descontar cantidades otra vez. Esta adaptación cubre la baja completa de TUVANSA. El permiso interno `MOCOM22` depende de la sesión de Omnis. La API aplica la compañía activa de Tuvansa ERP.

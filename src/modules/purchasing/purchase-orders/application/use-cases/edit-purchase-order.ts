@@ -1,26 +1,15 @@
-import { createHash } from 'node:crypto';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type {
-  PurchaseOrderEditInput, PurchaseOrderEditLegacyDataSource, PurchaseOrderEditRules, PurchaseOrderEditStorage,
+  PurchaseOrderEditInput, PurchaseOrderEditLegacyDataSource, PurchaseOrderEditStorage,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions } from '../../domain/entities/purchase-order-edit.js';
-import type { PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrdersRepository } from '../../domain/repositories/purchase-orders-repository.js';
+import { loadPurchaseOrderWriteContext } from './load-purchase-order-write-context.js';
 
 const stale = () => new ConflictError('La orden cambió desde que abriste el editor. Vuelve a abrirlo.', 'PURCHASE_ORDER_EDIT_STALE');
-
-function legacyVersion(order: PurchaseOrderProps, rules: PurchaseOrderEditRules) {
-  const { ordered, fulfilled, assigned, remaining, ...money } = order.totals;
-  return createHash('sha256').update(JSON.stringify({
-    id: order.id, number: order.number, type: order.documentKind, supplierId: order.supplier.id,
-    rules, dates: order.dates, warehouse: order.warehouse, discounts: order.discountPercentages,
-    taxPercentage: order.taxPercentage, money, ordered, fulfilled, assigned, remaining,
-    lines: order.lines.map(({ description: _description, currencyName: _currencyName, supplierProductCode: _supplierProductCode, ...line }) => line),
-  })).digest('hex');
-}
 
 export class EditPurchaseOrder {
   constructor(
@@ -31,17 +20,8 @@ export class EditPurchaseOrder {
   ) {}
 
   private async context(id: number) {
-    const local = await this.creation.findLocal(id);
-    const [source, rules, savedOrders] = await Promise.all([
-      local?.order ?? this.legacy.findById(id),
-      local?.metadata.rules ?? this.legacy.rules(id),
-      this.storage.find([id]),
-    ]);
-    if (!source || !rules) throw new NotFoundError('Orden de compra');
-    const base = source.toPrimitives();
-    const stored = savedOrders.find((item) => item.number === base.number);
-    const version = local?.fingerprint ?? legacyVersion(base, rules);
-    const lines = stored?.lines ?? base.lines;
+    const context = await loadPurchaseOrderWriteContext(id, this.legacy, this.storage, this.creation);
+    const { base, rules, lines, stored, version } = context;
     let reason = '';
     if (base.documentKind !== 'order') reason = 'Omnis permite editar partidas desde esta ventana sólo para pedidos.';
     else if (rules.companyId !== rules.activeCompanyId) reason = 'La orden pertenece a otra compañía.';
@@ -50,7 +30,7 @@ export class EditPurchaseOrder {
     } else if (stored && stored.legacyVersion !== version) {
       reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
     } else if (!this.storage.writable()) reason = 'El guardado de órdenes requiere PostgreSQL.';
-    return { base, rules, lines, stored, version, reason, local };
+    return { ...context, reason };
   }
 
   async get(id: number) {
@@ -64,7 +44,13 @@ export class EditPurchaseOrder {
   }
 
   async products(id: number, query: string) {
-    const rules = (await this.creation.findLocal(id))?.metadata.rules ?? await this.legacy.rules(id);
+    const local = await this.creation.findLocal(id);
+    const removed = await this.storage.findRemoved([id]);
+    if (removed.length > 0) {
+      const current = local?.order ?? await this.legacy.findById(id);
+      if (!current || removed.some(({ number }) => number === current.identity.number)) throw new NotFoundError('Orden de compra');
+    }
+    const rules = local?.metadata.rules ?? await this.legacy.rules(id);
     if (!rules) throw new NotFoundError('Orden de compra');
     return (await this.legacy.searchProducts(query, rules.supplierUnits)).map((product) => productEditOptions(product, rules));
   }

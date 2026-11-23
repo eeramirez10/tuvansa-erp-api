@@ -22,7 +22,7 @@ const searchSchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).default(25),
 });
 const panelQuerySchema = z.object({
-  fiscalYear: z.coerce.number().int().min(1900).max(2200).default(new Date().getFullYear()),
+  fiscalYear: z.coerce.number().int().min(1900).max(2200).optional(),
   costCenter: z.string().trim().min(1).max(3).default('1'),
   asOfDate: z.iso.date().default(new Date().toISOString().slice(0, 10)),
 });
@@ -36,10 +36,15 @@ const reconciliationSchema = z.strictObject({
 const classifiersSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.string().trim().max(5)).length(9) });
 const budgetsSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.number()).length(12) });
 const reviewSchema = z.strictObject({ revision: z.int().nonnegative(), movementIds: z.array(z.int().positive()).min(1) });
-const transferSchema = z.strictObject({
-  requestKey: z.uuid(), sourceBankAccountId: z.int().positive(), date: z.iso.date(), amount: z.number().positive(),
+const transferFields = {
+  requestKey: z.uuid(), date: z.iso.date(), amount: z.number().positive(),
   reference: z.string().trim().max(10), beneficiary: z.string().trim().max(85), description: z.string().trim().max(90),
-});
+};
+const transferSchema = z.union([
+  z.strictObject({ ...transferFields, sourceBankAccountId: z.int().positive() }),
+  z.strictObject({ ...transferFields, destinationBankAccountId: z.int().positive(), mode: z.enum(['check', 'transfer']) }),
+]);
+const transferQuery = z.object({ direction: z.enum(['incoming', 'outgoing']).default('incoming') });
 
 export class BankAccountsController {
   constructor(
@@ -149,7 +154,8 @@ export class BankAccountsController {
   prepareTransfer: RequestHandler = async (request, response, next) => {
     try {
       const { bankAccountId } = idParamsSchema.parse(request.params);
-      response.set('Cache-Control', 'no-store').json({ data: await this.captureTransfer.prepare(1, bankAccountId) });
+      const { direction } = transferQuery.parse(request.query);
+      response.set('Cache-Control', 'no-store').json({ data: await this.captureTransfer.prepare(1, bankAccountId, direction) });
     } catch (error) { next(error); }
   };
 

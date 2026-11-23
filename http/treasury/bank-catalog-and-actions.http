@@ -1,7 +1,9 @@
 @baseUrl = http://localhost:3000/api
 @banks = {{baseUrl}}/treasury/bank-accounts
 @bankAccountId = 6610
-@sourceBankId = 6611
+@destinationBankId = 6611
+@testChequeNumber = 18887
+@transferDate = 2025-12-31
 @catalogCode = 1102100997
 @catalogRevision = sustituir-revision-de-edicion
 @panelRevision = 0
@@ -77,8 +79,8 @@ Content-Type: application/json
 
 { "revision": "{{catalogRevision}}", "confirmed": true }
 
-### Traspasos, origen disponible para la cuenta destino
-GET {{banks}}/{{bankAccountId}}/actions/transfer/capture
+### Traspasos, destinos disponibles para la cuenta de origen
+GET {{banks}}/{{bankAccountId}}/actions/transfer/capture?direction=outgoing
 
 ### Registrar traspaso en el entorno de pruebas
 POST {{banks}}/{{bankAccountId}}/actions/transfer
@@ -86,12 +88,29 @@ Content-Type: application/json
 
 {
   "requestKey": "cc47f080-9679-4d54-84c7-86aa46127ab8",
-  "sourceBankAccountId": {{sourceBankId}},
-  "date": "{{date}}",
+  "destinationBankAccountId": {{destinationBankId}},
+  "mode": "transfer",
+  "date": "{{transferDate}}",
   "amount": 25.12,
   "reference": "PRUEBA01",
   "beneficiary": "TESORERÍA PRUEBAS",
   "description": "Registro de prueba"
+}
+
+### Registrar traspaso por cheque entre cuentas de prueba
+# Usar un número disponible en la cuenta de origen y un UUID nuevo.
+POST {{banks}}/{{bankAccountId}}/actions/transfer
+Content-Type: application/json
+
+{
+  "requestKey": "cf2da36e-3383-4640-b15d-1ec607893238",
+  "destinationBankAccountId": {{destinationBankId}},
+  "mode": "check",
+  "date": "{{transferDate}}",
+  "amount": 12.34,
+  "reference": "{{testChequeNumber}}",
+  "beneficiary": "TESORERÍA PRUEBAS",
+  "description": "Traspaso por cheque de prueba"
 }
 
 ### Mayor, consultar presupuesto

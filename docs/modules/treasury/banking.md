@@ -76,7 +76,7 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | Mayor C.C. | `/:bankAccountId/actions/cost-center-ledger?costCenter=1` | Centros de `FALMCAT` (`CATTIPO='CEN'`) y registro `FCCBENC.BCCKEY='01'+C.C.+BCOD`. El PATCH guarda el primer presupuesto del centro seleccionado. |
 | Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'`. El PATCH marca la revisión de partidas web aplicadas con `*`. |
 | Clasificar | `/:bankAccountId/actions/classifiers` | Nueve niveles de `FAG`, `AGT=1..9` y `AGTIPO=3`, con valores de `FBENC.BPAR1..9`. El PATCH guarda las claves disponibles. |
-| Traspasos entre Cuentas | `/:bankAccountId/actions/transfer/capture` | `FTIPMV.TICLA='3'` y `FCIA.CIAPOLIZACONT`. El POST en `/:bankAccountId/actions/transfer` registra una póliza de diario con dos partidas. |
+| Traspasos entre Cuentas | `/:bankAccountId/actions/transfer/capture?direction=outgoing` | `FTIPMV.TICLA='3'` y `FCIA.CIAPOLIZACONT`. El POST en `/:bankAccountId/actions/transfer` registra Cheque o Traspas y la póliza de diario con dos partidas. |
 | Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0`. Consulta, comentarios e impresión si hay una póliza seleccionada. |
 
 Todos los paneles devuelven `button`, `section`, `source`, `available`,
@@ -88,11 +88,38 @@ y centro cuando corresponde.
 
 ## Traspasos y conciliación por archivo
 
-**Traspasos entre Cuentas** abre la cuenta destino y permite elegir otra cuenta en pesos con permiso de pagos. La cuenta destino debe admitir depósitos. La captura nativa `bank-full-08-transfer.png` muestra el tipo 3 y el modo **Traspas**. La web asigna un folio `BW`, crea el cargo, el abono y una póliza de diario aplicada en la misma transacción. Cada partida se concilia en su propia cuenta. La operación registra el asiento en PostgreSQL.
+**Traspasos entre Cuentas** usa la cuenta abierta como origen. El usuario
+elige una cuenta destino distinta que admita depósitos en pesos. La captura
+nativa `bank-inline-traspas-mode-destination.png` confirma ese sentido para
+**Traspas**. **Cheque** permite capturar el número y muestra como referencia el
+siguiente número de la cuenta de origen. La API valida que el cheque no esté
+registrado para esa cuenta.
+
+La prueba local de Omnis del 23/11/2026 creó la póliza de diario
+`312512-0002`, con número de cheque 18886 en `FPOLIZA.POCHEQUE`. La póliza
+pasó de `POAPLICADA=0` a `1` durante la misma acción. En `FBANMOV`, el origen
+tuvo un abono de $12.34 y el destino un cargo de $12.34. `BCHEQNUM` avanzó
+en el emisor. Los saldos contables cambiaron al aplicarse y los saldos
+conciliados conservaron su valor. La captura `bank-inline-policy-fixture.png`
+y las lecturas comparativas están guardadas en `captures/`. La Baja nativa
+de esa póliza restituyó los saldos y dejó su registro de auditoría y el
+consecutivo avanzado.
+
+La web asigna un folio `BW` y guarda la póliza aplicada y las dos partidas en
+una transacción PostgreSQL. El número registrado por **Cheque** se refleja en
+la ficha y en la póliza. Cada partida se concilia por separado. La consulta
+Auxiliar usa el año fiscal abierto cuando el cliente no especifica un año.
+Los clientes que envían `sourceBankAccountId` conservan el contrato anterior
+para la modalidad **Traspas**.
 
 **Concilia Automático** compara las partidas pendientes con un archivo CSV o TSV. El archivo debe contener las columnas `Fecha`, `Referencia`, `Ingresos` y `Egresos`, con fecha `AAAA-MM-DD` o `DD/MM/AAAA` y punto decimal. La vista selecciona coincidencias únicas por referencia e importe firmado. **Liga** permite resolver filas ambiguas con una partida pendiente del mismo importe y signo. Se pueden quitar coincidencias antes de registrar. La captura nativa `bank-full-24-auto-open.png` muestra la comparación de los dos auxiliares. El CSV y el TSV son formatos de intercambio de la web.
 
-La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza. **Gastos por prv.** permite pagar recepciones locales y el gasto fiscal GA conserva su flujo pendiente. La modalidad **Cheque** de traspaso y **Imprimir cheque** dependen del flujo y formato bancario nativo. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. El cambio de estado de partidas históricas a tránsito y la operación nativa **Traspasa +** quedan pendientes.
+La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. El cambio de estado de partidas históricas a tránsito y la operación nativa **Traspasa +** quedan pendientes.
+
+**Bancos → Gastos por prv.** abre el informe **Compras por proveedor**
+(`EBANCO#1/8 → EBANCO#9`). La captura fiscal GA está en **Recepciones →
+Gastos múltiples** (`MRECEP/5 → ERECEP#12`). La operación web de pago de una
+recepción existente registra un PP y conserva sus endpoints de captura.
 
 ## Pagos de recepciones migradas
 

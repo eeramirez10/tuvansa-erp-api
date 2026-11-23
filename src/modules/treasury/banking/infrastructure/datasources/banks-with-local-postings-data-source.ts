@@ -5,10 +5,11 @@ import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../do
 import { bankReconciliationsAvailable, joinBankReconciliation, readBankReconciliationState } from './bank-reconciliation-reads.js';
 import { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 import { LegacyMysqlBankPanelsDataSource } from './legacy-mysql-bank-panels-data-source.js';
-import { readBankTransfers } from './postgres-bank-transfers.js';
+import { bankTransferCheque, readBankTransfers } from './postgres-bank-transfers.js';
 
 const money = (value: number) => Number(value.toFixed(2));
 const emptyPostings = { amount: 0, hasMovements: false };
+const emptyTransfers = { ...emptyPostings, lastCheque: 0 };
 
 export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCatalogDataSource {
   override findById(id: number) { return this.withPostings(super.findById(id)); }
@@ -33,22 +34,26 @@ export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCat
         );
         return row ?? emptyPostings;
       }),
-      readBankTransfers(emptyPostings, async (client) => {
-        const { rows: [row] } = await client.query<typeof emptyPostings>(
-          `SELECT coalesce(sum(amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements"
-           FROM tuvansa.bank_transfer_movements WHERE bank_account_id=$1 AND company_id=1`,
+      readBankTransfers(emptyTransfers, async (client) => {
+        const { rows: [row] } = await client.query<typeof emptyTransfers>(
+          `SELECT coalesce(sum(posting.amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements",
+                  coalesce(max(transfer.reference::bigint) FILTER (WHERE ${bankTransferCheque}),0)::float8 AS "lastCheque"
+           FROM tuvansa.bank_transfer_movements AS posting
+           JOIN tuvansa.bank_transfers AS transfer ON transfer.id=posting.transfer_id AND transfer.company_id=posting.company_id
+           WHERE posting.bank_account_id=$1 AND posting.company_id=1`,
           [data.id],
         );
-        return row ?? emptyPostings;
+        return row ?? emptyTransfers;
       }),
       readBankReconciliationState(1, data.id),
     ]);
     const net = money(collections.amount - payments.amount + transfers.amount);
     const movements = data.control.movements || payments.hasMovements || collections.hasMovements || transfers.hasMovements;
-    if (net === 0 && reconciled.delta === 0 && movements === data.control.movements) return account;
+    const nextCheckNumber = Math.max(data.control.nextCheckNumber, transfers.lastCheque);
+    if (net === 0 && reconciled.delta === 0 && movements === data.control.movements && nextCheckNumber === data.control.nextCheckNumber) return account;
     return BankAccount.create({
       ...data,
-      control: { ...data.control, movements },
+      control: { ...data.control, movements, nextCheckNumber },
       balances: {
         ...data.balances,
         current: net === 0 ? data.balances.current : money(data.balances.current + net),
@@ -75,7 +80,7 @@ interface LocalBankRow {
 
 interface BankPaymentRow extends LocalBankRow { mode: 'check' | 'transfer' }
 interface BankCollectionRow extends LocalBankRow { reference: string }
-interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string }
+interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string; mode: 'check' | 'transfer' }
 
 const bankRow = ({ id, number, policyNumber, date, beneficiary, description, userId, statementDate }: LocalBankRow) => ({
   movementId: Number(id), policyId: Number(id), checkNumber: number,
@@ -93,8 +98,9 @@ const collectionRow = (row: BankCollectionRow) => ({
   movementType: 'PC', charge: Number(row.amount), credit: 0, mode: 'deposit',
 });
 const transferRow = (row: BankTransferRow) => ({
-  ...bankRow(row), policyId: Number(row.policyId), bankNumber: row.reference || row.number, movementType: row.movementType,
-  charge: Math.max(Number(row.amount), 0), credit: Math.max(-Number(row.amount), 0), mode: 'transfer',
+  ...bankRow(row), policyId: Number(row.policyId), bankNumber: row.mode === 'check' ? '' : row.reference || row.number,
+  checkNumber: row.mode === 'check' ? row.reference : row.number, movementType: row.movementType,
+  charge: Math.max(Number(row.amount), 0), credit: Math.max(-Number(row.amount), 0), mode: row.mode,
 });
 
 const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' || key === 'automatic-reconciliation';
@@ -104,10 +110,12 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const base = await super.getPanel(id, key, options);
     const keys: BankPanelKey[] = ['auxiliary', 'reconciliation', 'automatic-reconciliation', 'authorization-review', 'payments', 'deposits'];
     if (!keys.includes(key) || (!base.available && key !== 'payments' && key !== 'deposits')) return base;
+    const fiscalYear = typeof base.summary?.fiscalYear === 'number' ? base.summary.fiscalYear : options.fiscalYear;
+    const panelOptions = { ...options, fiscalYear };
     const [payments, collections, transfers, reconciliation] = await Promise.all([
-      key === 'deposits' ? [] : this.paymentRows(id, key, options),
-      key === 'payments' ? [] : this.collectionRows(id, key, options),
-      key === 'payments' || key === 'deposits' ? [] : this.transferRows(id, key, options),
+      key === 'deposits' ? [] : this.paymentRows(id, key, panelOptions),
+      key === 'payments' ? [] : this.collectionRows(id, key, panelOptions),
+      this.transferRows(id, key, panelOptions),
       pendingReconciliation(key) ? readBankReconciliationState(1, id) : null,
     ]);
     const local = [...payments, ...collections, ...transfers].sort((a, b) =>
@@ -139,7 +147,7 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
   }
 
   private paymentRows(id: number, key: BankPanelKey, { fiscalYear, asOfDate }: BankPanelOptions) {
-    const start = key === 'auxiliary' ? `${fiscalYear}-01-01` : null;
+    const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
     const end = key === 'automatic-reconciliation' ? asOfDate : null;
     return readSupplierPayments<ReturnType<typeof paymentRow>[]>([], async (client) => {
       const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
@@ -162,7 +170,7 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
   }
 
   private collectionRows(id: number, key: BankPanelKey, { fiscalYear, asOfDate }: BankPanelOptions) {
-    const start = key === 'auxiliary' ? `${fiscalYear}-01-01` : null;
+    const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
     const end = key === 'automatic-reconciliation' ? asOfDate : null;
     return readCustomerCollections<ReturnType<typeof collectionRow>[]>([], async (client) => {
       const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
@@ -184,20 +192,24 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
   }
 
   private transferRows(id: number, key: BankPanelKey, { fiscalYear, asOfDate }: BankPanelOptions) {
-    const start = key === 'auxiliary' ? `${fiscalYear}-01-01` : null;
+    const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
     const end = key === 'automatic-reconciliation' ? asOfDate : null;
+    const listedCheque = key === 'payments' || key === 'deposits';
     return readBankTransfers<ReturnType<typeof transferRow>[]>([], async (client) => {
       const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
       const { rows } = await client.query<BankTransferRow>(
         `SELECT posting.id::text, transfer.id::text AS "policyId", transfer.number, transfer.policy_number AS "policyNumber",
                 transfer.date::text, posting.amount::text, transfer.description, transfer.reference,
                 transfer.user_id AS "userId", transfer.beneficiary, transfer.movement_type AS "movementType",
+                coalesce(transfer.result->>'mode','transfer') AS mode,
                 settlement.statement_date::text AS "statementDate"
          FROM tuvansa.bank_transfer_movements AS posting
          JOIN tuvansa.bank_transfers AS transfer ON transfer.id = posting.transfer_id AND transfer.company_id = posting.company_id
          ${join}
          WHERE posting.bank_account_id = $1 AND posting.company_id = 1
            AND ($2::date IS NULL OR transfer.date >= $2) AND ($3::date IS NULL OR transfer.date <= $3)
+           ${listedCheque ? "AND transfer.result->>'mode' = 'check'" : ''}
+           ${key === 'payments' ? 'AND posting.amount < 0' : key === 'deposits' ? 'AND posting.amount > 0' : ''}
            ${pendingReconciliation(key) ? 'AND settlement.statement_date IS NULL' : ''}
          ORDER BY transfer.date, posting.id LIMIT 32767`,
         [id, start, end],

@@ -47,7 +47,7 @@ export const createBankingModule = (): Router => {
     new CaptureBankReconciliation(new PostgresBankReconciliations(undefined, undefined, accountCatalog), accountCatalog),
     new ConfigureBankPanels(panels, settings),
     new CaptureBankTransfer(
-      new PostgresBankTransfers(undefined, undefined, accountCatalog), new MysqlBankTransferReferences(accountCatalog),
+      new PostgresBankTransfers(undefined, undefined, accountCatalog), new MysqlBankTransferReferences(accountsDataSource),
     ),
   );
   const catalog = new BankCatalogWritesController(

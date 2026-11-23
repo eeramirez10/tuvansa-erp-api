@@ -83,7 +83,8 @@ const transferLines = (settlements: string) => `(
       'id', posting.id, 'account', posting.bank_code, 'accountId', posting.bank_account_id,
       'accountName', posting.bank_name, 'department', '',
       'debit', greatest(posting.amount, 0), 'credit', greatest(-posting.amount, 0),
-      'reference', transfer.reference, 'reconciled', settlement.statement_date IS NOT NULL
+      'reference', CASE WHEN transfer.result->>'mode'='check' THEN '' ELSE transfer.reference END,
+      'reconciled', settlement.statement_date IS NOT NULL
     ) ORDER BY posting.id)
     FROM tuvansa.bank_transfer_movements AS posting
     ${settlements}

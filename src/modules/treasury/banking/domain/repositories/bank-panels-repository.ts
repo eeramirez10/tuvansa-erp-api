@@ -14,7 +14,7 @@ export type BankPanelKey =
   | 'unapplied-auxiliary';
 
 export interface BankPanelOptions {
-  fiscalYear: number;
+  fiscalYear?: number | undefined;
   costCenter: string;
   asOfDate: string;
 }

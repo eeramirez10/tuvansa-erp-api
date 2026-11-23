@@ -7,6 +7,7 @@ import { migratePostgres } from '../../../../../shared/infrastructure/datasource
 import type { BankCatalogReadSession, BankCatalogStorage, BankCatalogWriteSession } from '../../domain/datasources/bank-catalog-data-source.js';
 import type { BankCatalogSnapshot } from '../../domain/entities/bank-catalog.js';
 import type { BankAccountSearchCriteria } from '../../domain/repositories/bank-accounts-repository.js';
+import { bankTransferCheque, bankTransfersAvailable } from './postgres-bank-transfers.js';
 
 const firstId = 7800000000000;
 const lastId = firstId + 99999998;
@@ -75,6 +76,16 @@ function session(client: PostgresClient): BankCatalogWriteSession {
          SELECT EXISTS(${queries.join(' UNION ALL ')}) AS found`, [id, code],
       );
       return row?.found === true;
+    },
+    async lastIssuedCheque(id) {
+      if (!await bankTransfersAvailable(client)) return 0;
+      const { rows: [row] } = await client.query<{ number: number }>(
+        `SELECT coalesce(max(transfer.reference::bigint),0)::float8 AS number
+         FROM tuvansa.bank_transfer_movements AS posting
+         JOIN tuvansa.bank_transfers AS transfer ON transfer.id=posting.transfer_id AND transfer.company_id=posting.company_id
+         WHERE posting.bank_account_id=$1 AND posting.company_id=1 AND ${bankTransferCheque}`, [id],
+      );
+      return row?.number ?? 0;
     },
     findById: (id) => find('id', id),
     findByCode: (code) => find('code', code),

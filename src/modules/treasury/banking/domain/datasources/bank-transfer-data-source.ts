@@ -12,15 +12,24 @@ export interface BankTransferSettings {
   fiscalEnd: string;
 }
 
-export interface BankTransferInput {
+export type BankTransferMode = 'check' | 'transfer';
+export type BankTransferDirection = 'incoming' | 'outgoing';
+
+interface BankTransferFields {
   requestKey: string;
-  sourceBankAccountId: number;
   date: string;
   amount: number;
   reference: string;
   beneficiary: string;
   description: string;
 }
+
+export type BankTransferInput = BankTransferFields & (
+  | { sourceBankAccountId: number }
+  | { destinationBankAccountId: number; mode: BankTransferMode }
+);
+
+export type ResolvedBankTransferInput = BankTransferFields & { sourceBankAccountId: number; mode: BankTransferMode };
 
 export interface BankTransferResult {
   id: number;
@@ -35,19 +44,21 @@ export interface BankTransferResult {
   reference: string;
   beneficiary: string;
   description: string;
+  mode: BankTransferMode;
 }
 
 export interface BankTransferReferences {
   settings(companyId: number): Promise<BankTransferSettings | null>;
   account(id: number): Promise<BankAccountProps | null>;
-  sources(companyId: number): Promise<BankAccountProps[]>;
+  candidates(companyId: number, role: 'source' | 'destination'): Promise<BankAccountProps[]>;
+  chequeExists(companyId: number, sourceAccountId: number, number: string): Promise<boolean>;
 }
 
 export interface BankTransferCommand {
   companyId: number;
   userId: number;
   destinationAccountId: number;
-  input: BankTransferInput;
+  input: ResolvedBankTransferInput;
   fingerprint: string;
   resolvePosting(lookup?: BankAccountLookup): Promise<{
     source: BankTransferAccount;

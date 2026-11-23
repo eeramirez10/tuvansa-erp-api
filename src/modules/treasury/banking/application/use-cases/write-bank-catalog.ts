@@ -60,6 +60,7 @@ export class WriteBankCatalog {
     if (!account) throw new NotFoundError('Cuenta bancaria');
     const fields = bankCatalogFields(account);
     fields.control.movements ||= Boolean(catalog && await catalog.hasPostings(id, code));
+    if (catalog) fields.control.nextCheckNumber = Math.max(fields.control.nextCheckNumber, await catalog.lastIssuedCheque(id));
     return {
       account, fields, legacy, snapshotRevision: snapshot?.revision ?? 0,
       createdOn: snapshot?.createdOn ?? account.toPrimitives().createdAt ?? localDate.format(this.clock()),

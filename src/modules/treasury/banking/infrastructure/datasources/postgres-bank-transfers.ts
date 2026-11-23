@@ -13,6 +13,7 @@ const movementIdStart = 7600000000000;
 
 export const isLocalBankTransferId = (id: number) => id >= transferIdStart && id <= transferIdEnd;
 export const isLocalBankTransferMovementId = (id: number) => id >= movementIdStart && id < movementIdStart + 2 * (transferIdEnd - transferIdStart + 1);
+export const bankTransferCheque = "posting.amount < 0 AND transfer.result->>'mode' = 'check'";
 
 const migrations = [{
   id: 'bank_transfer_capture',
@@ -99,7 +100,7 @@ export class PostgresBankTransfers implements BankTransferDataSource {
     if (row && row.fingerprint !== fingerprint) {
       throw new ConflictError('La solicitud de traspaso ya se usó con otros datos.', 'BANK_TRANSFER_REQUEST_CONFLICT');
     }
-    return row?.result ?? null;
+    return row ? { ...row.result, mode: row.result.mode ?? 'transfer' } : null;
   }
 
   findRequest(companyId: number, requestKey: string, fingerprint: string) {
@@ -143,6 +144,17 @@ export class PostgresBankTransfers implements BankTransferDataSource {
         [companyId, accountId]);
     }
     const { source, destination, settings } = await resolvePosting(this.catalog?.lookupOn(client));
+    if (input.mode === 'check') {
+      const { rows } = await client.query(
+        `SELECT 1 FROM tuvansa.bank_transfer_movements AS posting
+          JOIN tuvansa.bank_transfers AS transfer ON transfer.id=posting.transfer_id AND transfer.company_id=posting.company_id
+          WHERE posting.company_id=$1 AND posting.bank_account_id=$2 AND ${bankTransferCheque}
+            AND trim(leading '0' from transfer.reference)=trim(leading '0' from $3::text)
+          LIMIT 1`,
+        [companyId, source.id, input.reference],
+      );
+      if (rows.length) throw new ConflictError('Ese cheque ya está registrado para la cuenta de origen.', 'BANK_TRANSFER_CHEQUE_EXISTS');
+    }
     const { rows: [allocated] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.bank_transfer_ids') AS id");
     const id = Number(allocated!.id);
     const ordinal = id - transferIdStart;
@@ -150,7 +162,7 @@ export class PostgresBankTransfers implements BankTransferDataSource {
     const result = {
       id, number: 'BW' + sequence, policyNumber: settings.policyType + 'BW' + sequence,
       source, destination, sourceMovementId: movementIdStart + ordinal * 2, destinationMovementId: movementIdStart + ordinal * 2 + 1,
-      date: input.date, amount: input.amount, reference: input.reference, beneficiary: input.beneficiary, description: input.description,
+      date: input.date, amount: input.amount, reference: input.reference, beneficiary: input.beneficiary, description: input.description, mode: input.mode,
     };
 
     await client.query(

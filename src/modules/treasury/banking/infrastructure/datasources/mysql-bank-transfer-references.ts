@@ -31,16 +31,27 @@ export class MysqlBankTransferReferences implements BankTransferReferences {
     return (await this.accounts.findById(id))?.toPrimitives() ?? null;
   }
 
-  async sources(companyId: number) {
+  async candidates(companyId: number, role: 'source' | 'destination') {
     const limit = 250;
     const applicable: BankAccountProps[] = [];
     let offset = 0;
     for (;;) {
       const { items, total } = await this.accounts.search({ offset, limit });
       const accounts = items.map((item) => item.toPrimitives());
-      applicable.push(...accounts.filter((account) => canTransfer(account, companyId, 'source')));
+      applicable.push(...accounts.filter((account) => canTransfer(account, companyId, role)));
       offset += items.length;
       if (!items.length || offset >= total) return applicable;
     }
+  }
+
+  async chequeExists(companyId: number, sourceAccountId: number, number: string) {
+    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+      `SELECT 1 FROM FBANMOV m JOIN FPOLIZA p ON p.POSEQ=m.POSEQ
+        WHERE m.BSEQ=? AND m.BAIMPORNEG>0 AND p.POCIA=? AND p.POEST=0
+          AND TRIM(LEADING '0' FROM TRIM(p.POCHEQUE))=TRIM(LEADING '0' FROM ?)
+        LIMIT 1`,
+      [sourceAccountId, companyId, number],
+    );
+    return rows.length > 0;
   }
 }

@@ -37,7 +37,8 @@ it('registers the first transfer to a new account with both bank movements and a
     const transfer = new CaptureBankTransfer(storage, {
       settings: async () => ({ policyType: '3', fiscalStart: '2026-01-01', fiscalEnd: '2026-12-31' }),
       account: async () => { throw new Error('La escritura debe reutilizar la conexión del registro.'); },
-      sources: async () => [source],
+      candidates: async () => [source],
+      chequeExists: async (_companyId, _accountId, number) => number === '41',
     });
     const input = {
       requestKey: 'cc47f080-9679-4d54-84c7-86aa46127ab8',
@@ -57,10 +58,34 @@ it('registers the first transfer to a new account with both bank movements and a
     );
     expect(rows).toEqual([{ id: source.id, amount: -25.12 }, { id: destination.id, amount: 25.12 }]);
 
+    const cheque = {
+      requestKey: '3274a226-6733-4a98-b72b-a2d4d05d4ab2',
+      destinationBankAccountId: destination.id, mode: 'check' as const, date: input.date, amount: 12.34,
+      reference: '00042', beneficiary: input.beneficiary, description: 'Traspaso con cheque',
+    };
+    const checked = await transfer.save(1, 0, source.id, cheque);
+    expect(checked).toMatchObject({ mode: 'check', reference: '00042', source: { id: source.id }, destination: { id: destination.id } });
+    expect(await transfer.save(1, 0, source.id, cheque)).toEqual(checked);
+    const reuse = { ...cheque, requestKey: '3fadb241-f02c-4ae6-a99d-29487c2dc7eb' };
+    await expect(transfer.save(1, 0, source.id, { ...reuse, reference: '42' })).rejects.toMatchObject({
+      code: 'BANK_TRANSFER_CHEQUE_EXISTS',
+    });
+    await expect(transfer.save(1, 0, source.id, { ...reuse, reference: '41' })).rejects.toMatchObject({
+      code: 'BANK_TRANSFER_CHEQUE_EXISTS',
+    });
+    await expect(transfer.save(1, 0, source.id, { ...reuse, reference: 'ABC' })).rejects.toMatchObject({
+      code: 'BANK_TRANSFER_INVALID_CHEQUE',
+    });
+    const { rows: chequeRows } = await db.query(
+      'SELECT bank_account_id::float8 AS id, amount::float8 AS amount FROM tuvansa.bank_transfer_movements WHERE transfer_id=$1 ORDER BY id',
+      [checked.id],
+    );
+    expect(chequeRows).toEqual([{ id: source.id, amount: -12.34 }, { id: destination.id, amount: 12.34 }]);
+
     destination.control.preventJournalEntries = true;
     await expect(transfer.save(1, 0, destination.id, { ...input, requestKey: 'd59e118a-f04d-4c6d-9c36-f1a36a6c37fa' })).rejects
       .toMatchObject({ code: 'BANK_TRANSFER_DESTINATION_UNAVAILABLE' });
   } finally {
     await db.close();
   }
-});
+}, 15_000);

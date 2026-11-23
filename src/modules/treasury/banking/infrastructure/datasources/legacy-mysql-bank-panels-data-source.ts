@@ -56,7 +56,7 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
           items: [...accountData.ledger.firstPeriod, ...accountData.ledger.secondPeriod],
           summary: { balances: accountData.balances, currency: accountData.currency },
         };
-      case 'auxiliary': return this.getAuxiliary(bankAccountId, options.fiscalYear);
+      case 'auxiliary': return this.getAuxiliary(bankAccountId, await this.fiscalYear(options.fiscalYear));
       case 'reconciliation': return this.getReconciliation(accountData.code, accountData.balances.bank, accountData.balances.inTransit);
       case 'automatic-reconciliation': return this.getAutomaticReconciliation(bankAccountId, options.asOfDate, accountData.balances.bank);
       case 'cost-center-ledger': return this.getCostCenterLedger(accountData.code, options.costCenter);
@@ -68,8 +68,16 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
           summary: { balance: accountData.balances.current, currency: accountData.currency },
         };
       case 'transfer': return this.getTransferConfiguration();
-      case 'unapplied-auxiliary': return this.getUnappliedAuxiliary(bankAccountId, options.fiscalYear);
+      case 'unapplied-auxiliary': return this.getUnappliedAuxiliary(bankAccountId, await this.fiscalYear(options.fiscalYear));
     }
+  }
+
+  private async fiscalYear(requestedYear?: number): Promise<number> {
+    if (requestedYear !== undefined) return requestedYear;
+    const [[period]] = await legacyMysqlPool.execute<(RowDataPacket & { fiscalYear: number | null })[]>(
+      'SELECT YEAR(CIAFI) AS fiscalYear FROM FCIA WHERE CIASEQ=1 LIMIT 1',
+    );
+    return period?.fiscalYear || new Date().getFullYear();
   }
 
   private async getAuxiliary(bankAccountId: number, fiscalYear: number): Promise<BankPanelResponse> {
@@ -92,7 +100,7 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
     const items = toItems(rows);
     return {
       button: 'Auxiliar', section: 'actions', source: ['FBANMOV', 'FBENC', 'FPOLIZA'], available: true, readOnly: true, items,
-      summary: { charges: sum(items, 'charge'), credits: sum(items, 'credit'), balance: sum(items, 'charge') - sum(items, 'credit') },
+      summary: { fiscalYear, charges: sum(items, 'charge'), credits: sum(items, 'credit'), balance: sum(items, 'charge') - sum(items, 'credit') },
     };
   }
 

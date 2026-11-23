@@ -21,6 +21,7 @@ export interface BankCatalogReadSession {
   findByCode(code: string): Promise<BankCatalogSnapshot | null>;
   hasChildren(code: string): Promise<boolean>;
   hasPostings(id: number, code: string): Promise<boolean>;
+  lastIssuedCheque(id: number): Promise<number>;
 }
 
 export interface BankCatalogWriteSession extends BankCatalogReadSession {

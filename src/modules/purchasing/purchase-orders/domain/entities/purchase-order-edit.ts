@@ -20,19 +20,21 @@ export const displayPurchaseOrderEditLines = (lines: PurchaseOrderLine[]) => lin
   };
 });
 
-function initialPurchasePrice(product: PurchaseOrderEditProduct, rules: PurchaseOrderEditRules) {
+function initialPurchasePrice(product: PurchaseOrderEditProduct, rules: PurchaseOrderEditRules, creation = false) {
   const discountFactor = rules.supplierDiscounts.reduce((factor, discount) => factor * (1 - discount / 100), 1);
   // MOCOM/41 inicia la cotización en ILISTA5 o ILISTA6 antes de las reglas especiales de proveedor.
-  return product.currencyId > 1 ? product.dollarCost : discountFactor === 0 ? null : product.cost / discountFactor;
+  if (product.currencyId > 1 && !creation) return product.dollarCost;
+  return discountFactor === 0 ? null : (product.currencyId > 1 ? product.dollarCost : product.cost) / discountFactor;
 }
 
 const productEligible = (product: PurchaseOrderEditProduct, rules: PurchaseOrderEditRules) =>
   !product.inactive && (!rules.validateSupplier || !product.supplierCode || product.supplierCode === rules.supplierCode);
 
-export function productEditOptions(product: PurchaseOrderEditProduct, rules: PurchaseOrderEditRules) {
-  const basePrice = initialPurchasePrice(product, rules);
+export function productEditOptions(product: PurchaseOrderEditProduct, rules: PurchaseOrderEditRules, creation = false) {
+  const basePrice = initialPurchasePrice(product, rules, creation);
   return {
-    code: product.code, description: product.description, eligible: productEligible(product, rules),
+    code: product.code, description: product.description, eligible: productEligible(product, rules), taxable: product.taxable,
+    exciseTaxPercentage: product.exciseTaxPercentage ?? 0,
     defaultUnit: product.units.some(({ code }) => code === product.secondaryUnit)
       ? product.secondaryUnit : product.units[0]?.code ?? '',
     units: product.units.map(({ code, factor }) => ({ code, factor, suggestedPrice: basePrice === null ? null : round(basePrice * factor, 5) })),
@@ -47,7 +49,9 @@ function purchaseUnitFactor(product: PurchaseOrderEditProduct, unit: string, rul
 export function buildPurchaseOrderEdit(
   base: PurchaseOrderProps, current: PurchaseOrderLine[], input: PurchaseOrderEditInput,
   rules: PurchaseOrderEditRules, products: PurchaseOrderEditProduct[],
+  capture?: { initial: boolean; supplierTaxType: number },
 ) {
+  const creation = capture?.initial ?? false;
   const byCode = new Map(products.map((product) => [product.code.trim().toUpperCase(), product]));
   const byId = new Map(current.map((line) => [line.id, line]));
   const displayed = new Map(displayPurchaseOrderEditLines(current).map((line) => [line.id, line]));
@@ -85,7 +89,7 @@ export function buildPurchaseOrderEdit(
     if (rules.priceLocked && prior && sameProduct && (
       draft.discount !== prior.discount || (sameUnit && draft.price !== previous?.price)
     )) throw invalidLine(`El precio y el descuento están bloqueados en ${draft.productCode}.`);
-    const automaticPrice = rules.priceLocked && !sameProduct ? initialPurchasePrice(product, rules) : null;
+    const automaticPrice = rules.priceLocked && !sameProduct ? initialPurchasePrice(product, rules, creation) : null;
     if (rules.priceLocked && !sameProduct && automaticPrice === null) {
       throw invalidLine(`No hay un precio de compra disponible para ${draft.productCode}.`);
     }
@@ -95,7 +99,7 @@ export function buildPurchaseOrderEdit(
       : round(automaticPrice ?? draft.price / unitFactor, 5);
     const fulfilled = prior?.fulfilled ?? 0;
     // MOCOM/40 → MBASE/121 → /71. El alta usa el valor predeterminado de PLASIGNPZAS.
-    const pieces = prior ? draft.pieces : '';
+    const pieces = prior || creation ? draft.pieces : '';
     changed = true;
     lines.push({
       id: prior?.id ?? 0, productId: product.id, productCode: product.code, description: product.description,
@@ -114,8 +118,14 @@ export function buildPurchaseOrderEdit(
   if (!changed) return null;
 
   const totals = { ...base.totals, assigned: 0, ordered: 0, fulfilled: 0, remaining: 0, subtotal: 0, discount: 0, tax: 0, total: 0 };
-  const charges = totals.exciseTax + totals.freight + totals.insurance + totals.other;
   const discountFactor = base.discountPercentages.reduce((factor, value) => factor * (1 - value / 100), 1);
+  if (capture) {
+    totals.exciseTax = capture.supplierTaxType === 2 ? 0 : round(lines.reduce((total, line) => {
+      const rate = byCode.get(line.productCode.trim().toUpperCase())?.exciseTaxPercentage ?? 0;
+      return total + line.ordered * line.price * (1 - line.discount / 100) * rate / 100;
+    }, 0) * discountFactor, 2);
+  }
+  const charges = totals.exciseTax + totals.freight + totals.insurance + totals.other;
   const taxRate = base.taxPercentage / 100;
   totals.tax = round(charges * taxRate, 2);
   for (const line of lines) {

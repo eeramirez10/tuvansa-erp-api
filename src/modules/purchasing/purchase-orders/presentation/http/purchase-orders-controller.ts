@@ -7,6 +7,7 @@ import type { NavigatePurchaseOrder } from '../../application/use-cases/navigate
 import type { SearchPurchaseOrders } from '../../application/use-cases/search-purchase-orders.js';
 import type { UpdatePurchaseOrderClassifications } from '../../application/use-cases/update-purchase-order-classifications.js';
 import type { EditPurchaseOrder } from '../../application/use-cases/edit-purchase-order.js';
+import type { CreatePurchaseOrder } from '../../application/use-cases/create-purchase-order.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
 const idParamsSchema = z.object({ purchaseOrderId: z.coerce.number().int().positive() });
@@ -21,22 +22,49 @@ const scaledNumber = (decimals: number) => z.number().refine((value) => {
   return Number.isSafeInteger(Math.round(scaled)) &&
     Math.abs(scaled - Math.round(scaled)) <= Math.max(1, Math.abs(scaled)) * Number.EPSILON * 4;
 }, `Se esperan hasta ${decimals} decimales en un rango seguro.`);
+const lineSchema = z.object({
+  id: z.number().int().positive().nullable(),
+  productCode: z.string().trim().max(13).toUpperCase(),
+  quantity: scaledNumber(3),
+  unit: z.string().trim().max(3).toUpperCase(),
+  discount: scaledNumber(2),
+  price: scaledNumber(5),
+  branch: z.number().int().min(-2147483648).max(2147483647),
+  pieces: z.string().max(1000),
+}).strict();
 const editSchema = z.object({
   revision: z.number().int().min(0).max(2147483647),
   legacyVersion: z.string().regex(/^[0-9a-f]{64}$/),
   removeZero: z.boolean(),
-  lines: z.array(z.object({
-    id: z.number().int().positive().nullable(),
-    productCode: z.string().trim().max(13).toUpperCase(),
-    quantity: scaledNumber(3),
-    unit: z.string().trim().max(3).toUpperCase(),
-    discount: scaledNumber(2),
-    price: scaledNumber(5),
-    branch: z.number().int().min(-2147483648).max(2147483647),
-    pieces: z.string().max(1000),
-  }).strict()),
+  lines: z.array(lineSchema),
 }).strict();
 const productQuery = z.object({ q: z.string().trim().min(1).max(60) });
+const supplierCode = z.string().trim().min(1).max(20).toUpperCase();
+const createDate = dateSchema.refine((date) => {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(date);
+}, 'Fecha inválida.');
+const percentage = scaledNumber(2).refine((value) => value >= 0 && value <= 100, 'El porcentaje debe estar entre 0 y 100.');
+const charge = scaledNumber(2).refine((value) => value >= 0, 'El importe debe ser mayor o igual a cero.');
+const createSchema = z.object({
+  requestKey: z.string().uuid().toLowerCase(),
+  supplierCode,
+  supplierOrderNumber: z.string().trim().max(30).toUpperCase(),
+  orderedAt: createDate, from: createDate, dueAt: createDate,
+  warehouse: z.string().trim().min(1).max(10).toUpperCase(),
+  agent: z.string().trim().max(9).toUpperCase(),
+  discountPercentages: z.tuple([percentage, percentage, percentage]),
+  taxPercentage: percentage,
+  freight: charge, insurance: charge, other: charge,
+  onAccount: charge,
+  otherLabel: z.string().trim().max(40),
+  lines: z.array(lineSchema.extend({
+    id: z.null(),
+    quantity: scaledNumber(3).refine((value) => value >= 0, 'La cantidad debe ser mayor o igual a cero.'),
+    discount: percentage,
+    price: scaledNumber(5).refine((value) => value >= 0, 'El precio debe ser mayor o igual a cero.'),
+  })).min(1),
+}).strict();
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   orderNumber: z.string().trim().min(1).max(15).optional(),
@@ -59,6 +87,7 @@ export class PurchaseOrdersController {
     private readonly getPanel: GetPurchaseOrderPanel,
     private readonly updateClassifications: UpdatePurchaseOrderClassifications,
     private readonly editOrder: EditPurchaseOrder,
+    private readonly createOrder: CreatePurchaseOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -141,5 +170,28 @@ export class PurchaseOrdersController {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json({ data: await this.editOrder.save(purchaseOrderId, editSchema.parse(request.body)) });
     } catch (error) { next(error); }
+  };
+
+  getCreation: RequestHandler = async (_request, response, next) => {
+    try { response.json({ data: await this.createOrder.get() }); } catch (error) { next(error); }
+  };
+
+  searchCreationSuppliers: RequestHandler = async (request, response, next) => {
+    try {
+      const { q } = productQuery.parse(request.query);
+      response.json({ data: await this.createOrder.suppliers(q) });
+    } catch (error) { next(error); }
+  };
+
+  searchCreationProducts: RequestHandler = async (request, response, next) => {
+    try {
+      const { q, supplierCode: code } = productQuery.extend({ supplierCode }).parse(request.query);
+      response.json({ data: await this.createOrder.products(code, q) });
+    } catch (error) { next(error); }
+  };
+
+  create: RequestHandler = async (request, response, next) => {
+    try { response.status(201).json({ data: await this.createOrder.save(createSchema.parse(request.body)) }); }
+    catch (error) { next(error); }
   };
 }

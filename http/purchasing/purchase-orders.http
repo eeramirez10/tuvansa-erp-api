@@ -4,6 +4,9 @@
 @editOrderId = 93984
 @editRevision = 0
 @legacyVersion = copiar-del-GET-edit
+@creationSupplier = 35436
+@creationDate = 2026-11-23
+@creationRequestKey = 92bc9c06-bd13-4533-9de7-d2fa4e380ae2
 
 ### Buscar órdenes de compra (modal Buscar)
 GET {{baseUrl}}/purchasing/purchase-orders?orderNumber=OH&page=1&pageSize=25
@@ -79,4 +82,39 @@ Content-Type: application/json
 {
   "current": ["1", "", "", "", "", "", "", "", ""],
   "revision": 0
+}
+
+### Hoja: abrir Nueva orden de compra
+GET {{baseUrl}}/purchasing/purchase-orders/create
+
+### Nueva orden: proveedor por código o nombre
+GET {{baseUrl}}/purchasing/purchase-orders/create/suppliers?q={{creationSupplier}}
+
+### Nueva orden: producto por código o descripción para el proveedor seleccionado
+GET {{baseUrl}}/purchasing/purchase-orders/create/products?supplierCode={{creationSupplier}}&q=01300958
+
+### Nueva orden: OK (crea una orden en PostgreSQL de pruebas)
+# Usa las fechas del GET /create. Cambia el UUID para cada alta y consérvalo al reintentarlo.
+POST {{baseUrl}}/purchasing/purchase-orders
+Content-Type: application/json
+
+{
+  "requestKey": "{{creationRequestKey}}",
+  "supplierCode": "{{creationSupplier}}",
+  "supplierOrderNumber": "PRUEBA-ALTA",
+  "orderedAt": "{{creationDate}}",
+  "from": "{{creationDate}}",
+  "dueAt": "{{creationDate}}",
+  "warehouse": "01",
+  "agent": "",
+  "discountPercentages": [0, 0, 0],
+  "taxPercentage": 16,
+  "freight": 0,
+  "insurance": 0,
+  "other": 0,
+  "otherLabel": "",
+  "onAccount": 0,
+  "lines": [
+    { "id": null, "productCode": "01300958", "quantity": 2, "unit": "M", "discount": 0, "price": 100, "branch": 0, "pieces": "2 DE 1" }
+  ]
 }

@@ -22,9 +22,12 @@ export interface PurchaseOrdersDataSource {
   saveClassifications(order: PurchaseOrderIdentity, update: PurchaseOrderClassificationUpdate): Promise<SavedPurchaseOrderClassifications>;
 }
 
-export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataSource, 'getPanel' | 'search' | 'saveClassifications'> {
+export interface LegacyPurchaseOrdersDataSource extends Omit<PurchaseOrdersDataSource, 'getPanel' | 'search' | 'findAdjacent' | 'saveClassifications'> {
   search(criteria: PurchaseOrderSearchCriteria, agents?: PurchaseOrderAgentOverride[]): Promise<PurchaseOrderSearchResult>;
-  getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[]): Promise<PurchaseOrderPanelResult | null>;
+  findIdentity(id: number): Promise<PurchaseOrderIdentity | undefined>;
+  findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null>;
+  getClassifications(id: number, local?: PurchaseOrder): Promise<PurchaseOrderClassificationPanel | null>;
+  getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[], local?: PurchaseOrderIdentity): Promise<PurchaseOrderPanelResult | null>;
 }
 
 export type PurchaseOrderAgentOverride = PurchaseOrderIdentity & { matches: boolean };

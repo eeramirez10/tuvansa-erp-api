@@ -5,6 +5,7 @@ import { NotFoundError } from '../../../../../shared/domain/errors/not-found-err
 import type {
   PurchaseOrderEditInput, PurchaseOrderEditLegacyDataSource, PurchaseOrderEditRules, PurchaseOrderEditStorage,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
+import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions } from '../../domain/entities/purchase-order-edit.js';
 import type { PurchaseOrderProps } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrdersRepository } from '../../domain/repositories/purchase-orders-repository.js';
@@ -26,14 +27,20 @@ export class EditPurchaseOrder {
     private readonly legacy: PurchaseOrderEditLegacyDataSource,
     private readonly storage: PurchaseOrderEditStorage,
     private readonly orders: PurchaseOrdersRepository,
+    private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
   private async context(id: number) {
-    const [source, rules, savedOrders] = await Promise.all([this.legacy.findById(id), this.legacy.rules(id), this.storage.find([id])]);
+    const local = await this.creation.findLocal(id);
+    const [source, rules, savedOrders] = await Promise.all([
+      local?.order ?? this.legacy.findById(id),
+      local?.metadata.rules ?? this.legacy.rules(id),
+      this.storage.find([id]),
+    ]);
     if (!source || !rules) throw new NotFoundError('Orden de compra');
     const base = source.toPrimitives();
     const stored = savedOrders.find((item) => item.number === base.number);
-    const version = legacyVersion(base, rules);
+    const version = local?.fingerprint ?? legacyVersion(base, rules);
     const lines = stored?.lines ?? base.lines;
     let reason = '';
     if (base.documentKind !== 'order') reason = 'Omnis permite editar partidas desde esta ventana sólo para pedidos.';
@@ -43,7 +50,7 @@ export class EditPurchaseOrder {
     } else if (stored && stored.legacyVersion !== version) {
       reason = 'La orden de origen cambió después de la edición en PostgreSQL.';
     } else if (!this.storage.writable()) reason = 'El guardado de órdenes requiere PostgreSQL.';
-    return { base, rules, lines, stored, version, reason };
+    return { base, rules, lines, stored, version, reason, local };
   }
 
   async get(id: number) {
@@ -57,23 +64,25 @@ export class EditPurchaseOrder {
   }
 
   async products(id: number, query: string) {
-    const rules = await this.legacy.rules(id);
+    const rules = (await this.creation.findLocal(id))?.metadata.rules ?? await this.legacy.rules(id);
     if (!rules) throw new NotFoundError('Orden de compra');
     return (await this.legacy.searchProducts(query, rules.supplierUnits)).map((product) => productEditOptions(product, rules));
   }
 
   async save(id: number, input: PurchaseOrderEditInput) {
-    const { base, rules, lines, stored, version, reason } = await this.context(id);
+    const { base, rules, lines, stored, version, reason, local } = await this.context(id);
     if (input.revision !== (stored?.revision ?? 0) || input.legacyVersion !== version ||
       (stored && stored.legacyVersion !== version)) throw stale();
     if (reason) throw new ApplicationError(reason, 'PURCHASE_ORDER_EDIT_NOT_ALLOWED', this.storage.writable() ? 409 : 503);
 
     const codes = [...new Set(input.lines.map((line) => line.productCode).filter(Boolean))];
     const products = await this.legacy.findProducts(codes, rules.supplierUnits);
-    const update = buildPurchaseOrderEdit(base, lines, input, rules, products);
+    const update = buildPurchaseOrderEdit(base, lines, input, rules, products,
+      local ? { initial: false, supplierTaxType: local.metadata.taxType } : undefined);
     if (update) {
       const { stock, ...document } = update;
-      await this.storage.save({ id, number: base.number, legacyVersion: version, revision: input.revision, ...document }, stock);
+      const changes = local ? stock.map((item) => ({ ...item, nextReceiptAt: item.pending > 0 ? base.dates.from : null })) : stock;
+      await this.storage.save({ id, number: base.number, legacyVersion: version, revision: input.revision, ...document }, changes);
     }
     const saved = await this.orders.findById(id);
     if (!saved) throw new NotFoundError('Orden de compra');

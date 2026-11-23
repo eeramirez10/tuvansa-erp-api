@@ -6,6 +6,7 @@ import { NavigatePurchaseOrder } from './application/use-cases/navigate-purchase
 import { SearchPurchaseOrders } from './application/use-cases/search-purchase-orders.js';
 import { UpdatePurchaseOrderClassifications } from './application/use-cases/update-purchase-order-classifications.js';
 import { EditPurchaseOrder } from './application/use-cases/edit-purchase-order.js';
+import { CreatePurchaseOrder } from './application/use-cases/create-purchase-order.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from './infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
 import { LegacyMysqlPurchaseOrderEditDataSource } from './infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
 import { PostgresPurchaseOrderClassifications } from './infrastructure/datasources/postgres-purchase-order-classifications.js';
@@ -18,7 +19,8 @@ import { createPurchaseOrdersRouter } from './presentation/http/purchase-orders-
 export const createPurchaseOrdersModule = (): Router => {
   const legacy = new LegacyMysqlPurchaseOrdersDataSource();
   const edits = new PostgresPurchaseOrderEdits();
-  const dataSource = new HybridPurchaseOrdersDataSource(legacy, new PostgresPurchaseOrderClassifications(), edits);
+  const capture = new LegacyMysqlPurchaseOrderEditDataSource(legacy);
+  const dataSource = new HybridPurchaseOrdersDataSource(legacy, new PostgresPurchaseOrderClassifications(), edits, edits);
   const repository = new PurchaseOrdersRepositoryImpl(dataSource);
   const controller = new PurchaseOrdersController(
     new GetPurchaseOrder(repository),
@@ -27,7 +29,8 @@ export const createPurchaseOrdersModule = (): Router => {
     new NavigatePurchaseOrder(repository),
     new GetPurchaseOrderPanel(repository),
     new UpdatePurchaseOrderClassifications(repository),
-    new EditPurchaseOrder(new LegacyMysqlPurchaseOrderEditDataSource(legacy), edits, repository),
+    new EditPurchaseOrder(capture, edits, repository, edits),
+    new CreatePurchaseOrder(capture, edits, repository),
   );
   return createPurchaseOrdersRouter(controller);
 };

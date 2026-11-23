@@ -13,6 +13,10 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Abrir por número | `GET /by-number/:number` | `FPENC + FPRV` |
 | Flecha anterior | `GET /:purchaseOrderId/previous` | Orden por `PENUM` |
 | Flecha siguiente | `GET /:purchaseOrderId/next` | Orden por `PENUM` |
+| Hoja / Nueva orden de compra | `GET /create` | Movimiento O en `FTIPMV`, periodo y reglas de `FCIA` |
+| Nueva orden de compra / Proveedor | `GET /create/suppliers?q=...` | Proveedores activos de `FPRV` |
+| Nueva orden de compra / Producto | `GET /create/products?supplierCode=...&q=...` | `FINV`, `FUNIDAD` y condiciones de compra del proveedor |
+| Nueva orden de compra / OK | `POST /` | Alta transaccional en PostgreSQL |
 | Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
 | Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
 | Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
@@ -129,6 +133,16 @@ Las reglas de guardado provienen del código exportado. El recorrido de Omnis fu
 
 - El editor adapta `EOC#3` y `MOCOM/39–44`. La compañía activa se resuelve en el servidor mediante `PURCHASE_ORDER_EDIT_COMPANY_ID`, con México (`1`) como valor predeterminado. La versión de MySQL y la revisión de PostgreSQL se validan al guardar. Dos guardados de la misma revisión producen un éxito y un conflicto `409`.
 - La API recibe los campos de la unidad visible. Convierte a la unidad almacenada con su factor antes de recalcular. `MRECEP/70` usa la unidad base cuando `CIACOMPORTA[56]` está apagado y las equivalencias de `FUNIDAD` cuando está activo. La configuración consultada de TUVANSA tiene la conversión de proveedor desactivada. Se conserva el factor guardado en partidas históricas que conservan su unidad.
-- **Pzas.** guarda `PLASIGNPZAS` en partidas existentes. Al agregar, `MOCOM/40 → MBASE/121 → /71` no incluye el campo en los datos del alta y la columna tiene valor predeterminado vacío. En la web se habilita una vez que la partida tiene identificador. Una partida existente se retira al borrar su código o al aceptar la confirmación de cantidad cero. La ruta nativa de alta admite un código nuevo aun con cantidad cero.
+- **Pzas.** guarda `PLASIGNPZAS` en partidas existentes. Al agregar desde Cambio, `MOCOM/40 → MBASE/121 → /71` deja la columna con el valor predeterminado vacío. En el editor web se habilita una vez que la partida tiene identificador. Una partida existente se retira al borrar su código o al aceptar la confirmación de cantidad cero. El editor nativo admite agregar una partida con cantidad cero.
 - La migración de PostgreSQL guarda el documento editado y los deltas de pendiente en la misma transacción. Aplica las reglas de `MBASE/121–124`: pendiente por producto, totales, importe con letra y fecha prevista al agregar un producto. Ficha, búsqueda, flechas, CT y Comentarios proyectan la revisión guardada. El acumulado **Ordenado a proveedor** del catálogo de Inventarios incorpora los deltas. La consulta histórica de partidas de proveedor de Inventarios mantiene su lectura heredada.
 - La edición para TUVANSA usa las reglas consultadas del catálogo. La autorización de usuarios `MOCOM40` y las variantes especiales nativas de matriz color/talla y EDI todavía corresponden a Omnis. Esta etapa usa selección directa de SKU y no escribe en MySQL.
+
+## Nueva orden de compra
+
+`MCONTROL/5` lleva a `MOCOM/21` y a la ventana `EOC#1`. El procedimiento `401` carga el movimiento O, las fechas y el almacén de la sesión. `411` valida periodo, proveedor activo y clasificador, precarga descuentos e IVA de proveedor y descarta el borrador con **Cancelar**. `412` propone el folio a partir de `TICLA`, `TICEROS` y `TINUM + 1`. Al aceptar el folio propuesto, `MBASE/29` incrementa el consecutivo después de insertar la orden.
+
+`EOC#1/420` calcula el precio sugerido a partir de `ILISTA5` o `ILISTA6` y los descuentos del proveedor. `403` convierte cantidad y precio a la unidad de almacenamiento. `406` lleva únicamente partidas de cantidad positiva a `MBASE/121`, incluida la captura de **Pzas.**, y actualiza fecha prevista y pendiente de proveedor. El subtotal, descuentos, IEPS, cargos e IVA se derivan de las fórmulas de `EOC#1` y `MBASE/122`.
+
+La ventana web adapta el movimiento O de TUVANSA y usa almacén 01 como valor inicial. El folio web se asigna al guardar con una secuencia propia, formato `OW00000001`. El **OK** guarda encabezado, partidas, totales, importe en letra y pendiente en una sola transacción. La orden se puede consultar por identificador o folio, localizar en la búsqueda y editar con control de revisión. La clave UUID de la petición permite reintentar el mismo guardado sin duplicar la orden.
+
+Los catálogos y la configuración se leen de MySQL. El flujo y las fórmulas se leyeron en la biblioteca de Omnis 7. La conexión nativa devolvió un error al abrir el alta durante este contraste. El alta web, su borrador y su persistencia se verifican en PostgreSQL de pruebas. La captura posterior de comentarios de `MOCOM/50` y las variantes automáticas de otros alias de empresa quedan pendientes.

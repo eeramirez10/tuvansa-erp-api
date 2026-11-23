@@ -4,6 +4,10 @@ import type { PurchaseOrdersController } from './purchase-orders-controller.js';
 export const createPurchaseOrdersRouter = (controller: PurchaseOrdersController): Router => {
   const router = Router();
   router.get('/', controller.search);
+  router.post('/', controller.create);
+  router.get('/create', controller.getCreation);
+  router.get('/create/suppliers', controller.searchCreationSuppliers);
+  router.get('/create/products', controller.searchCreationProducts);
   router.get('/by-number/:purchaseOrderNumber', controller.getByNumberHandler);
   router.get('/:purchaseOrderId/previous', controller.previous);
   router.get('/:purchaseOrderId/next', controller.next);

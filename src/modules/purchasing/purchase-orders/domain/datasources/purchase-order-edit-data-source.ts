@@ -21,6 +21,7 @@ export interface PurchaseOrderEditProduct {
   supplierProductCode: string;
   inactive: boolean;
   taxable: boolean;
+  exciseTaxPercentage?: number;
   currencyId: number;
   currencyName: string;
   cost: number;

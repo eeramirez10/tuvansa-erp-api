@@ -1,5 +1,6 @@
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderClassificationStorage, PurchaseOrdersDataSource } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditStorage } from '../../domain/datasources/purchase-order-edit-data-source.js';
+import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
 import type {
   PurchaseOrderNavigationDirection,
@@ -13,11 +14,15 @@ import type {
   PurchaseOrderSearchResult,
 } from '../../domain/repositories/purchase-orders-repository.js';
 
+const sortOrders = (a: PurchaseOrder, b: PurchaseOrder) =>
+  a.identity.number.localeCompare(b.identity.number, 'en', { sensitivity: 'base' }) || a.identity.id - b.identity.id;
+
 export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource {
   constructor(
     private readonly dataSource: LegacyPurchaseOrdersDataSource,
     private readonly classificationStorage: PurchaseOrderClassificationStorage,
     private readonly editStorage: PurchaseOrderEditStorage,
+    private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
   private async withChanges(items: PurchaseOrder[], includeLines = true): Promise<PurchaseOrder[]> {
@@ -40,18 +45,69 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
     return found ? (await this.withChanges([found]))[0] ?? null : null;
   }
 
-  findById(id: number): Promise<PurchaseOrder | null> { return this.classifiedOrder(this.dataSource.findById(id)); }
-  findByNumber(number: string): Promise<PurchaseOrder | null> { return this.classifiedOrder(this.dataSource.findByNumber(number)); }
+  private async orderById(id: number): Promise<PurchaseOrder | null> {
+    return (await this.creation.findLocal(id))?.order ?? this.dataSource.findById(id);
+  }
+
+  findById(id: number): Promise<PurchaseOrder | null> { return this.classifiedOrder(this.orderById(id)); }
+  async findByNumber(number: string): Promise<PurchaseOrder | null> {
+    const local = await this.creation.findLocalByNumber(number);
+    return this.classifiedOrder(local ? Promise.resolve(local.order) : this.dataSource.findByNumber(number));
+  }
+
   async search(criteria: PurchaseOrderSearchCriteria): Promise<PurchaseOrderSearchResult> {
     const agents = criteria.agent === undefined ? undefined : await this.classificationStorage.agentOverrides(criteria.agent);
-    const result = await this.dataSource.search(criteria, agents);
-    return { ...result, items: await this.withChanges(result.items, false) };
+    const local = await this.creation.searchLocal(criteria,
+      agents?.filter((order) => !order.matches) ?? [], agents?.filter((order) => order.matches) ?? []);
+    if (local.total === 0) {
+      const result = await this.dataSource.search(criteria, agents);
+      return { ...result, items: await this.withChanges(result.items, false) };
+    }
+    const legacyOffset = Math.max(0, criteria.offset - local.total);
+    const offset = criteria.offset - legacyOffset;
+    const legacy = await this.dataSource.search({ ...criteria, offset: legacyOffset, limit: offset + criteria.limit }, agents);
+    const items = [...legacy.items, ...local.items].sort(sortOrders).slice(offset, offset + criteria.limit);
+    return { items: await this.withChanges(items, false), total: legacy.total + local.total };
   }
-  findAdjacent(id: number, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
-    return this.classifiedOrder(this.dataSource.findAdjacent(id, direction));
+
+  async findAdjacent(id: number, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
+    const localOrder = await this.creation.findLocal(id);
+    const current = localOrder?.order.identity ?? await this.dataSource.findIdentity(id);
+    if (!current) return null;
+    const { number } = current;
+    const [local, legacy] = await Promise.all([
+      this.creation.findLocalAdjacent(number, direction), this.dataSource.findAdjacentByNumber(number, direction),
+    ]);
+    const closest = local && legacy
+      ? (direction === 'previous' ? sortOrders(local, legacy) > 0 : sortOrders(local, legacy) < 0) ? local : legacy
+      : local ?? legacy;
+    return this.classifiedOrder(Promise.resolve(closest));
   }
+
   async getPanel(id: number, key: PurchaseOrderPanelKey): Promise<PurchaseOrderPanelResult | null> {
     if (key === 'classifications') return this.getClassifications(id);
+    const local = await this.creation.findLocal(id);
+    if (local) {
+      const { order, metadata } = local;
+      if (key === 'receipts' || key === 'pieces') {
+        return this.dataSource.getPanel(id, key, undefined, order.identity);
+      }
+      const edits = await this.editStorage.find([id]);
+      if (key === 'ct') {
+        const panel = await this.dataSource.getPanel(id, key, edits, order.identity);
+        return panel && { ...panel, source: 'mysql+postgres' };
+      }
+      const edit = edits[0];
+      return {
+        purchaseOrder: order.identity, key, section: 'actions', button: 'Comentarios', source: 'postgres',
+        items: [{ amountInWords: edit?.amountInWords ?? '' }],
+        summary: {
+          ...order.toPrimitives(), totals: edit?.totals, lines: edit?.lines,
+          terms: metadata.terms, currencyId: metadata.rules.currencyId, currencyName: metadata.rules.currencyName,
+          exchangeRate: metadata.exchangeRate, onAccount: metadata.onAccount, labels: metadata.labels, createdAt: metadata.createdAt,
+        },
+      };
+    }
     if (key !== 'comments' && key !== 'ct') return this.dataSource.getPanel(id, key);
     const edits = await this.editStorage.find([id]);
     const panel = await this.dataSource.getPanel(id, key, key === 'ct' ? edits : undefined);
@@ -65,7 +121,8 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
   }
 
   async getClassifications(id: number): Promise<PurchaseOrderClassificationPanel | null> {
-    const panel = await this.dataSource.getClassifications(id);
+    const local = await this.creation.findLocal(id);
+    const panel = await this.dataSource.getClassifications(id, local?.order);
     if (!panel) return null;
     const stored = (await this.classificationStorage.find([id])).find((row) => row.number === panel.purchaseOrder.number);
     return {

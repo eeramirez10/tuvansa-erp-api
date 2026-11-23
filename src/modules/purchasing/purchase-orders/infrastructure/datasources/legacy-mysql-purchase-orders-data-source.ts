@@ -318,9 +318,7 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
     return { items: rows.map((row) => toPurchaseOrder(row, [])), total: countRows[0]?.total ?? 0 };
   }
 
-  async findAdjacent(id: number, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
-    const current = await this.identity(id);
-    if (current === undefined) return null;
+  async findAdjacentByNumber(number: string, direction: PurchaseOrderNavigationDirection): Promise<PurchaseOrder | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
@@ -328,12 +326,12 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
        FROM FPENC
        WHERE PESPEDIDO IN (2, 5) AND PENUM ${operator} ?
        ORDER BY PENUM ${order}, PESEQ ${order} LIMIT 1`,
-      [current.number],
+      [number],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
 
-  private async identity(id: number): Promise<IdentityRow | undefined> {
+  async findIdentity(id: number): Promise<IdentityRow | undefined> {
     const [rows] = await legacyMysqlPool.execute<IdentityRow[]>(
       'SELECT PESEQ AS id, PENUM AS number FROM FPENC WHERE PESEQ = ? AND PESPEDIDO IN (2, 5) LIMIT 1',
       [id],
@@ -341,16 +339,15 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
     return rows[0];
   }
 
-  async getClassifications(id: number): Promise<PurchaseOrderClassificationPanel | null> {
-    const [orders] = await legacyMysqlPool.execute<IdentityRow[]>(
-      `SELECT PESEQ AS id, PENUM AS number,
-        ${positions.map((index) => `PEPAR${index} AS classification${index}`).join(', ')},
-        ${positions.map((index) => `FCIA.CIAPAR${index} AS label${index}`).join(', ')},
-        (SELECT YGDAT FROM FYG WHERE YGKEY = 'ABITITPAR2' LIMIT 1) AS configuredLabels
-       FROM FPENC LEFT JOIN FCIA ON FCIA.CIASEQ = 1
-       WHERE PESEQ = ? AND PESPEDIDO IN (2, 5)`,
-      [id],
-    );
+  async getClassifications(id: number, local?: PurchaseOrder): Promise<PurchaseOrderClassificationPanel | null> {
+    const labels = `${positions.map((index) => `FCIA.CIAPAR${index} AS label${index}`).join(', ')},
+      (SELECT YGDAT FROM FYG WHERE YGKEY = 'ABITITPAR2' LIMIT 1) AS configuredLabels`;
+    const [orders] = local
+      ? await legacyMysqlPool.execute<IdentityRow[]>(`SELECT ${labels} FROM FCIA WHERE CIASEQ=1`)
+      : await legacyMysqlPool.execute<IdentityRow[]>(
+        `SELECT PENUM AS number, ${positions.map((index) => `PEPAR${index} AS classification${index}`).join(', ')}, ${labels}
+         FROM FPENC LEFT JOIN FCIA ON FCIA.CIASEQ = 1 WHERE PESEQ = ? AND PESPEDIDO IN (2, 5)`, [id],
+      );
     const order = orders[0];
     if (!order) return null;
     const configuredLabels = typeof order.configuredLabels === 'string' ? order.configuredLabels.split(',') : null;
@@ -360,20 +357,20 @@ export class LegacyMysqlPurchaseOrdersDataSource implements LegacyPurchaseOrders
        ORDER BY AGT, AGNUM, AGSEQ`,
     );
     return {
-      purchaseOrder: { id, number: order.number },
-      key: 'classifications', section: 'actions', button: 'Clasificar', source: 'mysql',
+      purchaseOrder: local?.identity ?? { id, number: order.number },
+      key: 'classifications', section: 'actions', button: 'Clasificar', source: local ? 'mysql+postgres' : 'mysql',
       items: options.map((option) => ({ ...option })),
       summary: {
         labels: positions.map((index) => configuredLabels
           ? configuredLabels[index - 1] ?? ''
           : String(order[`label${index}`] ?? '')),
-        current: classificationsFrom(order), revision: 0, canWrite: false,
+        current: local?.toPrimitives().classifications ?? classificationsFrom(order), revision: 0, canWrite: false,
       },
     };
   }
 
-  async getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[]): Promise<PurchaseOrderPanelResult | null> {
-    const identity = await this.identity(id);
+  async getPanel(id: number, key: Exclude<PurchaseOrderPanelKey, 'classifications'>, edits?: PurchaseOrderEditSnapshot[], local?: { id: number; number: string }): Promise<PurchaseOrderPanelResult | null> {
+    const identity = local ?? await this.findIdentity(id);
     if (identity === undefined) return null;
 
     let items: Array<Record<string, unknown>>;

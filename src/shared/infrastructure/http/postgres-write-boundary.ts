@@ -25,6 +25,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/classifications$/.test(path);
   const editPurchaseOrder = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
     /^\/purchasing\/purchase-orders\/[1-9]\d*$/.test(path);
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || classifyPurchaseOrder || editPurchaseOrder) { next(); return; }
+  const createPurchaseOrder = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/purchasing/purchase-orders';
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || classifyPurchaseOrder || editPurchaseOrder || createPurchaseOrder) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

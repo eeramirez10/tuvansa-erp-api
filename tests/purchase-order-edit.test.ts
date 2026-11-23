@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   PurchaseOrderEditInput, PurchaseOrderEditProduct, PurchaseOrderEditRules,
 } from '../src/modules/purchasing/purchase-orders/domain/datasources/purchase-order-edit-data-source.js';
-import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
+import { buildPurchaseOrderEdit, displayPurchaseOrderEditLines, productEditOptions } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order-edit.js';
 import type { PurchaseOrderLine, PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 
 const first: PurchaseOrderLine = {
@@ -73,5 +73,23 @@ describe('purchase order edit rules', () => {
       ...draft, lines: [{ ...draft.lines[0]!, unit: 'PZ', quantity: 12, price: 99 }],
     }, locked, products);
     expect(result?.lines[0]).toMatchObject({ unit: 'PZ', ordered: 12, price: 2.5, factor: 1 });
+  });
+
+  it('preserves Pzas. at creation and converts the price, IEPS and pending quantity', () => {
+    const newOrder = { ...base, lines: [] };
+    const input = { ...draft, lines: [{ ...draft.lines[0]!, id: null, pieces: '2 cajas' }] };
+    const taxableProduct = { ...products[0]!, exciseTaxPercentage: 10 };
+    const result = buildPurchaseOrderEdit(newOrder, [], input, rules, [taxableProduct], { initial: true, supplierTaxType: 0 });
+    expect(result?.lines[0]).toMatchObject({ ordered: 12, price: 2.5, piecesAssignment: '2 cajas' });
+    expect(result?.totals).toMatchObject({ subtotal: 30, discount: 3, exciseTax: 2.70, tax: 5.55, total: 40.25 });
+    expect(result?.stock).toEqual([{ productId: 10, pending: 12, nextReceiptAt: '2026-11-20' }]);
+    expect(buildPurchaseOrderEdit(newOrder, [], input, rules, [taxableProduct], { initial: true, supplierTaxType: 2 })?.totals.exciseTax).toBe(0);
+  });
+
+  it('reverses supplier discounts on foreign-currency suggested prices for the initial capture', () => {
+    const product = { ...products[1]!, currencyId: 2, dollarCost: 18 };
+    const supplier = { ...rules, supplierDiscounts: [10, 0] as [number, number] };
+    expect(productEditOptions(product, supplier, true).units[0]?.suggestedPrice).toBe(20);
+    expect(productEditOptions(product, supplier).units[0]?.suggestedPrice).toBe(18);
   });
 });

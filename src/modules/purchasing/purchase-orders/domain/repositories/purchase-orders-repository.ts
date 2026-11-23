@@ -27,7 +27,7 @@ export interface PurchaseOrderPanelResult {
   key: PurchaseOrderPanelKey;
   section: 'actions';
   button: string;
-  source: 'mysql' | 'mysql+postgres';
+  source: 'mysql' | 'mysql+postgres' | 'postgres';
   items: Array<Record<string, unknown>>;
   summary?: Record<string, unknown>;
 }

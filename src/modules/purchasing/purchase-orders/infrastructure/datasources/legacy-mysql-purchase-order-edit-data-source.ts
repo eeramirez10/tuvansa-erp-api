@@ -4,6 +4,9 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import type {
   PurchaseOrderEditLegacyDataSource, PurchaseOrderEditProduct, PurchaseOrderEditRules,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
+import type {
+  PurchaseOrderCreateDefaults, PurchaseOrderCreateLegacyDataSource, PurchaseOrderSupplier,
+} from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { LegacyMysqlPurchaseOrdersDataSource } from './legacy-mysql-purchase-orders-data-source.js';
 
 type RulesRow = RowDataPacket & Omit<PurchaseOrderEditRules, 'supplierDiscounts' | 'activeCompanyId'> & {
@@ -23,6 +26,18 @@ type ProductRow = RowDataPacket & Omit<PurchaseOrderEditProduct, 'units'> & {
 type UnitRow = RowDataPacket & { code: string; type: number; equivalence: number };
 
 const currencies = Array.from({ length: 10 }, (_, index) => `FCIA.CIAPDD${index}`).join(', ');
+const exchangeRates = Array.from({ length: 10 }, (_, index) => `FCIA.CIATIP${index}`).join(', ');
+const purchaseOrderWarehouse = '01';
+const mexicoDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+type DefaultsRow = RowDataPacket & {
+  movement: string; alias: string; periodStart: string | null; periodEnd: string | null; maxLines: number;
+  discountLocked: number; tax0: number; tax1: number; tax2: number;
+};
+type SupplierRow = RulesRow & {
+  id: number; code: string; name: string; terms: number; taxType: number;
+};
+const classifierColumns = [1, 2, 3, 4, 5, 6, 8, 9];
 
 // MRECEP/70. FUNIDAD.UEQUIV es relativo a la unidad base del producto.
 function unitsForProduct(row: ProductRow, catalog: UnitRow[]) {
@@ -46,7 +61,7 @@ function unitsForProduct(row: ProductRow, catalog: UnitRow[]) {
   return units;
 }
 
-export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEditLegacyDataSource {
+export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEditLegacyDataSource, PurchaseOrderCreateLegacyDataSource {
   constructor(private readonly orders: LegacyMysqlPurchaseOrdersDataSource) {}
 
   findById(id: number) { return this.orders.findById(id); }
@@ -73,11 +88,78 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     };
   }
 
+  async creationDefaults(): Promise<PurchaseOrderCreateDefaults | null> {
+    const [rows] = await legacyMysqlPool.execute<DefaultsRow[]>(
+      `SELECT TIDESCR AS movement, TILARGO AS maxLines, CIAALIAS AS alias,
+        NULLIF(CIAFI, '1900-12-31') AS periodStart, NULLIF(CIAFF, '1900-12-31') AS periodEnd,
+        TIIVA0 AS tax0, TIIVA1 AS tax1, TIIVA2 AS tax2,
+        SUBSTRING(CIACOMPORTA, 95, 1) = '1' AS discountLocked, ${exchangeRates},
+        TICOML1, TICOML2, TICOML3, TICOML4, TICOML5
+       FROM FTIPMV JOIN FCIA ON FCIA.CIASEQ=1
+       WHERE TICLA='O' AND (TIMODULO=6 OR SUBSTRING(CIACOMPORTA, 76, 1)<>'1')
+       ORDER BY TISEQ LIMIT 1`,
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const today = mexicoDate.format();
+    const dueAt = new Date(`${today}T00:00:00Z`);
+    if (row.alias === 'STYLO') dueAt.setUTCDate(dueAt.getUTCDate() + 30);
+    return {
+      today, from: today, dueAt: dueAt.toISOString().slice(0, 10), warehouse: purchaseOrderWarehouse,
+      movement: row.movement,
+      periodStart: row.periodStart, periodEnd: row.periodEnd, maxLines: Number(row.maxLines),
+      taxPercentage: Number(row.tax0), taxRates: [row.tax0, row.tax1, row.tax2].map(Number),
+      discountLocked: Boolean(row.discountLocked),
+      exchangeRates: Array.from({ length: 10 }, (_, index) => Number(row[`CIATIP${index}`])),
+      labels: Array.from({ length: 5 }, (_, index) => String(row[`TICOML${index + 1}`] ?? '')),
+    };
+  }
+
+  async creationSuppliers(query: string, exact = false): Promise<PurchaseOrderSupplier[]> {
+    const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
+      `SELECT PRVSEQ AS id, TRIM(PRVCOD) AS code, PRVNOM AS name, PRVPLAZO AS terms,
+        PRVTIPOIVA AS taxType, PRVMONEDA AS currencyId,
+        COALESCE(ELT(PRVMONEDA + 1, ${currencies}), '') AS currencyName,
+        (SUBSTRING(CIACOMPORTA,71,1)='1') AS priceLocked,
+        (SUBSTRING(CIACOMPORTA,56,1)='1') AS supplierUnits,
+        (SUBSTRING(CIACOMPORTA,97,1)='1') AS validateSupplier,
+        PRVDESC1 AS discount1, PRVDESC2 AS discount2,
+        ${classifierColumns.map((col) => `PRVPAR${col}`).join(', ')}
+       FROM FPRV JOIN FCIA ON FCIA.CIASEQ=1
+       WHERE PRVBAJA='1900-12-31' AND (${exact ? 'PRVCOD=?' : 'PRVCOD LIKE ? OR PRVNOM LIKE ?'})
+       ORDER BY PRVCOD=? DESC, PRVCOD, PRVSEQ LIMIT ${exact ? 1 : 35}`,
+      exact ? [query, query] : [`${query}%`, `%${query}%`, query],
+    );
+    return rows.map((row) => ({
+      supplier: { id: row.id, code: row.code, name: row.name },
+      terms: Number(row.terms), taxType: Number(row.taxType),
+      classifications: Array.from({ length: 9 }, (_, index) => String(row[`PRVPAR${index + 1}`] ?? '')),
+      rules: {
+        companyId: env.PURCHASE_ORDER_EDIT_COMPANY_ID, activeCompanyId: env.PURCHASE_ORDER_EDIT_COMPANY_ID,
+        priceLocked: Boolean(row.priceLocked), supplierUnits: Boolean(row.supplierUnits), validateSupplier: Boolean(row.validateSupplier),
+        currencyId: row.currencyId, currencyName: row.currencyName, supplierCode: row.code,
+        supplierDiscounts: [Number(row.discount1), Number(row.discount2)],
+      },
+    }));
+  }
+
+  async hasWarehouse(code: string): Promise<boolean> {
+    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>('SELECT 1 AS found FROM FALM WHERE ALMNUM=? LIMIT 1', [code]);
+    return rows.length > 0;
+  }
+
+  async hasPurchaseAgent(code: string): Promise<boolean> {
+    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+      "SELECT 1 AS found FROM FAG WHERE AGTNUM=? AND AGT='1' AND AGTIPO IN (0, 2) LIMIT 1", [`1${code}`],
+    );
+    return rows.length > 0;
+  }
+
   private async products(where: string, values: string[], supplierUnits: boolean, orderBy = 'FINV.ISEQ'): Promise<PurchaseOrderEditProduct[]> {
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT FINV.ISEQ AS id, ICOD AS code, IDESCR AS description, IPRV AS supplierCode,
         ICODPRV AS supplierProductCode, (IINACTIVO=1 OR IFAM9='9INA') AS inactive,
-        (IPORCIVA=0) AS taxable, IMONEDA AS currencyId,
+        (IPORCIVA=0) AS taxable, IPORCIEPES AS exciseTaxPercentage, IMONEDA AS currencyId,
         COALESCE(ELT(IMONEDA + 1, ${currencies}), '') AS currencyName,
         ILISTA5 AS cost, ILISTA6 AS dollarCost, IUM AS baseUnit, IUM2 AS secondaryUnit,
         FUNIDAD.UTIPO AS baseType, FUNIDAD.UEQUIV AS baseEquivalence,
@@ -94,6 +176,7 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     return rows.map((row) => ({
       id: row.id, code: row.code, description: row.description, supplierCode: row.supplierCode,
       supplierProductCode: row.supplierProductCode, inactive: Boolean(row.inactive), taxable: Boolean(row.taxable),
+      exciseTaxPercentage: Number(row.exciseTaxPercentage ?? 0),
       currencyId: row.currencyId, currencyName: row.currencyName, cost: row.cost, dollarCost: row.dollarCost,
       secondaryUnit: row.secondaryUnit, units: unitsForProduct(row, catalog),
     }));

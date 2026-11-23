@@ -1,0 +1,67 @@
+@baseUrl = http://localhost:3000/api
+@receptions = {{baseUrl}}/purchasing/purchase-receptions
+@expenses = {{receptions}}/general-expenses
+@GAdate = 2025-12-31
+@reference = GAW-PRUEBA-A
+@supplierId = 719
+@bankAccountId = 6610
+@expenseId = 7910000000000
+@paymentRevision = 1
+
+### Preparar Gastos múltiples
+GET {{expenses}}/create
+
+### Resolver códigos del ejemplo local
+GET {{expenses}}/catalog?supplierCode=000043&productCode=6003402005
+
+### Registrar un GA en la base de pruebas
+# Usa una referencia y una clave UUID disponibles.
+POST {{expenses}}
+Content-Type: application/json
+
+{
+  "requestKey": "a5acd018-4df2-4e3a-8ab5-1aaaf52cb70c",
+  "date": "{{GAdate}}",
+  "reference": "{{reference}}",
+  "beneficiary": "PROVEEDOR DE PRUEBA",
+  "description": "Gasto GA de prueba",
+  "taxAccounts": { "vat": "1119001" },
+  "lines": [
+    {
+      "supplierCode": "000043",
+      "productCode": "6003402005",
+      "reference": "{{reference}}",
+      "base": 100,
+      "vat": 16,
+      "vatWithholding": 0,
+      "incomeWithholding": 0,
+      "costCenter": "1"
+    }
+  ]
+}
+
+### Abrir el documento y su auxiliar con el ID devuelto
+GET {{receptions}}/{{expenseId}}
+
+###
+GET {{receptions}}/{{expenseId}}/actions/auxiliary
+
+### Saldo del proveedor
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/balance
+
+### Preparar el pago con el mismo ID del documento
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{expenseId}}
+
+### Registrar un pago parcial PP con la revisión devuelta
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{expenseId}}
+Content-Type: application/json
+
+{
+  "requestKey": "d7f6881a-35c9-4045-a08b-52769093e826",
+  "revision": {{paymentRevision}},
+  "bankAccountId": {{bankAccountId}},
+  "mode": "transfer",
+  "amount": 30,
+  "date": "{{GAdate}}",
+  "description": "Pago parcial de GA de prueba"
+}

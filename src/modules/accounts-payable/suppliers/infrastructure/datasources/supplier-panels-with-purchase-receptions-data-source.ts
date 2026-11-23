@@ -6,34 +6,33 @@ import {
 
 const money = (amount: number) => Number(amount.toFixed(2));
 
-function balanceRow({ result: { reception }, movement: { header }, payable, days, remaining }: SupplierPurchaseReceptionCharge) {
+function balanceRow(charge: SupplierPurchaseReceptionCharge) {
   return {
-    id: reception.id, company: header.company, document: reception.number, date: reception.dates.receivedAt,
-    receiptId: reception.id, canPay: true,
-    dueDate: payable.dueAt, days, originalAmount: payable.amount, amount: remaining,
-    currency: payable.currencyId, reference: reception.orderNumber, scheduledAt: null,
-    secondaryReference: '', route: '', exchangeRate: payable.exchangeRate, folio: reception.supplierReference,
+    id: charge.id, company: charge.company, document: charge.number, date: charge.date,
+    receiptId: charge.id, canPay: true,
+    dueDate: charge.dueAt, days: charge.days, originalAmount: charge.principal, amount: charge.remaining,
+    currency: charge.currencyId, reference: charge.orderNumber || charge.supplierReference, scheduledAt: null,
+    secondaryReference: '', route: '', exchangeRate: charge.exchangeRate, folio: charge.supplierReference,
   };
 }
 
-function movementRow({ result: { reception }, movement: { header }, payable, accounting }: SupplierPurchaseReceptionCharge) {
+function movementRow(charge: SupplierPurchaseReceptionCharge) {
   return {
-    id: reception.id, company: header.company, date: reception.dates.receivedAt, document: reception.number,
-    amount: payable.amount, movementType: header.type, paymentReference: reception.orderNumber,
-    userId: header.userId, exchangeDifference: 0, exchangeRate: payable.exchangeRate,
-    policy: accounting?.number ?? '', documentReference: reception.supplierReference,
-    accountType: 0, currency: payable.currencyId,
+    id: charge.id, company: charge.company, date: charge.date, document: charge.number,
+    amount: charge.principal, movementType: charge.movementType, paymentReference: charge.orderNumber || charge.supplierReference,
+    userId: charge.userId, exchangeDifference: 0, exchangeRate: charge.exchangeRate,
+    policy: charge.policyNumber ?? '', policyId: charge.policyId, documentReference: charge.supplierReference,
+    accountType: 0, currency: charge.currencyId,
   };
 }
 
 function paymentRow(charge: SupplierPurchaseReceptionCharge, payment: SupplierPurchaseReceptionPayment) {
-  const { result: { reception }, movement: { header }, payable } = charge;
   return {
-    id: payment.id, company: header.company, date: payment.date, document: reception.number,
+    id: payment.id, company: charge.company, date: payment.date, document: charge.number,
     amount: -payment.amount, movementType: 'PP', paymentReference: payment.number,
-    userId: payment.userId, exchangeDifference: 0, exchangeRate: payable.exchangeRate,
-    policy: payment.policyNumber, documentReference: reception.supplierReference,
-    accountType: 0, currency: payable.currencyId,
+    userId: payment.userId, exchangeDifference: 0, exchangeRate: charge.exchangeRate,
+    policy: payment.policyNumber, policyId: payment.id, documentReference: charge.supplierReference,
+    accountType: 0, currency: charge.currencyId,
   };
 }
 

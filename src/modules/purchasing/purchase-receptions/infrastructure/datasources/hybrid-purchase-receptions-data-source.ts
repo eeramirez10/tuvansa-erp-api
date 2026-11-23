@@ -1,40 +1,46 @@
 import type { PurchaseReceptionsDataSource } from '../../domain/datasources/purchase-receptions-data-source.js';
 import { readSupplierPayments } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
-import { PurchaseReception } from '../../domain/entities/purchase-reception.js';
+import { PurchaseReception, type PurchaseReceptionProps } from '../../domain/entities/purchase-reception.js';
 import type {
   PurchaseReceptionNavigationDirection, PurchaseReceptionPanelKey, PurchaseReceptionPanelResult,
   PurchaseReceptionSearchCriteria, PurchaseReceptionSearchResult,
 } from '../../domain/repositories/purchase-receptions-repository.js';
 import type { LegacyMysqlPurchaseReceptionsDataSource } from './legacy-mysql-purchase-receptions-data-source.js';
-import { isLocalPurchaseReceptionId, readLocalPurchaseReceptions, type LocalReceptionRecord } from './postgres-purchase-reception-writes.js';
+import { isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
+import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.js';
+import { paymentDocumentIdSql } from './postgres-purchase-payables.js';
+import { readLocalReceptionView, type LocalReceptionViewRecord } from './local-purchase-reception-view.js';
 
-const reception = "(result->'reception')";
+const reception = 'reception';
 const empty = { items: [], total: 0 };
 const money = (value: number) => Number(value.toFixed(2));
+const isLocalDocument = (id: number) => isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseDocumentId(id);
 
 export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDataSource {
   constructor(private readonly legacy: LegacyMysqlPurchaseReceptionsDataSource) {}
 
   private record(field: 'id' | 'number', value: string | number) {
-    return readLocalPurchaseReceptions<LocalReceptionRecord | null>(null, async (client) => {
-      const { rows: [row] } = await client.query<LocalReceptionRecord>(
-        `SELECT result,movement,payable,accounting FROM tuvansa.purchase_receptions WHERE company_id=1 AND ${field}=$1`, [value],
+    return readLocalReceptionView<LocalReceptionViewRecord | null>(null, true, async (client, view) => {
+      const { rows: [row] } = await client.query<LocalReceptionViewRecord>(
+        `SELECT reception,principal::float8 AS principal,movement_type AS "movementType",
+                policy_number AS "policyNumber",policy_id::float8 AS "policyId"
+         FROM (${view}) documents WHERE company_id=1 AND ${field}=$1`, [value],
       );
       return row ?? null;
     });
   }
 
   async findById(id: number) {
-    if (!isLocalPurchaseReceptionId(id)) return this.legacy.findById(id);
+    if (!isLocalDocument(id)) return this.legacy.findById(id);
     const local = await this.record('id', id);
     if (!local) return null;
-    return (await this.withBalances([PurchaseReception.create(local.result.reception)]))[0]!;
+    return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
   }
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
     if (!local) return this.legacy.findByNumber(number);
-    return (await this.withBalances([PurchaseReception.create(local.result.reception)]))[0]!;
+    return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
   }
 
   private async withBalances(items: PurchaseReception[]) {
@@ -42,7 +48,9 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const rows = items.map((item) => item.toPrimitives());
     const debits = await readSupplierPayments(new Map<number, number>(), async (client) => {
       const { rows: found } = await client.query<{ id: string; paid: string }>(
-        'SELECT receipt_id AS id, sum(amount) AS paid FROM tuvansa.supplier_payments WHERE receipt_id=ANY($1::bigint[]) GROUP BY receipt_id',
+        `SELECT ${paymentDocumentIdSql('payment')} AS id,sum(amount) AS paid
+         FROM tuvansa.supplier_payments AS payment WHERE company_id=1 AND ${paymentDocumentIdSql('payment')}=ANY($1::bigint[])
+         GROUP BY 1`,
         [rows.map(({ id }) => id)],
       );
       return new Map(found.map(({ id, paid }) => [Number(id), Number(paid)]));
@@ -90,10 +98,11 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     }
     const where = conditions.join(' AND ');
     const orderBy = parameters.length ? 'number,id' : 'id DESC';
-    return readLocalPurchaseReceptions<PurchaseReceptionSearchResult>(empty, async (client) => {
+    return readLocalReceptionView<PurchaseReceptionSearchResult>(empty, false, async (client, view) => {
       const { rows: [row] } = await client.query<{ total: string; results: PurchaseReceptionSaveResultRow[] }>(
-        `SELECT (SELECT count(*) FROM tuvansa.purchase_receptions WHERE ${where}) AS total,
-          ARRAY(SELECT ${reception} - 'lines' FROM tuvansa.purchase_receptions WHERE ${where}
+        `WITH documents AS (${view})
+         SELECT (SELECT count(*) FROM documents WHERE ${where}) AS total,
+          ARRAY(SELECT ${reception} - 'lines' FROM documents WHERE ${where}
              ORDER BY ${orderBy} OFFSET $${parameters.length + 1} LIMIT $${parameters.length + 2}) AS results`,
         [...parameters, offset, limit],
       );
@@ -107,34 +116,34 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const { number } = current.toPrimitives();
     const previous = direction === 'previous';
     const [local, legacy] = await Promise.all([
-      readLocalPurchaseReceptions<LocalReceptionRecord['result'] | null>(null, async (client) => {
-        const { rows: [row] } = await client.query<Pick<LocalReceptionRecord, 'result'>>(
-          `SELECT result FROM tuvansa.purchase_receptions WHERE company_id=1 AND number ${previous ? '<' : '>'} $1
+      readLocalReceptionView<PurchaseReceptionProps | null>(null, true, async (client, view) => {
+        const { rows: [row] } = await client.query<Pick<LocalReceptionViewRecord, 'reception'>>(
+          `SELECT reception FROM (${view}) documents WHERE company_id=1 AND number ${previous ? '<' : '>'} $1
            ORDER BY number ${previous ? 'DESC' : 'ASC'} LIMIT 1`, [number],
         );
-        return row?.result ?? null;
+        return row?.reception ?? null;
       }),
       this.legacy.findAdjacentByNumber(number, direction),
     ]);
     if (!local) return legacy;
-    const compare = legacy ? local.reception.number.localeCompare(legacy.toPrimitives().number, 'en') : 0;
+    const compare = legacy ? local.number.localeCompare(legacy.toPrimitives().number, 'en') : 0;
     if (legacy && (previous ? compare < 0 : compare > 0)) return legacy;
-    return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
+    return (await this.withBalances([PurchaseReception.create(local)]))[0]!;
   }
 
   async getPanel(id: number, key: PurchaseReceptionPanelKey): Promise<PurchaseReceptionPanelResult | null> {
-    if (!isLocalPurchaseReceptionId(id)) return this.legacy.getPanel(id, key);
+    if (!isLocalDocument(id)) return this.legacy.getPanel(id, key);
     const local = await this.record('id', id);
     if (!local) return null;
-    const { number, dates, orderNumber, classifications } = local.result.reception;
+    const { number, dates, orderNumber, supplierReference, classifications } = local.reception;
     if (key === 'classifications') {
       return this.legacy.classificationPanel({ id, number }, classifications, 'postgres');
     }
-    const amount = local.payable?.amount ?? 0;
+    const amount = local.principal ?? 0;
     const payments = await readSupplierPayments<Record<string, unknown>[]>([], async (client) => {
       const { rows } = await client.query<{ id: string; date: string; number: string; amount: string; policyNumber: string }>(
         `SELECT id::text,date::text,number,amount::text,policy_number AS "policyNumber"
-         FROM tuvansa.supplier_payments WHERE receipt_id=$1 AND company_id=1 ORDER BY id`, [id],
+         FROM tuvansa.supplier_payments AS payment WHERE ${paymentDocumentIdSql('payment')}=$1 AND company_id=1 ORDER BY id`, [id],
       );
       return rows.map((row) => ({
         id: Number(row.id), date: row.date, transactionType: 'PP', reference: row.number, relatedDocumentId: id,
@@ -142,10 +151,10 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
         policyNumber: row.policyNumber, policyId: Number(row.id),
       }));
     });
-    const charge = local.payable ? [{
-      id, date: dates.receivedAt, transactionType: local.movement.header.type, reference: orderNumber,
+    const charge = local.principal !== null ? [{
+      id, date: dates.receivedAt, transactionType: local.movementType, reference: orderNumber || supplierReference,
       relatedDocumentId: id, charges: amount, payments: 0, signedAmount: amount, relatedDocument: number,
-      policyNumber: local.accounting?.number ?? '', policyId: local.accounting ? id : null,
+      policyNumber: local.policyNumber ?? '', policyId: local.policyId,
     }] : [];
     return {
       purchaseReception: { id, number }, key, section: 'actions', button: 'Auxiliar', source: 'postgres',
@@ -155,4 +164,4 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
   }
 }
 
-type PurchaseReceptionSaveResultRow = Omit<LocalReceptionRecord['result']['reception'], 'lines'>;
+type PurchaseReceptionSaveResultRow = Omit<PurchaseReceptionProps, 'lines'>;

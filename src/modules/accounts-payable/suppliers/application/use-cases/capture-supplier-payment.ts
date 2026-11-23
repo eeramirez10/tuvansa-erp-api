@@ -22,7 +22,7 @@ export class CaptureSupplierPayment {
   private async target(identity: SupplierPaymentIdentity) {
     if (!this.storage.writable()) throw postgresUnavailable();
     const target = await this.storage.target(identity);
-    if (!target) throw new NotFoundError('Recepción local del proveedor');
+    if (!target) throw new NotFoundError('Documento local del proveedor');
     return target;
   }
 
@@ -33,7 +33,7 @@ export class CaptureSupplierPayment {
   async prepare(identity: SupplierPaymentIdentity) {
     const target = await this.target(identity);
     const reason = supplierPaymentReason(target);
-    const settings = reason ? null : await this.references.settings(identity.companyId, identity.supplierId);
+    const settings = reason ? null : await this.references.settings(identity.companyId, identity.supplierId, undefined, undefined, target.liability);
     const bankAccounts = this.bankAccounts(settings);
     const unavailable = reason ?? (!settings ? settingsUnavailable : bankAccounts.length === 0 ? bankUnavailable : null);
     return {
@@ -64,9 +64,9 @@ export class CaptureSupplierPayment {
     const previous = await this.storage.findRequest(identity.companyId, input.requestKey, fingerprint);
     if (previous) return previous;
 
-    await this.target(identity);
+    const target = await this.target(identity);
     const resolvePosting: SupplierPaymentCommand['resolvePosting'] = async (lookup) => {
-      const settings = await this.references.settings(identity.companyId, identity.supplierId, input.bankAccountId, lookup);
+      const settings = await this.references.settings(identity.companyId, identity.supplierId, input.bankAccountId, lookup, target.liability);
       if (!settings) throw new ConflictError(settingsUnavailable, 'SUPPLIER_PAYMENT_CONFIG_UNAVAILABLE');
       const bank = this.bankAccounts(settings).find(({ id }) => id === input.bankAccountId);
       if (!bank) throw new ConflictError(bankUnavailable, 'SUPPLIER_PAYMENT_BANK_UNAVAILABLE');

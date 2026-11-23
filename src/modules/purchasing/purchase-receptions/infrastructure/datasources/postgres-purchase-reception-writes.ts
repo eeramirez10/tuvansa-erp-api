@@ -52,6 +52,8 @@ interface Saved {
   result: PurchaseReceptionSaveResult;
 }
 
+export const ensurePurchaseReceptionSchema = (client: PostgresClient) => migratePostgres(client, migrations);
+
 export type LocalReceptionRecord = {
   result: PurchaseReceptionSaveResult;
   movement: MovementDocument;
@@ -98,7 +100,7 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
 
   private async migrate() {
     const client = await connectPostgres();
-    try { await migratePostgres(client, migrations); } finally { client.release(); }
+    try { await ensurePurchaseReceptionSchema(client); } finally { client.release(); }
   }
 
   async commit({ actor, context, effect, posting, input, fingerprint }: PurchaseReceptionWriteCommand): Promise<PurchaseReceptionSaveResult> {

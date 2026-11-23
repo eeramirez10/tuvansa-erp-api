@@ -44,6 +44,7 @@ const postingChecks = {
   bank_reconciliations: 'bank_account_id=account.id',
   bank_transfer_movements: 'bank_account_id=account.id',
   purchase_receptions: "accounting->'lines' @> jsonb_build_array(jsonb_build_object('account',account.code))",
+  purchase_expense_batches: "accounting_lines @> jsonb_build_array(jsonb_build_object('account',account.code))",
 };
 const unavailable = () => new ApplicationError('No fue posible consultar o guardar el catálogo de bancos en PostgreSQL.', 'BANK_CATALOG_POSTGRES_UNAVAILABLE', 503);
 

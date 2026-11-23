@@ -1,4 +1,5 @@
 import { readSupplierPayments } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
+import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
@@ -150,14 +151,17 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
     const end = key === 'automatic-reconciliation' ? asOfDate : null;
     return readSupplierPayments<ReturnType<typeof paymentRow>[]>([], async (client) => {
+      const payables = await localPurchasePayablesSql(client);
+      if (!payables) return [];
       const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
       const { rows } = await client.query<BankPaymentRow>(
         `SELECT posting.id::text, posting.number, posting.policy_number AS "policyNumber",
                 posting.date::text, posting.amount::text, posting.description, posting.user_id AS "userId",
-                posting.mode, receipt.result #>> '{reception,supplier,name}' AS beneficiary,
+                posting.mode, receipt.supplier_name AS beneficiary,
                 settlement.statement_date::text AS "statementDate"
          FROM tuvansa.supplier_payments AS posting
-         JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = posting.receipt_id
+         JOIN (${payables}) AS receipt ON receipt.id=${paymentDocumentIdSql('posting')}
+           AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
          ${join}
          WHERE posting.bank_account_id = $1 AND posting.company_id = 1
            AND ($2::date IS NULL OR posting.date >= $2) AND ($3::date IS NULL OR posting.date <= $3)

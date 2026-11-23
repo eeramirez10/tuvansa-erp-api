@@ -5,7 +5,7 @@ import type { BankAccountLookup } from '../../../../treasury/banking/domain/enti
 import { permitsBankPosting } from '../../../../treasury/banking/domain/entities/bank-posting-role.js';
 import { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
-  SupplierPaymentBank, SupplierPaymentReferences, SupplierPaymentSettings,
+  SupplierPaymentBank, SupplierPaymentLiability, SupplierPaymentReferences, SupplierPaymentSettings,
 } from '../../domain/datasources/supplier-payment-data-source.js';
 
 interface ConfigurationRow extends RowDataPacket {
@@ -39,13 +39,15 @@ export class MysqlSupplierPaymentReferences implements SupplierPaymentReferences
     return rows.map(({ id }) => id);
   }
 
-  async settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup): Promise<SupplierPaymentSettings | null> {
+  async settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup,
+    liability?: SupplierPaymentLiability | null): Promise<SupplierPaymentSettings | null> {
     const [[configuration], bankAccounts] = await Promise.all([
       legacyMysqlPool.execute<ConfigurationRow[]>(
-        `SELECT TRIM(c.CIAPOLIZAEGR) AS policyType, TRIM(s.PRVCTA) AS supplierAccount, TRIM(a.BNOMBRE) AS supplierAccountName
+        `SELECT TRIM(c.CIAPOLIZAEGR) AS policyType, TRIM(a.BCOD) AS supplierAccount, TRIM(a.BNOMBRE) AS supplierAccountName
          FROM FCIA c
          JOIN FPRV s ON s.PRVSEQ = ?
-         JOIN FBENC a ON a.BCOD = TRIM(s.PRVCTA) AND a.BMOVS = 1 AND a.BCIA IN (0,c.CIASEQ) AND a.BMULTICIA IN (0,c.CIASEQ)
+         JOIN FBENC a ON a.BCOD = coalesce(?,TRIM(s.PRVCTA)) AND a.BMOVS = 1
+          AND a.BCIA IN (0,c.CIASEQ) AND a.BMULTICIA IN (0,c.CIASEQ)
          WHERE c.CIASEQ = ? AND c.CIAALIAS = 'TUVANSA' AND TRIM(c.CIAPOLIZAEGR) = '2' AND s.PRVINTERCIA = 0
            AND EXISTS (
              SELECT 1 FROM FTIPMV t
@@ -57,13 +59,13 @@ export class MysqlSupplierPaymentReferences implements SupplierPaymentReferences
              WHERE t.TICLA = c.CIAPOLIZAEGR AND t.TIMODULO = 9 AND t.TIMULTICIA IN (0,c.CIASEQ)
            )
          ORDER BY a.BSEQ LIMIT 2`,
-        [supplierId, companyId],
+        [supplierId, liability?.code ?? null, companyId],
       ),
       this.banks(companyId, selectedBankId, lookup),
     ]);
     const [rules] = configuration;
     if (!rules || configuration.length !== 1) return null;
     const { policyType, supplierAccount, supplierAccountName } = rules;
-    return { policyType, supplierAccount, supplierAccountName, bankAccounts };
+    return { policyType, supplierAccount, supplierAccountName: liability?.name ?? supplierAccountName, bankAccounts };
   }
 }

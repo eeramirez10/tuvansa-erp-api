@@ -5,6 +5,8 @@ import { connectPostgres, postgresConfigured, type PostgresClient } from '../../
 import { isLocalSupplierPaymentId } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { isLocalPurchaseExpenseBatchId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
+import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
@@ -51,9 +53,13 @@ const receiptFields = `
 const paymentFields = `
     posting.id, posting.policy_number AS number, posting.company_id AS company, posting.user_id AS "userId",
     posting.date::text AS date, posting.number AS cheque,
-    receipt.result #>> '{reception,supplier,name}' AS beneficiary, 'PAGOS PR.'::text AS family,
+    receipt.supplier_name AS beneficiary, 'PAGOS PR.'::text AS family,
     posting.description AS concept, posting.created_at AS "auditAt",
-    coalesce((receipt.payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
+    receipt.exchange_rate::float8 AS "exchangeRate"`;
+const expenseFields = `
+    id, policy_number AS number, company_id AS company, user_id AS "userId",
+    date::text AS date, reference AS cheque, beneficiary,'GASTOS MULTIPLE'::text AS family,
+    description AS concept,created_at AS "auditAt",1::float8 AS "exchangeRate"`;
 const paymentLines = `jsonb_build_array(
     jsonb_build_object('account', posting.bank_code, 'accountId', posting.bank_account_id,
       'accountName', posting.bank_name, 'department', '', 'debit', 0, 'credit', posting.amount,
@@ -92,7 +98,8 @@ const transferLines = (settlements: string) => `(
   )`;
 const money = (amount: number) => Number(amount.toFixed(2));
 const isLocalPolicyId = (id: number) =>
-  isLocalPurchaseReceptionId(id) || isLocalSupplierPaymentId(id) || isLocalCustomerCollectionId(id) || isLocalBankTransferId(id);
+  isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseBatchId(id) || isLocalSupplierPaymentId(id)
+    || isLocalCustomerCollectionId(id) || isLocalBankTransferId(id);
 
 async function readLocalPolicies<T>(
   fallback: T, detail: boolean, read: (client: PostgresClient, view: string) => Promise<T>,
@@ -101,8 +108,9 @@ async function readLocalPolicies<T>(
   let client: PostgresClient | undefined;
   try {
     client = await connectPostgres();
-    const { rows: [tables] } = await client.query<{ receipts: boolean; payments: boolean; collections: boolean; transfers: boolean }>(
+    const { rows: [tables] } = await client.query<{ receipts: boolean; expenses: boolean; payments: boolean; collections: boolean; transfers: boolean }>(
       `SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS receipts,
+              to_regclass('tuvansa.purchase_expense_batches') IS NOT NULL AS expenses,
               to_regclass('tuvansa.supplier_payments') IS NOT NULL AS payments,
               to_regclass('tuvansa.customer_collections') IS NOT NULL AS collections,
               to_regclass('tuvansa.bank_transfers') IS NOT NULL
@@ -116,9 +124,15 @@ async function readLocalPolicies<T>(
       `SELECT ${receiptFields}, ${withLines("accounting->'lines'")} AS lines
        FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL`,
     );
-    if (tables?.payments) views.push(
+    if (tables?.expenses) views.push(
+      `SELECT ${expenseFields}, ${withLines('accounting_lines')} AS lines
+       FROM tuvansa.purchase_expense_batches WHERE company_id=1`,
+    );
+    const payables = tables?.payments ? await localPurchasePayablesSql(client) : null;
+    if (payables) views.push(
       `SELECT ${paymentFields}, ${withLines(paymentLines)} AS lines FROM tuvansa.supplier_payments AS posting
-       JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = posting.receipt_id AND receipt.company_id = posting.company_id
+       JOIN (${payables}) AS receipt ON receipt.id=${paymentDocumentIdSql('posting')}
+         AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
        ${settlements} WHERE posting.company_id = 1`,
     );
     if (tables?.collections) views.push(

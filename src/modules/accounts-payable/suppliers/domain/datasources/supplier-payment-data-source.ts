@@ -35,7 +35,10 @@ export interface SupplierPaymentTarget {
   exchangeRate: number;
   remaining: number;
   revision: number;
+  liability?: SupplierPaymentLiability | null;
 }
+
+export interface SupplierPaymentLiability { code: string; name: string }
 
 export interface SupplierPaymentBank {
   id: number;
@@ -51,7 +54,8 @@ export interface SupplierPaymentSettings {
 }
 
 export interface SupplierPaymentReferences {
-  settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup): Promise<SupplierPaymentSettings | null>;
+  settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup,
+    liability?: SupplierPaymentLiability | null): Promise<SupplierPaymentSettings | null>;
 }
 
 export interface SupplierPaymentIdentity {

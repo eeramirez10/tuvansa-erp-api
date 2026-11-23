@@ -1,32 +1,23 @@
 import {
-  readLocalPurchaseReceptions, type LocalReceptionRecord,
-} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+  paymentDocumentIdSql, readPurchasePayables,
+} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { supplierPaymentsAvailable } from './postgres-supplier-payments.js';
 
-interface ReceiptSupplierBalance {
-  supplierId: number;
-  balance: number;
-}
-
-const supplierIdField = "(receipt.result #>> '{reception,supplier,id}')::bigint";
-const originalAmount = "(receipt.payable->>'amount')::numeric";
 const paymentScope = `FROM tuvansa.supplier_payments AS payment
-  WHERE payment.receipt_id = receipt.id AND payment.company_id = receipt.company_id
-    AND payment.supplier_id = ${supplierIdField}`;
+  WHERE ${paymentDocumentIdSql('payment')} = receipt.id AND payment.company_id = receipt.company_id
+    AND payment.supplier_id = receipt.supplier_id`;
 
 export async function purchaseReceptionSupplierBalances(supplierIds: number[]): Promise<Map<number, number>> {
   if (supplierIds.length === 0) return new Map();
-  return readLocalPurchaseReceptions(new Map<number, number>(), async (client) => {
+  return readPurchasePayables(new Map<number, number>(), async (client, source) => {
     const hasPayments = await supplierPaymentsAvailable(client);
     const paid = hasPayments ? `coalesce((SELECT sum(payment.amount) ${paymentScope}), 0)` : '0';
-    // Derivada. Suma cada cargo menos sus pagos en la compañía del panel.
-    const { rows } = await client.query<ReceiptSupplierBalance>(
-      `SELECT ${supplierIdField}::float8 AS "supplierId",
-              sum(${originalAmount} - ${paid})::float8 AS balance
-       FROM tuvansa.purchase_receptions AS receipt
-       WHERE receipt.company_id = 1 AND receipt.payable IS NOT NULL
-         AND ${supplierIdField} = ANY($1::bigint[])
-       GROUP BY ${supplierIdField}`, [supplierIds],
+    const { rows } = await client.query<{ supplierId: number; balance: number }>(
+      `SELECT receipt.supplier_id::float8 AS "supplierId",sum(receipt.principal - ${paid})::float8 AS balance
+       FROM (${source}) AS receipt
+       WHERE receipt.company_id=1 AND receipt.principal>0 AND NOT receipt.cancelled
+         AND receipt.supplier_id=ANY($1::bigint[])
+       GROUP BY receipt.supplier_id`, [supplierIds],
     );
     return new Map(rows.map(({ supplierId, balance }) => [supplierId, balance]));
   });
@@ -42,16 +33,29 @@ export interface SupplierPurchaseReceptionPayment {
   createdAt: string;
 }
 
-export type SupplierPurchaseReceptionCharge = Pick<LocalReceptionRecord, 'result' | 'movement' | 'accounting'> & {
-  payable: NonNullable<LocalReceptionRecord['payable']>;
+export interface SupplierPurchaseReceptionCharge {
+  id: number;
+  company: number;
+  number: string;
+  date: string | null;
+  dueAt: string | null;
+  supplierReference: string;
+  orderNumber: string;
+  movementType: string;
+  userId: number;
+  principal: number;
+  currencyId: number;
+  exchangeRate: number;
+  policyNumber: string | null;
+  policyId: number | null;
   remaining: number;
   payments: SupplierPurchaseReceptionPayment[];
   days: number;
   createdAt: string;
-};
+}
 
 export async function purchaseReceptionSupplierCharges(supplierId: number): Promise<SupplierPurchaseReceptionCharge[]> {
-  return readLocalPurchaseReceptions<SupplierPurchaseReceptionCharge[]>([], async (client) => {
+  return readPurchasePayables<SupplierPurchaseReceptionCharge[]>([], async (client, source) => {
     const hasPayments = await supplierPaymentsAvailable(client);
     const paid = hasPayments ? 'coalesce(payments.amount, 0)' : '0';
     const items = hasPayments ? "coalesce(payments.items, '[]'::jsonb)" : "'[]'::jsonb";
@@ -63,14 +67,16 @@ export async function purchaseReceptionSupplierCharges(supplierId: number): Prom
         ORDER BY payment.id
       ) AS items ${paymentScope}
     ) AS payments ON true` : '';
-    // Derivada. El cargo y sus pagos se leen en la misma instantánea; el importe original se conserva.
     const { rows } = await client.query<SupplierPurchaseReceptionCharge>(
-      `SELECT receipt.result, receipt.movement, receipt.payable, receipt.accounting,
-              (${originalAmount} - ${paid})::float8 AS remaining, ${items} AS payments,
-              CURRENT_DATE - (receipt.payable->>'dueAt')::date AS days, receipt.created_at::text AS "createdAt"
-       FROM tuvansa.purchase_receptions AS receipt ${join}
-       WHERE receipt.company_id = 1 AND receipt.payable IS NOT NULL
-         AND ${supplierIdField} = $1
+      `SELECT receipt.id::float8 AS id,receipt.company_id AS company,receipt.number,receipt.received_at::text AS date,
+              receipt.due_at::text AS "dueAt",receipt.supplier_reference AS "supplierReference",
+              receipt.order_number AS "orderNumber",receipt.movement_type AS "movementType",receipt.user_id AS "userId",
+              receipt.principal::float8 AS principal,receipt.currency_id AS "currencyId",
+              receipt.exchange_rate::float8 AS "exchangeRate",receipt.policy_number AS "policyNumber",
+              receipt.policy_id::float8 AS "policyId",(receipt.principal - ${paid})::float8 AS remaining,
+              ${items} AS payments,coalesce(CURRENT_DATE - receipt.due_at,0) AS days,receipt.created_at::text AS "createdAt"
+       FROM (${source}) AS receipt ${join}
+       WHERE receipt.company_id=1 AND receipt.principal>0 AND NOT receipt.cancelled AND receipt.supplier_id=$1
        ORDER BY receipt.id`, [supplierId],
     );
     return rows;

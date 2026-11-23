@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type { PurchaseReceptionsController } from './purchase-receptions-controller.js';
 
-export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController): Router => {
+export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController, expenses: Router): Router => {
   const router = Router();
+  router.use('/general-expenses', expenses);
   router.get('/', controller.search);
   router.get('/create', controller.prepare);
   router.post('/', controller.create);

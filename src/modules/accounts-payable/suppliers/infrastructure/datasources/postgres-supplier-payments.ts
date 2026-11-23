@@ -5,7 +5,11 @@ import {
   connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory,
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
-import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import {
+  ensurePurchaseExpenseSchema, isLocalPurchaseExpenseDocumentId,
+} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
+import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import type { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
   SupplierPaymentCommand, SupplierPaymentDataSource, SupplierPaymentIdentity, SupplierPaymentResult, SupplierPaymentTarget,
@@ -57,6 +61,15 @@ const migrations = [{
     CREATE INDEX supplier_payments_supplier ON tuvansa.supplier_payments(company_id,supplier_id,date,id);
     CREATE INDEX supplier_payments_bank ON tuvansa.supplier_payments(company_id,bank_account_id,date,id);
   `,
+}, {
+  id: 'supplier_payment_expense_target',
+  sql: `
+    ALTER TABLE tuvansa.supplier_payments
+      ALTER COLUMN receipt_id DROP NOT NULL,
+      ADD COLUMN expense_id bigint REFERENCES tuvansa.purchase_expense_documents(id),
+      ADD CONSTRAINT supplier_payments_one_document CHECK ((receipt_id IS NULL) <> (expense_id IS NULL)),
+      ADD CONSTRAINT supplier_payments_expense_revision UNIQUE (expense_id,receipt_revision);
+  `,
 }];
 
 const unavailable = () =>
@@ -103,36 +116,33 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
   writable() { return this.configured(); }
 
   private async findTarget(client: PostgresClient, identity: SupplierPaymentIdentity, withPayments: boolean) {
-    const principal = "COALESCE((r.payable ->> 'amount')::numeric,0)";
+    const source = await localPurchasePayablesSql(client);
+    if (!source) return null;
     const { rows: [row] } = await client.query<SupplierPaymentTarget>(
       `SELECT r.id::float8 AS "receiptId", r.number,
-         r.result #>> '{reception,dates,receivedAt}' AS "receivedAt",
-         COALESCE((r.result #>> '{reception,cancelled}')::boolean,false) AS cancelled,
-         ${principal}::float8 AS principal,
-         COALESCE((r.payable ->> 'currencyId')::integer,0) AS "currencyId",
-         COALESCE((r.payable ->> 'exchangeRate')::float8,0) AS "exchangeRate",
-         ${withPayments ? `GREATEST(${principal} - p.paid,0)` : principal}::float8 AS remaining,
-         ${withPayments ? 'p.revision' : '1'} AS revision
-       FROM tuvansa.purchase_receptions r
+         r.received_at::text AS "receivedAt", r.cancelled, r.principal::float8 AS principal,
+         r.currency_id AS "currencyId", r.exchange_rate::float8 AS "exchangeRate",
+         ${withPayments ? 'GREATEST(r.principal - p.paid,0)' : 'r.principal'}::float8 AS remaining,
+         ${withPayments ? 'p.revision' : '1'} AS revision,
+         CASE WHEN r.supplier_account IS NOT NULL THEN
+           jsonb_build_object('code',r.supplier_account,'name',r.supplier_account_name) END AS liability
+       FROM (${source}) r
        ${withPayments ? `CROSS JOIN LATERAL (
          SELECT COALESCE(sum(amount),0) AS paid, (count(*) + 1)::integer AS revision
-         FROM tuvansa.supplier_payments WHERE receipt_id = r.id
+         FROM tuvansa.supplier_payments payment
+         WHERE ${paymentDocumentIdSql('payment')} = r.id AND payment.company_id=r.company_id AND payment.supplier_id=r.supplier_id
        ) p` : ''}
-       WHERE r.id=$1 AND r.company_id=$2 AND r.number LIKE 'RW%'
-         AND (r.result #>> '{reception,supplier,id}')::bigint = $3`,
+       WHERE r.id=$1 AND r.company_id=$2 AND r.supplier_id=$3`,
       [identity.receiptId, identity.companyId, identity.supplierId],
     );
     return row ?? null;
   }
 
   target(identity: SupplierPaymentIdentity) {
-    if (!this.writable() || !isLocalPurchaseReceptionId(identity.receiptId)) return Promise.resolve(null);
-    return withConnection(this.connect, async (client) => {
-      const { rows } = await client.query<{ available: boolean }>(
-        "SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS available",
-      );
-      return rows[0]?.available ? this.findTarget(client, identity, await supplierPaymentsAvailable(client)) : null;
-    });
+    if (!this.writable() || (!isLocalPurchaseReceptionId(identity.receiptId) && !isLocalPurchaseExpenseDocumentId(identity.receiptId))) {
+      return Promise.resolve(null);
+    }
+    return withConnection(this.connect, async (client) => this.findTarget(client, identity, await supplierPaymentsAvailable(client)));
   }
 
   private async request(client: PostgresClient, companyId: number, requestKey: string, fingerprint: string) {
@@ -154,7 +164,11 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
 
   private async migrate() {
     const client = await this.connect();
-    try { await migratePostgres(client, migrations); } finally { client.release(); }
+    try {
+      await ensurePurchaseReceptionSchema(client);
+      await ensurePurchaseExpenseSchema(client);
+      await migratePostgres(client, migrations);
+    } finally { client.release(); }
   }
 
   async commit({ identity, userId, input, fingerprint, resolvePosting }: SupplierPaymentCommand): Promise<SupplierPaymentResult> {
@@ -190,10 +204,12 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
     const previous = await this.request(client, companyId, input.requestKey, fingerprint);
     if (previous) return previous;
 
-    // Lock the payable before reading its total again so different requests cannot draw the same balance.
-    await client.query('SELECT id FROM tuvansa.purchase_receptions WHERE id=$1 AND company_id=$2 FOR UPDATE', [receiptId, companyId]);
+    const expense = isLocalPurchaseExpenseDocumentId(receiptId);
+    const table = expense ? 'purchase_expense_documents' : 'purchase_receptions';
+    // Se bloquea el documento para que dos solicitudes no usen el mismo saldo.
+    await client.query(`SELECT id FROM tuvansa.${table} WHERE id=$1 AND company_id=$2 FOR UPDATE`, [receiptId, companyId]);
     const target = await this.findTarget(client, identity, true);
-    if (!target) throw new NotFoundError('Recepción local del proveedor');
+    if (!target) throw new NotFoundError('Documento local del proveedor');
     validateSupplierPayment(target, input);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:' || $1::text || ':' || $2::text, 0))",
@@ -219,11 +235,11 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
       `INSERT INTO tuvansa.supplier_payments
        (id,company_id,user_id,request_key,fingerprint,receipt_id,receipt_revision,supplier_id,
         bank_account_id,bank_code,bank_name,supplier_account,supplier_account_name,amount,date,
-        mode,number,policy_number,description,result)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb)`,
-      [id, companyId, userId, input.requestKey, fingerprint, receiptId, target.revision + 1, supplierId,
+        mode,number,policy_number,description,result,expense_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21)`,
+      [id, companyId, userId, input.requestKey, fingerprint, expense ? null : receiptId, target.revision + 1, supplierId,
         bank.id, bank.code, bank.name, supplierAccount, supplierAccountName, input.amount, input.date,
-        input.mode, number, policyNumber, input.description, JSON.stringify(result)],
+        input.mode, number, policyNumber, input.description, JSON.stringify(result), expense ? receiptId : null],
     );
     return result;
   }

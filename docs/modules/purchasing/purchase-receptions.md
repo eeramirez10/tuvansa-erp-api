@@ -39,6 +39,50 @@ En Neon se probó en Chrome una orden confirmada con dos unidades. Cancelar mant
 
 El alta cubre recepciones ordinarias en pesos, con productos sin capas de costo, sin pedimento con importes, sin cargos de importación, sin IEPS, sin retenciones y sin proveedor intercompañía. Los casos de importación y capas requieren la migración de `MRECEP/65,104,105` y de los costos asociados. El folio y la numeración de la póliza se asignan en PostgreSQL.
 
+## Gastos múltiples (GA)
+
+En **Recepciones → Gastos múltiples**, `MRECEP/5` abre la captura de
+`ERECEP#12`. La vista permite capturar fecha, beneficiario, concepto y
+varios renglones con proveedor, producto de gasto, referencia, importe, IVA,
+retenciones y centro de costo. **OK** guarda el grupo, y **Cancelar** sale
+del borrador.
+
+| Control | Ruta relativa a `/api/purchasing/purchase-receptions` | Procedencia y resultado |
+| --- | --- | --- |
+| Gastos múltiples | GET `/general-expenses/create` | `FCIA`, `FTIPMV`, `FBENC` y `FALMCAT` adaptados al periodo, tipo GA, cuentas y centros de costo de la compañía |
+| Códigos Proveedor y Gasto | GET `/general-expenses/catalog?supplierCode=…&productCode=…` | `FPRV`, `FINV`, `FBENC` y valores por defecto de impuestos de `ERECEP#12/411` |
+| OK | POST `/general-expenses` | Escritura derivada de `ERECEP#12/401–403,411–412` en `purchase_expense_batches` y `purchase_expense_documents` |
+| Documento, Búsqueda y Auxiliar | GET `/:id`, `/by-number/:number`, `/` y `/:id/actions/auxiliary` | Ficha de GA, importes y movimientos GA y PP del documento |
+| Proveedores → Saldo → Paga | GET y POST `/api/accounts-payable/suppliers/:supplierId/payments/:receiptId` | Pagos parciales o liquidación. El PP usa la cuenta de pasivo del GA guardado y actualiza Recepciones, Proveedores, Bancos y Contabilidad |
+
+`ERECEP#12/402` agrupa documentos por proveedor y referencia, y líneas por
+producto y centro de costo. El saldo por pagar es importe más IVA menos
+retenciones de IVA e ISR. `/403` construye la póliza de diario, y `/401`
+continúa con su aplicación. El alta web reserva folios `GAW` y pólizas
+`3GW`. Los documentos y la póliza se guardan en una transacción. El registro
+GA genera Cuentas por Pagar y la póliza aplicada. El movimiento bancario se
+genera cuando se registra un PP.
+
+La captura web admite servicios en pesos y documentos con saldo positivo.
+Los importes con signo se conservan por renglón y las referencias duplicadas
+se validan contra MySQL y PostgreSQL. Si una cuenta fiscal de `FCIA` está
+vacía, el usuario elige explícitamente una cuenta elegible para ese impuesto.
+En el respaldo local se corroboraron `1119001` para IVA pendiente de pago,
+`2016013` para retención de IVA de fletes y `2016018` para ISR RESICO en
+pólizas históricas. La consulta del catálogo ofrece esos antecedentes por
+concepto contable.
+
+La captura nativa `bank-inline-gastos-multiples-ga.png` muestra la ficha.
+`bank-inline-ga-erecep12-proc402-fdoc.png` y las capturas de `/403` muestran
+los cargos y abonos. En la prueba local del 23/11/2026 se observó el GA
+`GA36183`, por $100.00, con IVA y retenciones de cero, y la póliza
+`312512-0003`. El proveedor y el producto de esa prueba habían aparecido
+juntos en un GA previo del respaldo. Los requests reproducibles están en
+`http/purchasing/purchase-expenses.http`.
+El GA de prueba nativo quedó marcado con la referencia `GAT231701`. Se
+conservó para evitar el ajuste de existencias que ejecuta la baja estándar
+de Recepciones.
+
 ## Acciones de lectura verificadas
 
 | Boton OMNIS | Endpoint | Fuente real |

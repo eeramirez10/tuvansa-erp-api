@@ -11,10 +11,11 @@ export interface PurchaseReceptionLine {
   discount: number;
   amount: number;
   pieces: string;
-  costCenter: number;
+  costCenter: number | string;
   branch: number;
   lotId: number;
   inventoryCreatedAt: string | null;
+  expenseTaxes?: { vat: number; vatWithholding: number; incomeWithholding: number };
 }
 
 export interface PurchaseReceptionProps {
@@ -45,6 +46,7 @@ export interface PurchaseReceptionProps {
     taxPercentage: number;
     tax: number;
     withholdingTax: number;
+    expenseTaxes?: { vatWithholding: number; incomeWithholding: number };
     total: number;
     balance: number;
   };

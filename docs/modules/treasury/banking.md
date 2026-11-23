@@ -128,15 +128,15 @@ informe presenta los totales en cero y el motivo. Las capturas
 su resultado local.
 
 La captura fiscal GA está en **Recepciones → Gastos múltiples**
-(`MRECEP/5 → ERECEP#12`). **Pagar recepción** conserva la captura web de un
-PP por cheque para una recepción pendiente.
+(`MRECEP/5 → ERECEP#12`). **Pagar recepción** registra un PP por cheque
+para recepciones y gastos web con saldo pendiente. Los detalles de captura y
+póliza están en [Recepciones](../purchasing/purchase-receptions.md).
 
 En la captura manual GA, `ERECEP#12/401` crea la póliza de diario y la aplica.
 `/402` genera documentos por proveedor y referencia, y partidas por producto
 y centro de costo. `/403` contabiliza gastos, IVA, retenciones y el saldo por
 pagar. `/411` verifica las cuentas contables de proveedor y producto, y
-`/412` valida que la referencia del proveedor esté disponible. La captura de
-GA se abrió y se canceló durante la verificación de esta ruta.
+`/412` valida que la referencia del proveedor esté disponible.
 La compañía local tiene vacías `CIACTAIVAPAGOACRDE`, `CIACTARETIVADE` y
 `CIACTARETISRDE`, las cuentas que consulta `/403` para los importes de IVA
 y retenciones.

@@ -1,12 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { describe, expect, it, vi } from 'vitest';
 import { GetFirstInvoice } from '../src/modules/sales/invoicing/application/use-cases/get-first-invoice.js';
 import { GetInvoiceByNumber } from '../src/modules/sales/invoicing/application/use-cases/get-invoice-by-number.js';
 import { GetInvoicePanel } from '../src/modules/sales/invoicing/application/use-cases/get-invoice-panel.js';
 import { NavigateInvoice } from '../src/modules/sales/invoicing/application/use-cases/navigate-invoice.js';
 import { SearchInvoices } from '../src/modules/sales/invoicing/application/use-cases/search-invoices.js';
+import { SimulateSalesStamping } from '../src/modules/sales/invoicing/application/use-cases/simulate-sales-stamping.js';
 import { Invoice } from '../src/modules/sales/invoicing/domain/entities/invoice.js';
 import type { InvoicePanelsRepository } from '../src/modules/sales/invoicing/domain/repositories/invoice-panels-repository.js';
 import type { InvoicesRepository } from '../src/modules/sales/invoicing/domain/repositories/invoices-repository.js';
+import { PostgresSalesStampingSimulations } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-stamping-simulations.js';
 
 const invoice = Invoice.create({
   id: 244045,
@@ -88,6 +91,65 @@ const repository = (overrides: Partial<InvoicesRepository> = {}): InvoicesReposi
   findAdjacent: async () => invoice,
   search: async () => ({ items: [invoice], total: 1 }),
   ...overrides,
+});
+
+const localRemission = () => {
+  const source = invoice.toPrimitives();
+  return { ...source, id: 7100000000000, number: 'FAW00000001', totals: { ...source.totals, total: 116 } };
+};
+
+describe('Simulación de timbrado', () => {
+  it('consulta sin migrar y conserva una única referencia en PostgreSQL al reintentar', async () => {
+    const db = new PGlite();
+    const remission = localRemission();
+    try {
+      await db.exec(`
+        CREATE SCHEMA tuvansa;
+        CREATE TABLE tuvansa.sales_remissions (id bigint PRIMARY KEY);
+        INSERT INTO tuvansa.sales_remissions VALUES (7100000000000);
+      `);
+      const store = new PostgresSalesStampingSimulations(async () => ({
+        query: async <T extends object>(sql: string, values?: unknown[]) => {
+          if (values) return db.query<T>(sql, values);
+          const result = await db.exec(sql);
+          return { rows: (result.at(-1)?.rows ?? []) as T[] };
+        },
+        release() {},
+      }));
+      const stamping = new SimulateSalesStamping(store, async () => remission, () => true);
+      expect(await stamping.inspect(remission)).toEqual({ result: null });
+      const initial = await db.query("SELECT to_regclass('tuvansa.sales_stamping_simulations') AS table_name");
+      expect(initial.rows).toEqual([{ table_name: null }]);
+      const stamp = await stamping.run(remission.id);
+      expect(stamp).toMatchObject({ mode: 'simulation', reference: 'SIM-FE-FAW00000001' });
+      expect(await stamping.run(remission.id)).toEqual(stamp);
+      expect(await stamping.inspect(remission)).toEqual({ result: stamp });
+      expect((await db.query('SELECT count(*)::int AS count FROM tuvansa.sales_stamping_simulations')).rows).toEqual([{ count: 1 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('bloquea el flujo deshabilitado, documentos ajenos y remisiones canceladas o sin valor', async () => {
+    const store = { find: vi.fn(), record: vi.fn() };
+    const remission = localRemission();
+    const findRemission = vi.fn();
+    const disabled = new SimulateSalesStamping(store, findRemission, () => false);
+    expect(await disabled.inspect(remission)).toBeUndefined();
+    await expect(disabled.run(remission.id)).rejects.toMatchObject({ code: 'STAMPING_SIMULATION_DISABLED' });
+    expect(findRemission).not.toHaveBeenCalled();
+
+    const stamping = new SimulateSalesStamping(store, findRemission, () => true);
+    findRemission.mockResolvedValueOnce(null);
+    await expect(stamping.run(invoice.toPrimitives().id)).rejects.toMatchObject({ statusCode: 404 });
+    for (const invalid of [{ ...remission, canceled: true }, { ...remission, totals: { ...remission.totals, total: 0 } }]) {
+      expect(await stamping.inspect(invalid)).toBeUndefined();
+      findRemission.mockResolvedValueOnce(invalid);
+      await expect(stamping.run(remission.id)).rejects.toMatchObject({ code: 'STAMPING_SIMULATION_INELIGIBLE' });
+    }
+    expect(store.find).not.toHaveBeenCalled();
+    expect(store.record).not.toHaveBeenCalled();
+  });
 });
 
 describe('Ventas - Facturación', () => {

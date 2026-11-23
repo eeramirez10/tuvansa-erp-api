@@ -1,6 +1,7 @@
 @baseUrl = http://localhost:3000/api
 @invoiceId = 244045
 @invoiceNumber = 0007069
+@remissionId = 7100000000000
 @orderNumber = NP00001
 @orderRevision = 1
 @orderLineId = 1
@@ -71,8 +72,17 @@ GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/lots
 ### Acciones: Piezas
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/pieces
 
-### Acciones: Sellar (estado, no sella)
+### Acciones: Sellar, estado del documento
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/seal
+
+### Consultar la simulación de una remisión FA web
+GET {{baseUrl}}/sales/invoices/{{remissionId}}/actions/seal
+
+### Ejecutar la simulación local. Usar el ID de una remisión web del entorno de pruebas.
+POST {{baseUrl}}/sales/invoices/{{remissionId}}/actions/seal/simulation
+Content-Type: application/json
+
+{}
 
 ### Sumarios: Tiket > Factura (solo contexto de lectura)
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/ticket-to-invoice

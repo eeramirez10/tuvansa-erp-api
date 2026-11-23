@@ -1,3 +1,5 @@
+import type { StampingSimulation } from '../datasources/stamping-simulation-data-source.js';
+
 export const invoicePanelKeys = [
   'auxiliary', 'boxes', 'classifications', 'comments', 'ct', 'print', 'lots', 'pieces', 'seal',
   'ticket-to-invoice', 'transfer', 'edit-pieces', 'truck-settlement',
@@ -17,6 +19,7 @@ export interface InvoicePanelResult {
   summary?: Record<string, unknown>;
   readOnly?: boolean;
   reason?: string;
+  stampingSimulation?: { result: StampingSimulation | null };
 }
 
 export interface InvoicePanelsRepository {

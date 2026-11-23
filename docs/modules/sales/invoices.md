@@ -30,7 +30,7 @@ El buscador reproduce los campos visibles de OMNIS: `issuedAt` (Fecha),
 `warehouseSeal` (Sello Alm.) y `amount` (Importe). `q` busca conjuntamente por
 documento, pedido, pedido del cliente, código y nombre del cliente.
 
-Las remisiones web con folio `FAW` se consultan en detalle, por folio, mediante flechas y en el buscador. La fuente derivada es `tuvansa.sales_remissions` en PostgreSQL. **Auxiliar** muestra el cargo FA y la referencia al pedido según `MFACT/33`. **CT** muestra las partidas registradas. **Sellar** indica que la remisión FA se emite sin timbrado fiscal.
+Las remisiones web con folio `FAW` se consultan en detalle, por folio, mediante flechas y en el buscador. La fuente derivada es `tuvansa.sales_remissions` en PostgreSQL. **Auxiliar** muestra el cargo FA y la referencia al pedido según `MFACT/33`. **CT** muestra las partidas registradas. **Sellar** muestra el estado y permite una simulación en el entorno de desarrollo o pruebas.
 
 ## Remisión México desde pedido
 
@@ -50,6 +50,25 @@ fiscal, con IVA del 16 % y productos en su unidad base sin capas, lotes ni pieza
 PostgreSQL verifica la revisión del pedido, las existencias y el crédito al
 confirmar. Una clave de solicitud repetida devuelve el folio original si todos
 los datos coinciden. Los requests están en `http/sales/invoices.http`.
+
+## Simulación de timbrado
+
+En Omnis, `MFACT/86` lee `FTIPMV.TICONVERTIR` para convertir una remisión.
+En México el movimiento destino de FA es FE. El botón web **Sellar** abre
+una prueba de esa etapa para una remisión web FA activa con importe positivo.
+La ventana muestra el origen, el IVA, el total y el tipo previsto FE de ingreso.
+
+| Vista y botón | Endpoint | Procedencia y efecto |
+| --- | --- | --- |
+| Facturación / Sellar | `GET /api/sales/invoices/:invoiceId/actions/seal` | Estado de la ficha. El contexto de simulación lee `tuvansa.sales_remissions` y `tuvansa.sales_stamping_simulations` mediante SQL derivado |
+| Sellar / Simular timbrado | `POST /api/sales/invoices/:invoiceId/actions/seal/simulation` | SQL derivado. Registra una referencia `SIM-FE-…` en `tuvansa.sales_stamping_simulations`. Un reintento devuelve la misma referencia y fecha |
+| Sellar / Cancelar | Cerrar la ventana | Conserva el estado anterior |
+
+La referencia se muestra como **Sin validez fiscal**. El resultado consiste
+en la referencia interna y su fecha. La simulación queda fuera de los
+acumulados de Inventarios y Cuentas por cobrar. La captura fiscal, la
+validación de CFDI 4.0, el sellado con CSD y la certificación con un PAC
+corresponden a la integración posterior.
 
 ## Mapeo de la ficha
 
@@ -82,7 +101,7 @@ los datos coinciden. Los requests están en `http/sales/invoices.http`.
 | Acciones | Imprimir | `/:invoiceId/actions/print` | Opciones del diálogo; no envía impresión |
 | Acciones | Lotes | `/:invoiceId/actions/lots` | Producto, lote, fecha, cantidad, aduana y pedimento |
 | Acciones | Piezas | `/:invoiceId/actions/pieces` | Código, número, piezas, cantidad, almacén, pedido, referencia, alta y recepción |
-| Acciones | Sellar | `/:invoiceId/actions/seal` | Estado CFD/folio; no ejecuta sellado |
+| Acciones | Sellar | `/:invoiceId/actions/seal` | Estado CFD/folio y simulación disponible para remisiones web en pruebas |
 | Sumarios | Tiket > Factura | `/:invoiceId/summaries/ticket-to-invoice` | Contexto, operación deshabilitada |
 | Sumarios | Traspaso | `/:invoiceId/summaries/transfer` | Partidas a transferir; no modifica inventario |
 | Sumarios | Edita pzas | `/:invoiceId/summaries/edit-pieces` | Piezas/cajas actuales; no edita |

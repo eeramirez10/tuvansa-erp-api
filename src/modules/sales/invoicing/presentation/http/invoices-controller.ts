@@ -7,6 +7,7 @@ import type { GetInvoiceByNumber } from '../../application/use-cases/get-invoice
 import type { GetInvoicePanel } from '../../application/use-cases/get-invoice-panel.js';
 import type { NavigateInvoice } from '../../application/use-cases/navigate-invoice.js';
 import type { SearchInvoices } from '../../application/use-cases/search-invoices.js';
+import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
 import type { InvoicePanelKey } from '../../domain/repositories/invoice-panels-repository.js';
 
 const invoiceParamsSchema = z.object({ invoiceId: z.coerce.number().int().positive() });
@@ -44,6 +45,7 @@ export class InvoicesController {
     private readonly navigateInvoice: NavigateInvoice,
     private readonly getInvoicePanel: GetInvoicePanel,
     private readonly invoiceFromOrder: CreateInvoiceFromOrder,
+    private readonly stamping: SimulateSalesStamping,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -118,6 +120,15 @@ export class InvoicesController {
     try {
       const { invoiceId } = invoiceParamsSchema.parse(request.params);
       response.json(await this.getInvoicePanel.execute(invoiceId, key));
+    } catch (error) { next(error); }
+  };
+
+  simulateStamping: RequestHandler = async (request, response, next) => {
+    try {
+      const { invoiceId } = invoiceParamsSchema.parse(request.params);
+      z.strictObject({}).parse(request.body ?? {});
+      const result = await this.stamping.run(invoiceId);
+      response.set('Cache-Control', 'no-store').json({ data: result });
     } catch (error) { next(error); }
   };
 }

@@ -1,3 +1,4 @@
+import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
 import type { InvoicePanelsDataSource } from '../../domain/datasources/invoice-panels-data-source.js';
 import type { InvoicePanelKey, InvoicePanelResult } from '../../domain/repositories/invoice-panels-repository.js';
 import { readSalesRemissionInvoice } from './invoices-with-sales-remissions-data-source.js';
@@ -5,7 +6,10 @@ import { invoicePanelMetadata } from './legacy-mysql-invoice-panels-data-source.
 import { isLocalSalesRemissionId } from './postgres-sales-remissions.js';
 
 export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanelsDataSource {
-  constructor(private readonly legacy: InvoicePanelsDataSource) {}
+  constructor(
+    private readonly legacy: InvoicePanelsDataSource,
+    private readonly stamping: SimulateSalesStamping,
+  ) {}
 
   async getPanel(id: number, key: InvoicePanelKey): Promise<InvoicePanelResult | null> {
     if (!isLocalSalesRemissionId(id)) return this.legacy.getPanel(id, key);
@@ -34,9 +38,12 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     }
     if (key === 'seal') {
       const { status, cfdStatus, folio, canceled } = invoice;
+      const stampingSimulation = await this.stamping.inspect(invoice);
       return {
-        ...base, available: false, source: 'postgres', items: [{ status, cfdStatus, folio, canceled }],
-        summary: { mutationEnabled: false }, reason: 'La remisión FA se emite sin timbrado fiscal.',
+        ...base, available: Boolean(stampingSimulation), source: 'postgres', items: [{ status, cfdStatus, folio, canceled }],
+        ...(stampingSimulation
+          ? { stampingSimulation, readOnly: Boolean(stampingSimulation.result) }
+          : { summary: { mutationEnabled: false }, reason: 'La remisión FA se emite sin timbrado fiscal.' }),
       };
     }
     return {

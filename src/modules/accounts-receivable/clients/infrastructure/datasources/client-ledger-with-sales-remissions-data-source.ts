@@ -6,44 +6,55 @@ import { ClientBalanceDocument } from '../../domain/entities/client-balance-docu
 import { ClientMovement } from '../../domain/entities/client-movement.js';
 import type { ClientBalanceResult, ClientBalanceSearchCriteria } from '../../domain/repositories/client-balance-repository.js';
 import type { ClientMovementSearchCriteria, ClientMovementsResult } from '../../domain/repositories/client-movements-repository.js';
+import { customerCollectionsAvailable, joinRemissionCollections } from './customer-collections-reads.js';
 import type { LegacyMysqlClientMovementsDataSource } from './legacy-mysql-client-movements-data-source.js';
 
 type InvoiceHeader = Omit<InvoiceProps, 'lines'>;
 
-interface RemissionCharge {
+interface BalanceCharge {
   invoice: InvoiceHeader;
   issuedAt: string;
-  charge: number;
-}
-
-interface BalanceCharge extends RemissionCharge {
+  remaining: number;
   dueAt: string;
   daysOverdue: number;
 }
 
-interface MovementCharge extends RemissionCharge {
+interface LocalMovement {
+  id: number;
+  invoice: InvoiceHeader;
+  date: string;
+  amount: number;
+  remaining: number;
+  movementType: string;
+  paymentReference: string;
+  policy: string;
+  receiptNumber: number;
+  collectionNumber: string | null;
   userId: number;
   runningBalance: number;
 }
 
-const invoice = "((result->'invoice') - 'lines')";
-const scope = 'FROM tuvansa.sales_remissions WHERE company_id = 1 AND charge > 0';
+const invoice = "((remission.result->'invoice') - 'lines')";
 const today = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City')::date";
 export const clientMoney = (value: number): number => Math.round(value * 100) / 100;
 
 export interface SalesRemissionCustomerTotals {
   balance: number;
   lastPurchaseAt: string | null;
+  lastPaymentAt: string | null;
 }
 
 export function salesRemissionCustomerTotals(customerIds: number[]): Promise<Map<number, SalesRemissionCustomerTotals>> {
   if (customerIds.length === 0) return Promise.resolve(new Map());
   return readSalesRemissions(new Map<number, SalesRemissionCustomerTotals>(), async (client) => {
-    // Derivada. Completa CLISACT y CLIULTCOM con las remisiones de la empresa del catálogo.
+    const join = joinRemissionCollections(await customerCollectionsAvailable(client));
+    // Derivada. Completa el saldo y las fechas de compra y pago de la ficha del cliente.
     const { rows } = await client.query<{ id: number } & SalesRemissionCustomerTotals>(
-      `SELECT customer_id::float8 AS id, sum(charge)::float8 AS balance, max(issued_at)::text AS "lastPurchaseAt"
-       FROM tuvansa.sales_remissions WHERE company_id = 1 AND customer_id = ANY($1::bigint[])
-       GROUP BY customer_id`, [customerIds],
+      `SELECT remission.customer_id::float8 AS id, sum(remission.charge - collections.paid)::float8 AS balance,
+              max(remission.issued_at)::text AS "lastPurchaseAt", max(collections.last_payment_date)::text AS "lastPaymentAt"
+       FROM tuvansa.sales_remissions AS remission ${join}
+       WHERE remission.company_id = 1 AND remission.customer_id = ANY($1::bigint[])
+       GROUP BY remission.customer_id`, [customerIds],
     );
     return new Map(rows.map(({ id, ...totals }) => [id, totals]));
   });
@@ -69,22 +80,25 @@ function balancePage(criteria: ClientBalanceSearchCriteria, offset: number, limi
   const where = conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`;
   values.push(offset, limit);
   return readSalesRemissions(emptyBalance, async (client) => {
-    // Derivada. Mantiene el resumen de todos los documentos y los filtros de la página Saldo.
+    const join = joinRemissionCollections(await customerCollectionsAvailable(client));
+    // Derivada. Saldo considera el importe pendiente de cada documento con cargo.
     const { rows: [row] } = await client.query<BalancePage>(
       `WITH ledger AS (
-         SELECT id, number, order_number, ${invoice} AS invoice, issued_at AS "issuedAt",
-                charge, coalesce((result #>> '{invoice,dates,dueAt}')::date, issued_at) AS "dueAt"
-         ${scope} AND customer_id = $1
+         SELECT remission.id, remission.number, remission.order_number, ${invoice} AS invoice,
+                remission.issued_at AS "issuedAt", remission.charge - collections.paid AS remaining,
+                coalesce((remission.result #>> '{invoice,dates,dueAt}')::date, remission.issued_at) AS "dueAt"
+         FROM tuvansa.sales_remissions AS remission ${join}
+         WHERE remission.company_id = 1 AND remission.customer_id = $1 AND remission.charge > collections.paid
        ), matches AS (SELECT * FROM ledger ${where})
-       SELECT coalesce(sum(charge), 0)::float8 AS "totalBalance",
-              coalesce(sum(charge) FILTER (WHERE "dueAt" < ${today}), 0)::float8 AS "overdueBalance",
-              coalesce(sum(charge) FILTER (WHERE "dueAt" >= ${today}), 0)::float8 AS "notDueBalance",
+       SELECT coalesce(sum(remaining), 0)::float8 AS "totalBalance",
+              coalesce(sum(remaining) FILTER (WHERE "dueAt" < ${today}), 0)::float8 AS "overdueBalance",
+              coalesce(sum(remaining) FILTER (WHERE "dueAt" >= ${today}), 0)::float8 AS "notDueBalance",
               count(*)::float8 AS "documentCount",
               count(*) FILTER (WHERE "dueAt" < ${today})::float8 AS "overdueDocumentCount",
               count(*) FILTER (WHERE "dueAt" >= ${today})::float8 AS "notDueDocumentCount",
               (SELECT count(*)::float8 FROM matches) AS total,
               ARRAY(SELECT jsonb_build_object(
-                'invoice', invoice, 'issuedAt', "issuedAt", 'charge', charge, 'dueAt', "dueAt",
+                'invoice', invoice, 'issuedAt', "issuedAt", 'remaining', remaining, 'dueAt', "dueAt",
                 'daysOverdue', greatest(${today} - "dueAt", 0))
               FROM matches ORDER BY id OFFSET $${values.length - 1} LIMIT $${values.length}) AS items
        FROM ledger`, values,
@@ -93,10 +107,11 @@ function balancePage(criteria: ClientBalanceSearchCriteria, offset: number, limi
   });
 }
 
-function balanceDocument({ invoice, charge, issuedAt, dueAt, daysOverdue }: BalanceCharge) {
+function balanceDocument({ invoice, remaining, issuedAt, dueAt, daysOverdue }: BalanceCharge) {
   return ClientBalanceDocument.create({
     id: invoice.id, number: invoice.number, date: issuedAt, dueDate: dueAt, daysOverdue, sign: 'charge',
-    amountInBaseCurrency: clientMoney(charge), amount: clientMoney(invoice.totals.total),
+    remissionId: invoice.id, canCollect: true,
+    amountInBaseCurrency: clientMoney(remaining), amount: clientMoney(invoice.totals.total),
     currency: { id: invoice.currency.id, name: invoice.currency.name }, exchangeRate: invoice.currency.exchangeRate,
     reference: invoice.orderNumber, scheduledDate: null, appliesToClientCode: invoice.customer.code,
     branchId: invoice.branch || null, deliveryReceipt: invoice.deliveryNote, deliveryReceiptDate: invoice.dates.deliveryNoteAt,
@@ -131,40 +146,74 @@ export class ClientBalanceWithSalesRemissionsDataSource implements ClientBalance
 
 interface MovementPage {
   totalBalance: number;
+  entryCount: number;
   openingBalance: number;
+  charges: number;
+  credits: number;
   netMovement: number;
   movementCount: number;
-  items: MovementCharge[];
+  items: LocalMovement[];
   preceding: Record<string, number>;
 }
 
 const emptyMovements: MovementPage = {
-  totalBalance: 0, openingBalance: 0, netMovement: 0, movementCount: 0, items: [], preceding: {},
+  totalBalance: 0, entryCount: 0, openingBalance: 0, charges: 0, credits: 0, netMovement: 0,
+  movementCount: 0, items: [], preceding: {},
 };
 
-function movementPage(
-  criteria: ClientMovementSearchCriteria, base: ClientMovementsResult,
-): Promise<MovementPage> {
+const collectionMovements = `UNION ALL
+  SELECT collection.id, remission.invoice, collection.date AS movement_date, -collection.amount AS amount,
+         remission.remaining, collection.movement_type,
+         coalesce(nullif(collection.reference, ''), collection.number) AS payment_reference,
+         collection.policy_number AS policy, collection.receipt_number,
+         collection.number AS collection_number, collection.user_id, collection.created_at
+  FROM tuvansa.customer_collections AS collection
+  JOIN remissions AS remission ON remission.id = collection.remission_id
+  WHERE collection.company_id = 1 AND collection.client_id = $1`;
+
+function movementPage(criteria: ClientMovementSearchCriteria, base: ClientMovementsResult): Promise<MovementPage> {
   const cutoffs = [...new Set(base.items.map((item) => item.toPrimitives().date.slice(0, 10)))];
   return readSalesRemissions(emptyMovements, async (client) => {
-    // Derivada. Incluye las remisiones anteriores al período en la apertura y conserva la fecha para el saldo acumulado.
+    const hasCollections = await customerCollectionsAvailable(client);
+    const join = joinRemissionCollections(hasCollections);
+    // Derivada. Los cargos y abonos se ordenan por fecha e inserción para calcular el saldo de cada movimiento.
     const { rows: [row] } = await client.query<MovementPage>(
-      `WITH ledger AS (
-         SELECT id, ${invoice} AS invoice, issued_at, charge, user_id AS "userId",
-                sum(charge) OVER (ORDER BY issued_at, id ROWS UNBOUNDED PRECEDING) AS "runningBalance"
-         ${scope} AND customer_id = $1
+      `WITH remissions AS (
+         SELECT remission.id, ${invoice} AS invoice, remission.issued_at, remission.order_number, remission.charge,
+                remission.charge - collections.paid AS remaining, remission.user_id,
+                coalesce(audit.created_at, remission.issued_at::timestamp AT TIME ZONE 'America/Mexico_City') AS created_at
+         FROM tuvansa.sales_remissions AS remission
+         LEFT JOIN tuvansa.order_changes AS audit
+           ON audit.order_id = remission.order_id AND audit.revision = remission.order_revision
+         ${join}
+         WHERE remission.company_id = 1 AND remission.customer_id = $1 AND remission.charge > 0
+       ), entries AS (
+         SELECT id, invoice, issued_at AS movement_date, charge AS amount, remaining,
+                invoice->>'movementType' AS movement_type, order_number AS payment_reference,
+                ''::text AS policy, 0 AS receipt_number, NULL::text AS collection_number, user_id, created_at
+         FROM remissions
+         ${hasCollections ? collectionMovements : ''}
+       ), ledger AS (
+         SELECT *, sum(amount) OVER (ORDER BY movement_date, created_at, id ROWS UNBOUNDED PRECEDING) AS running_balance
+         FROM entries
        ), period AS (
-         SELECT * FROM ledger WHERE ($2::date IS NULL OR issued_at >= $2) AND ($3::date IS NULL OR issued_at <= $3)
+         SELECT * FROM ledger WHERE ($2::date IS NULL OR movement_date >= $2) AND ($3::date IS NULL OR movement_date <= $3)
        )
-       SELECT coalesce(sum(charge), 0)::float8 AS "totalBalance",
-              coalesce(sum(charge) FILTER (WHERE issued_at < $2::date), 0)::float8 AS "openingBalance",
-              (SELECT coalesce(sum(charge), 0)::float8 FROM period) AS "netMovement",
+       SELECT coalesce(sum(amount), 0)::float8 AS "totalBalance",
+              count(*)::float8 AS "entryCount",
+              coalesce(sum(amount) FILTER (WHERE movement_date < $2::date), 0)::float8 AS "openingBalance",
+              (SELECT coalesce(sum(amount) FILTER (WHERE amount > 0), 0)::float8 FROM period) AS charges,
+              (SELECT coalesce(-sum(amount) FILTER (WHERE amount < 0), 0)::float8 FROM period) AS credits,
+              (SELECT coalesce(sum(amount), 0)::float8 FROM period) AS "netMovement",
               (SELECT count(*)::float8 FROM period) AS "movementCount",
-              ARRAY(SELECT jsonb_build_object('invoice',invoice,'issuedAt',issued_at,'charge',charge,
-                       'userId',"userId",'runningBalance',"runningBalance")
-                    FROM period ORDER BY id OFFSET $4 LIMIT $5) AS items,
+              ARRAY(SELECT jsonb_build_object(
+                      'id', id, 'invoice', invoice, 'date', movement_date, 'amount', amount, 'remaining', remaining,
+                      'movementType', movement_type, 'paymentReference', payment_reference, 'policy', policy,
+                      'receiptNumber', receipt_number, 'collectionNumber', collection_number, 'userId', user_id,
+                      'runningBalance', running_balance)
+                    FROM period ORDER BY movement_date, created_at, id OFFSET $4 LIMIT $5) AS items,
               (SELECT coalesce(jsonb_object_agg(cutoffs.date::text,
-                (SELECT coalesce(sum(charge), 0) FROM ledger WHERE issued_at < cutoffs.date)), '{}'::jsonb)
+                (SELECT coalesce(sum(amount), 0) FROM ledger WHERE movement_date < cutoffs.date)), '{}'::jsonb)
                 FROM unnest($6::date[]) AS cutoffs(date)) AS preceding
        FROM ledger`,
       [criteria.clientId, criteria.dateFrom ?? null, criteria.dateTo ?? null, Math.max(0, criteria.offset - base.summary.movementCount),
@@ -174,14 +223,16 @@ function movementPage(
   });
 }
 
-function movementDocument({ invoice, issuedAt, charge, runningBalance, userId }: MovementCharge, legacyBalance: number) {
+function movementDocument(entry: LocalMovement, legacyBalance: number) {
+  const { id, invoice, date, amount, remaining, runningBalance, userId, policy, paymentReference, receiptNumber, collectionNumber } = entry;
   return ClientMovement.create({
-    id: invoice.id, date: issuedAt, movementType: { code: invoice.movementType, description: 'Remisión' },
-    amount: clientMoney(charge), runningBalance: clientMoney(legacyBalance + runningBalance),
-    paymentReference: invoice.orderNumber, exchangeRate: invoice.currency.exchangeRate,
-    policy: '', receiptNumber: 0, userId, document: {
-      id: invoice.id, number: invoice.number, date: issuedAt, dueDate: invoice.dates.dueAt,
-      reference: invoice.orderNumber, amount: invoice.totals.total, currencyId: invoice.currency.id, isCanceled: invoice.canceled,
+    id, date, movementType: { code: entry.movementType, description: collectionNumber ? 'Cobro' : 'Remisión' },
+    amount: clientMoney(amount), runningBalance: clientMoney(legacyBalance + runningBalance),
+    paymentReference, exchangeRate: invoice.currency.exchangeRate, policy, receiptNumber, userId,
+    ...(collectionNumber ? { policyId: id, collectionNumber } : {}),
+    document: {
+      id: invoice.id, number: invoice.number, date: invoice.dates.issuedAt, dueDate: invoice.dates.dueAt,
+      reference: invoice.orderNumber, amount: remaining, currencyId: invoice.currency.id, isCanceled: invoice.canceled,
     },
   });
 }
@@ -193,9 +244,9 @@ export class ClientMovementsWithSalesRemissionsDataSource implements ClientMovem
     const base = await this.legacy.searchByClient(criteria);
     if (!base) return null;
     const local = await movementPage(criteria, base);
-    if (local.totalBalance === 0) return base;
+    if (local.entryCount === 0) return base;
 
-    const legacyBalances = await this.legacy.balanceThroughDates(criteria.clientId, [...new Set(local.items.map(({ issuedAt }) => issuedAt))]);
+    const legacyBalances = await this.legacy.balanceThroughDates(criteria.clientId, [...new Set(local.items.map(({ date }) => date))]);
     const items = base.items.map((item) => {
       const movement = item.toPrimitives();
       const preceding = local.preceding[movement.date.slice(0, 10)] ?? 0;
@@ -209,10 +260,10 @@ export class ClientMovementsWithSalesRemissionsDataSource implements ClientMovem
       client: { ...base.client, currentBalance: clientMoney(base.client.currentBalance + local.totalBalance) },
       summary: {
         openingBalance, netMovement, closingBalance: clientMoney(openingBalance + netMovement),
-        charges: clientMoney(base.summary.charges + local.netMovement), credits: base.summary.credits,
+        charges: clientMoney(base.summary.charges + local.charges), credits: clientMoney(base.summary.credits + local.credits),
         movementCount: base.summary.movementCount + local.movementCount,
       },
-      items: [...items, ...local.items.map((entry) => movementDocument(entry, legacyBalances.get(entry.issuedAt) ?? 0))],
+      items: [...items, ...local.items.map((entry) => movementDocument(entry, legacyBalances.get(entry.date) ?? 0))],
     };
   }
 }

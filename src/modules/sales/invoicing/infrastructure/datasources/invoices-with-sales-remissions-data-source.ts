@@ -5,7 +5,6 @@ import type { LegacyMysqlInvoicesDataSource } from './legacy-mysql-invoices-data
 import { isLocalSalesRemissionId, readSalesRemissions } from './postgres-sales-remissions.js';
 
 const invoice = "(result->'invoice')";
-const scope = 'FROM tuvansa.sales_remissions WHERE company_id = 1';
 const empty = { items: [], total: 0 };
 type InvoiceHeader = Omit<InvoiceProps, 'lines'>;
 
@@ -14,13 +13,42 @@ interface SalesRemissionInvoice {
   charge: number;
 }
 
-export function readSalesRemissionInvoice(id: number): Promise<SalesRemissionInvoice | null> {
+interface InvoiceCollectionRow<T extends InvoiceHeader> {
+  invoice: T;
+  charge: number;
+  paid: number;
+  lastPaymentAt: string | null;
+}
+
+const collectionFields = `charge::float8 AS charge, collections.paid::float8 AS paid,
+  collections.last_payment_date::text AS "lastPaymentAt"`;
+
+async function remissionScope(client: PostgresClient) {
+  const join = joinRemissionCollections(await customerCollectionsAvailable(client));
+  return `FROM tuvansa.sales_remissions AS remission ${join} WHERE remission.company_id = 1`;
+}
+
+function withCollectionTotals<T extends InvoiceHeader>({ invoice, charge, paid, lastPaymentAt }: InvoiceCollectionRow<T>): T {
+  if (paid === 0) return invoice;
+  const balance = Math.max(0, Number((charge - paid).toFixed(2)));
+  return {
+    ...invoice,
+    totals: { ...invoice.totals, paid, balance },
+    dates: { ...invoice.dates, paidAt: balance === 0 ? lastPaymentAt : invoice.dates.paidAt },
+  };
+}
+
+function readLocalInvoice(field: 'id' | 'number', value: number | string): Promise<SalesRemissionInvoice | null> {
   return readSalesRemissions<SalesRemissionInvoice | null>(null, async (client) => {
-    const { rows: [row] } = await client.query<SalesRemissionInvoice>(
-      `SELECT ${invoice} AS invoice, charge::float8 AS charge ${scope} AND id = $1`, [id],
+    const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
+      `SELECT ${invoice} AS invoice, ${collectionFields} ${await remissionScope(client)} AND remission.${field} = $1`, [value],
     );
-    return row ?? null;
+    return row ? { invoice: withCollectionTotals(row), charge: row.charge } : null;
   });
+}
+
+export function readSalesRemissionInvoice(id: number) {
+  return readLocalInvoice('id', id);
 }
 
 function compare(leftNumber: string, rightNumber: string): number {
@@ -39,13 +67,8 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
   }
 
   async findByNumber(number: string) {
-    const local = await readSalesRemissions<InvoiceProps | null>(null, async (client) => {
-      const { rows: [row] } = await client.query<{ invoice: InvoiceProps }>(
-        `SELECT ${invoice} AS invoice ${scope} AND number = $1`, [number.toUpperCase()],
-      );
-      return row?.invoice ?? null;
-    });
-    return local ? Invoice.create(local) : this.legacy.findByNumber(number);
+    const local = await readLocalInvoice('number', number.toUpperCase());
+    return local ? Invoice.create(local.invoice) : this.legacy.findByNumber(number);
   }
 
   async findFirst() {
@@ -78,11 +101,12 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     const filter = number === null ? '' : `AND number ${previous ? '<' : '>'} $1`;
     const order = previous ? 'DESC' : 'ASC';
     return readSalesRemissions<InvoiceProps | null>(null, async (client) => {
-      const { rows: [row] } = await client.query<{ invoice: InvoiceProps }>(
-        `SELECT ${invoice} AS invoice ${scope} ${filter} ORDER BY number ${order}, id ${order} LIMIT 1`,
+      const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
+        `SELECT ${invoice} AS invoice, ${collectionFields}
+         ${await remissionScope(client)} ${filter} ORDER BY number ${order}, id ${order} LIMIT 1`,
         number === null ? [] : [number.toUpperCase()],
       );
-      return row?.invoice ?? null;
+      return row ? withCollectionTotals(row) : null;
     });
   }
 
@@ -119,13 +143,15 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     values.push(limit);
     return readSalesRemissions<{ items: InvoiceHeader[]; total: number }>(empty, async (client) => {
       // Derivada. Busca el encabezado de las remisiones web con los filtros de Facturación.
-      const { rows: [row] } = await client.query<{ items: InvoiceHeader[]; total: number }>(
-        `WITH matched AS (SELECT id, number, ${invoice} - 'lines' AS header ${scope} ${where})
+      const { rows: [row] } = await client.query<{ items: InvoiceCollectionRow<InvoiceHeader>[]; total: number }>(
+        `WITH matched AS (
+           SELECT id, number, ${invoice} - 'lines' AS invoice, ${collectionFields} ${await remissionScope(client)} ${where}
+         )
          SELECT count(*)::float8 AS total,
-                ARRAY(SELECT header FROM matched ORDER BY number, id LIMIT $${values.length}) AS items FROM matched`,
+                ARRAY(SELECT to_jsonb(matched) FROM matched ORDER BY number, id LIMIT $${values.length}) AS items FROM matched`,
         values,
       );
-      return row ?? empty;
+      return row ? { items: row.items.map(withCollectionTotals), total: row.total } : empty;
     });
   }
 
@@ -153,3 +179,7 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     };
   }
 }
+import {
+  customerCollectionsAvailable, joinRemissionCollections,
+} from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
+import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';

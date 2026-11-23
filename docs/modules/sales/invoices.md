@@ -51,6 +51,8 @@ PostgreSQL verifica la revisión del pedido, las existencias y el crédito al
 confirmar. Una clave de solicitud repetida devuelve el folio original si todos
 los datos coinciden. Los requests están en `http/sales/invoices.http`.
 
+Los depósitos de [Cobranza](../accounts-receivable/clients.md#cobrar-una-remisión-web) actualizan **Pagado** y **Saldo**. **Auxiliar** conserva el cargo FA, muestra los abonos PA por fecha y enlaza cada póliza. Al liquidar, Facturación muestra la fecha del último cobro aplicado.
+
 ## Simulación de timbrado
 
 En Omnis, `MFACT/86` lee `FTIPMV.TICONVERTIR` para convertir una remisión.

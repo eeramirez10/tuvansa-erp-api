@@ -1,0 +1,35 @@
+@baseUrl = http://localhost:3000/api
+@clientId = 15390
+@remissionId = 7100000000000
+@remissionNumber = FAW00000001
+@bankAccountId = 6610
+@revision = 1
+@date = 2026-11-23
+@requestKey = 492a068e-eba4-4cae-ae39-1292c709ad7c
+@policyNumber = 1CW00000001
+
+### Consultar saldo y cuentas disponibles
+GET {{baseUrl}}/accounts-receivable/clients/{{clientId}}/collections/{{remissionId}}
+
+### Registrar un abono de prueba. Usar la revisión del GET y una clave nueva para cada cobro.
+POST {{baseUrl}}/accounts-receivable/clients/{{clientId}}/collections/{{remissionId}}
+Content-Type: application/json
+
+{
+  "requestKey": "{{requestKey}}",
+  "revision": {{revision}},
+  "bankAccountId": {{bankAccountId}},
+  "amount": 40,
+  "date": "{{date}}",
+  "reference": "DEP-PRUEBA-01",
+  "description": "Abono de prueba"
+}
+
+### Consultar el saldo restante
+GET {{baseUrl}}/accounts-receivable/clients/{{clientId}}/balance?q={{remissionNumber}}
+
+### Consultar los depósitos de la cuenta
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/deposits
+
+### Abrir la póliza devuelta al cobrar
+GET {{baseUrl}}/accounting/policies/by-number/{{policyNumber}}

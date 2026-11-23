@@ -21,6 +21,8 @@ export interface ClientMovementProps {
   paymentReference: string;
   exchangeRate: number;
   policy: string;
+  policyId?: number;
+  collectionNumber?: string;
   receiptNumber: number;
   userId: number;
   document: ClientMovementDocument | null;

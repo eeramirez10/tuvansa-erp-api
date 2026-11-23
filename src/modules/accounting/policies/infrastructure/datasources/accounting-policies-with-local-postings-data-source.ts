@@ -1,11 +1,10 @@
 import type { RowDataPacket } from 'mysql2/promise';
+import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
-import {
-  isLocalSupplierPaymentId, supplierPaymentsAvailable,
-} from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
-import {
-  isLocalPurchaseReceptionId, readLocalPurchaseReceptions,
-} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { isLocalSupplierPaymentId } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
+import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
+import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
 import { AccountingPolicy, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
 import type {
@@ -59,18 +58,56 @@ const paymentLines = `jsonb_build_array(
     jsonb_build_object('account', payment.supplier_account, 'accountName', payment.supplier_account_name,
       'department', '', 'debit', payment.amount, 'credit', 0, 'reference', receipt.number)
   )`;
+const collectionFields = `
+    collection.id, collection.policy_number AS number, collection.company_id AS company, collection.user_id AS "userId",
+    collection.date::text AS date, coalesce(nullif(collection.reference,''),collection.number) AS cheque,
+    remission.result #>> '{invoice,customer,name}' AS beneficiary, 'COBRANZA'::text AS family,
+    collection.description AS concept, collection.created_at AS "auditAt", 1::float8 AS "exchangeRate"`;
+const collectionLines = `jsonb_build_array(
+    jsonb_build_object('account', collection.bank_code, 'accountId', collection.bank_account_id,
+      'accountName', collection.bank_name, 'department', '', 'debit', collection.amount, 'credit', 0),
+    jsonb_build_object('account', collection.client_account, 'accountName', collection.client_account_name,
+      'department', '', 'debit', 0, 'credit', collection.amount, 'reference', remission.number)
+  )`;
 const money = (amount: number) => Number(amount.toFixed(2));
-const isLocalPolicyId = (id: number) => isLocalPurchaseReceptionId(id) || isLocalSupplierPaymentId(id);
+const isLocalPolicyId = (id: number) =>
+  isLocalPurchaseReceptionId(id) || isLocalSupplierPaymentId(id) || isLocalCustomerCollectionId(id);
 
-function localPolicies(hasPayments: boolean, detail: boolean): string {
-  const receipts = `SELECT ${receiptFields}, ${detail ? "accounting->'lines'" : "'[]'::jsonb"} AS lines
-    FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL`;
-  if (!hasPayments) return receipts;
-  return `${receipts} UNION ALL
-    SELECT ${paymentFields}, ${detail ? paymentLines : "'[]'::jsonb"} AS lines
-    FROM tuvansa.supplier_payments AS payment
-    JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = payment.receipt_id AND receipt.company_id = payment.company_id
-    WHERE payment.company_id = 1`;
+async function readLocalPolicies<T>(
+  fallback: T, detail: boolean, read: (client: PostgresClient, view: string) => Promise<T>,
+): Promise<T> {
+  if (!postgresConfigured()) return fallback;
+  let client: PostgresClient | undefined;
+  try {
+    client = await connectPostgres();
+    const { rows: [tables] } = await client.query<{ receipts: boolean; payments: boolean; collections: boolean }>(
+      `SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS receipts,
+              to_regclass('tuvansa.supplier_payments') IS NOT NULL AS payments,
+              to_regclass('tuvansa.customer_collections') IS NOT NULL AS collections`,
+    );
+    const withLines = (sql: string) => detail ? sql : "'[]'::jsonb";
+    const views: string[] = [];
+    if (tables?.receipts) views.push(
+      `SELECT ${receiptFields}, ${withLines("accounting->'lines'")} AS lines
+       FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL`,
+    );
+    if (tables?.payments) views.push(
+      `SELECT ${paymentFields}, ${withLines(paymentLines)} AS lines FROM tuvansa.supplier_payments AS payment
+       JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = payment.receipt_id AND receipt.company_id = payment.company_id
+       WHERE payment.company_id = 1`,
+    );
+    if (tables?.collections) views.push(
+      `SELECT ${collectionFields}, ${withLines(collectionLines)} AS lines FROM tuvansa.customer_collections AS collection
+       JOIN tuvansa.sales_remissions AS remission ON remission.id = collection.remission_id AND remission.company_id = collection.company_id
+       WHERE collection.company_id = 1`,
+    );
+    return views.length ? await read(client, views.join(' UNION ALL ')) : fallback;
+  } catch (error) {
+    if (error instanceof ApplicationError) throw error;
+    throw new ApplicationError('No fue posible consultar las pólizas en PostgreSQL.', 'ACCOUNTING_POLICY_POSTGRES_UNAVAILABLE', 503);
+  } finally {
+    client?.release();
+  }
 }
 
 function localPolicy(header: LocalPolicyHeader, movements: AccountingPolicyMovement[] = []): AccountingPolicy {
@@ -112,13 +149,12 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
   }));
 }
 
-export class AccountingPoliciesWithPurchaseReceptionsDataSource implements AccountingPoliciesDataSource {
+export class AccountingPoliciesWithLocalPostingsDataSource implements AccountingPoliciesDataSource {
   constructor(private readonly legacy: LegacyMysqlAccountingPoliciesDataSource) {}
 
   private record(field: 'id' | 'number', value: number | string) {
     const filter = field === 'id' ? 'id' : 'upper(number)';
-    return readLocalPurchaseReceptions<LocalPolicyRecord | null>(null, async (client) => {
-      const view = localPolicies(await supplierPaymentsAvailable(client), true);
+    return readLocalPolicies<LocalPolicyRecord | null>(null, true, async (client, view) => {
       const { rows: [row] } = await client.query<{ policy: LocalPolicyRecord }>(
         `SELECT to_jsonb(entry) AS policy FROM (${view}) AS entry WHERE ${filter} = $1`, [value],
       );
@@ -161,9 +197,8 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const order = filtered ? 'upper(number), id' : '"auditAt" DESC, id DESC';
     values.push(offset, limit);
-    return readLocalPurchaseReceptions<{ items: LocalPolicyHeader[]; total: number }>({ items: [], total: 0 }, async (client) => {
-      const view = localPolicies(await supplierPaymentsAvailable(client), false);
-      // Derivada. Proyecta las pólizas registradas con recepciones y pagos.
+    return readLocalPolicies<{ items: LocalPolicyHeader[]; total: number }>({ items: [], total: 0 }, false, async (client, view) => {
+      // Derivada. Proyecta las pólizas registradas con recepciones, pagos y cobranza.
       const { rows: [row] } = await client.query<{ items: LocalPolicyHeader[]; total: string }>(
         `WITH policies AS (${view}),
               matched AS (SELECT * FROM policies ${where})
@@ -210,8 +245,7 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
     if (number === null) return null;
     const previous = direction === 'previous';
     const [local, legacy] = await Promise.all([
-      readLocalPurchaseReceptions<LocalPolicyRecord | null>(null, async (client) => {
-        const view = localPolicies(await supplierPaymentsAvailable(client), true);
+      readLocalPolicies<LocalPolicyRecord | null>(null, true, async (client, view) => {
         const order = previous ? 'DESC' : 'ASC';
         const { rows: [row] } = await client.query<{ policy: LocalPolicyRecord }>(
           `SELECT to_jsonb(entry) AS policy FROM (${view}) AS entry

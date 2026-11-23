@@ -4,6 +4,7 @@ import { LegacyMysqlClientFiscalDataSource } from './infrastructure/datasources/
 import { ClientFiscalRepositoryImpl } from './infrastructure/repositories/client-fiscal-repository-impl.js';
 import { ClientFiscalController, createClientFiscalRouter } from './presentation/http/client-fiscal-controller.js';
 import type { Router } from 'express';
+import { CaptureCustomerCollection } from './application/use-cases/capture-customer-collection.js';
 import { GetClientBalance } from './application/use-cases/get-client-balance.js';
 import { GetClientActions } from './application/use-cases/get-client-actions.js';
 import { GetClientAnalytics } from './application/use-cases/get-client-analytics.js';
@@ -25,6 +26,8 @@ import { LegacyMysqlClientActionsDataSource } from './infrastructure/datasources
 import { LegacyMysqlClientAnalyticsDataSource } from './infrastructure/datasources/legacy-mysql-client-analytics-data-source.js';
 import { LegacyMysqlClientMovementsDataSource } from './infrastructure/datasources/legacy-mysql-client-movements-data-source.js';
 import { LegacyMysqlClientConsultationsDataSource } from './infrastructure/datasources/legacy-mysql-client-consultations-data-source.js';
+import { MysqlCustomerCollectionReferences } from './infrastructure/datasources/mysql-customer-collection-references.js';
+import { PostgresCustomerCollections } from './infrastructure/datasources/postgres-customer-collections.js';
 import { ClientActionsRepositoryImpl } from './infrastructure/repositories/client-actions-repository-impl.js';
 import { ClientAnalyticsRepositoryImpl } from './infrastructure/repositories/client-analytics-repository-impl.js';
 import { ClientBalanceRepositoryImpl } from './infrastructure/repositories/client-balance-repository-impl.js';
@@ -77,6 +80,7 @@ export const createClientsModule = (): Router => {
     createClient,
     updateClient,
     deleteClient,
+    new CaptureCustomerCollection(new PostgresCustomerCollections(), new MysqlCustomerCollectionReferences()),
   );
 
   const router = createClientsRouter(controller);

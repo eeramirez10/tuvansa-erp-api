@@ -33,6 +33,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const createSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/sales/invoices/from-order';
   const simulateSalesStamping = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/sales\/invoices\/[1-9]\d*\/actions\/seal\/simulation$/.test(path);
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment || createSalesRemission || simulateSalesStamping) { next(); return; }
+  const createCustomerCollection = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
+    /^\/accounts-receivable\/clients\/[1-9]\d*\/collections\/[1-9]\d*$/.test(path);
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment || createSalesRemission || simulateSalesStamping || createCustomerCollection) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

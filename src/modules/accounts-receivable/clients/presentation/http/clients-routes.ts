@@ -11,6 +11,8 @@ export const createClientsRouter = (controller: ClientsController): Router => {
   router.get('/:clientId/previous', controller.getPrevious);
   router.get('/:clientId/next', controller.getNext);
   router.get('/:clientId/balance', controller.getBalance);
+  router.get('/:clientId/collections/:remissionId', controller.prepareCollection);
+  router.post('/:clientId/collections/:remissionId', controller.recordCollection);
   router.get('/:clientId/movements', controller.getMovements);
   router.get('/:clientId/invoices', controller.getInvoices);
   router.get('/:clientId/orders', controller.getOrders);

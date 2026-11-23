@@ -1,4 +1,7 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import {
+  salesRemissionsOutstanding,
+} from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
@@ -128,11 +131,8 @@ export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
       if (current.number !== orderNumber) throw new ConflictError('El folio del pedido cambió.', 'SALES_REMISSION_ORDER_CHANGED');
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-credit:' || $1 || ':' || $2,0))",
         [String(companyId), String(current.customer.id)]);
-      const { rows: [balance] } = await client.query<{ amount: string }>(
-        'SELECT coalesce(sum(charge),0) AS amount FROM tuvansa.sales_remissions WHERE company_id=$1 AND customer_id=$2',
-        [companyId, current.customer.id],
-      );
-      const posting = await post(current, Number(balance?.amount ?? 0));
+      const balance = await salesRemissionsOutstanding(client, companyId, current.customer.id);
+      const posting = await post(current, balance);
       await assertSaleStock(client, current, posting.stock);
       const { rows: [sequence] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.sales_remission_ids') AS id");
       const id = Number(sequence!.id);

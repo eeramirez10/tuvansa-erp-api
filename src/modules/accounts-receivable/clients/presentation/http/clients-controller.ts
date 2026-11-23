@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import type { CaptureCustomerCollection } from '../../application/use-cases/capture-customer-collection.js';
 import type { GetClientBalance } from '../../application/use-cases/get-client-balance.js';
 import type { GetClientAnalytics } from '../../application/use-cases/get-client-analytics.js';
 import type {
@@ -21,6 +22,17 @@ import type { UpdateClient } from '../../application/use-cases/update-client.js'
 
 const clientParamsSchema = z.object({
   clientId: z.coerce.number().int().positive(),
+});
+
+const collectionParamsSchema = clientParamsSchema.extend({ remissionId: z.coerce.number().int().positive() });
+const collectionSchema = z.strictObject({
+  requestKey: z.uuid(),
+  revision: z.int().positive(),
+  bankAccountId: z.int().positive(),
+  amount: z.number().positive(),
+  date: z.iso.date(),
+  description: z.string().trim().max(90).default(''),
+  reference: z.string().trim().max(45).default(''),
 });
 
 const searchQuerySchema = z.object({
@@ -151,6 +163,7 @@ export class ClientsController {
     private readonly createClient: CreateClient,
     private readonly updateClient: UpdateClient,
     private readonly deleteClient: DeleteClient,
+    private readonly captureCollection: CaptureCustomerCollection,
   ) {}
 
   private consultation(execute: ConsultationExecutor): RequestHandler {
@@ -306,6 +319,26 @@ export class ClientsController {
         pageSize: query.pageSize,
       });
       response.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  prepareCollection: RequestHandler = async (request, response, next) => {
+    try {
+      const identity = { companyId: 1, ...collectionParamsSchema.parse(request.params) };
+      const data = await this.captureCollection.prepare(identity);
+      response.set('Cache-Control', 'no-store').json({ data });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  recordCollection: RequestHandler = async (request, response, next) => {
+    try {
+      const identity = { companyId: 1, ...collectionParamsSchema.parse(request.params) };
+      const data = await this.captureCollection.save(identity, 0, collectionSchema.parse(request.body));
+      response.status(201).json({ data });
     } catch (error) {
       next(error);
     }

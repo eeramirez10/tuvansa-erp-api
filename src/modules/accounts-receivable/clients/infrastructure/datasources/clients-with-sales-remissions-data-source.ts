@@ -6,15 +6,18 @@ import {
 } from './client-ledger-with-sales-remissions-data-source.js';
 import { LegacyMysqlClientsDataSource } from './legacy-mysql-clients-data-source.js';
 
+function latestDate(legacy: string | null, local: string | null): string | null {
+  return local && (!legacy || local > legacy) ? local : legacy;
+}
+
 function withRemissions(client: Client, remissions: SalesRemissionCustomerTotals | undefined): Client {
   if (!remissions) return client;
   const props = client.toPrimitives();
   const currentBalance = clientMoney(props.totals.currentBalance + remissions.balance);
   const availableCredit = clientMoney(Math.max(props.terms.creditLimit - currentBalance, 0));
-  const previousDate = props.totals.lastPurchaseAt;
-  const receiptDate = remissions.lastPurchaseAt;
-  const lastPurchaseAt = receiptDate && (!previousDate || receiptDate > previousDate) ? receiptDate : previousDate;
-  return Client.create({ ...props, totals: { ...props.totals, currentBalance, availableCredit, lastPurchaseAt } });
+  const lastPurchaseAt = latestDate(props.totals.lastPurchaseAt, remissions.lastPurchaseAt);
+  const lastPaymentAt = latestDate(props.totals.lastPaymentAt, remissions.lastPaymentAt);
+  return Client.create({ ...props, totals: { ...props.totals, currentBalance, availableCredit, lastPurchaseAt, lastPaymentAt } });
 }
 
 export class ClientsWithSalesRemissionsDataSource extends LegacyMysqlClientsDataSource {

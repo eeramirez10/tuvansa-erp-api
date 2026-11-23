@@ -1,5 +1,7 @@
 export interface ClientBalanceDocumentProps {
   id: number;
+  remissionId?: number;
+  canCollect?: boolean;
   number: string;
   date: string;
   dueDate: string;

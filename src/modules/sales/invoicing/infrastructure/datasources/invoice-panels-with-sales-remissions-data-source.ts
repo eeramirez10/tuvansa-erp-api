@@ -18,13 +18,24 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     const { invoice, charge } = record;
     const base = { invoice: { id, number: invoice.number }, key, ...invoicePanelMetadata[key], readOnly: true };
     if (key === 'auxiliary') {
+      const payments = await readCustomerCollections<(Record<string, unknown> & { credits: number })[]>([], async (client) => {
+        const { rows } = await client.query<Record<string, unknown> & { credits: number }>(
+          `SELECT id::float8 AS id, date::text, movement_type AS "movementType", number AS "collectionNumber",
+                  coalesce(nullif(reference,''), number) AS reference, 0 AS charges, amount::float8 AS credits,
+                  (-amount)::float8 AS amount, id::float8 AS "policyId", policy_number AS "policyNumber"
+           FROM tuvansa.customer_collections WHERE remission_id = $1 AND company_id = 1 ORDER BY date,id`, [id],
+        );
+        return rows;
+      });
+      const charges = charge > 0 ? [{
+        id, date: invoice.dates.issuedAt, movementType: invoice.movementType, reference: invoice.orderNumber,
+        charges: charge, credits: 0, amount: charge,
+      }] : [];
+      const credits = Number(payments.reduce((total, item) => total + item.credits, 0).toFixed(2));
       return {
         ...base, available: true, source: 'postgres',
-        items: charge > 0 ? [{
-          id, date: invoice.dates.issuedAt, movementType: invoice.movementType, reference: invoice.orderNumber,
-          charges: charge, credits: 0, amount: charge,
-        }] : [],
-        summary: { charges: charge, credits: 0, balance: charge },
+        items: [...charges, ...payments],
+        summary: { charges: charge, credits, balance: Number((charge - credits).toFixed(2)) },
       };
     }
     if (key === 'ct') {
@@ -51,3 +62,4 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     };
   }
 }
+import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';

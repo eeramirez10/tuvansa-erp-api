@@ -183,6 +183,22 @@ la pantalla heredada.
 
 Las remisiones FA web de la empresa 1 se agregan a Saldo y Movimientos desde `tuvansa.sales_remissions`. El cargo aumenta el saldo actual y se incluye en los importes vencidos y por vencer según su fecha de vencimiento. Los movimientos muestran el pedido como referencia y contribuyen al saldo inicial, acumulado y final según su fecha. La ficha del cliente recalcula el crédito disponible y muestra la fecha de la última compra entre ambas fuentes. El cargo y la fecha de compra corresponden a `MFACT/33` y `CLIULTCOM`, respectivamente.
 
+Cada cobro PA registrado en `tuvansa.customer_collections` reduce el pendiente y libera crédito. Las remisiones liquidadas salen de **Saldo**. **Movimientos** conserva el cargo original y cada abono, con su recibo, póliza y referencia bancaria. El saldo de apertura, el acumulado de cada movimiento y el saldo de cierre incluyen los abonos según su fecha. La ficha del cliente muestra la última fecha de pago de ambas fuentes.
+
+### Cobrar una remisión web
+
+**Clientes → Saldo → Cobrar** registra un depósito parcial o total para una remisión web `FAW` activa en pesos de México. La ventana pide cuenta bancaria, importe, fecha, referencia bancaria y concepto. La fecha debe ser igual o posterior a la remisión y pertenecer al período fiscal de la compañía.
+
+| Vista y botón | Endpoint | Procedencia y tablas |
+| --- | --- | --- |
+| Saldo / Cobrar | `GET /api/accounts-receivable/clients/:clientId/collections/:remissionId` | SQL derivado. Saldo y revisión de `sales_remissions` y `customer_collections`. Cuentas y tipo PA de `FCIA`, `FCLI`, `FTIPMV` y `FBENC` |
+| Cobrar / OK | `POST /api/accounts-receivable/clients/:clientId/collections/:remissionId` | SQL derivado. Inserta en `customer_collections` y devuelve folio `PAW`, recibo, saldo restante y póliza `1CW` |
+| Cobrar / Cancelar | Cerrar | Descarta la captura |
+
+La revisión impide aplicar un cobro sobre un saldo que cambió. Reusar la misma clave de solicitud con los mismos datos devuelve el cobro original. El abono en Clientes, el aumento en Bancos y la póliza aplicada se proyectan de una sola fila guardada en PostgreSQL. La cuenta del depósito proviene de `FBENC` y admite movimientos y depósitos en pesos. Contabilidad carga al banco y abona a `CLICTA` o a `CIACTACXC` cuando el cliente utiliza la cuenta predeterminada.
+
+Omnis mostró la lista de **Saldo** y la ventana **Captura de movimientos** en **Clientes → Movimientos CxC**. En el historial de México, dos abonos PA en `FAX` liquidaron `FE0064651`. El segundo se liga por `APOLIZA` a `112611-0026` de familia **COBRANZA**, con cargo PC al banco y abono a la cuenta de clientes en `FBANMOV`. La muestra incluye complemento fiscal. El botón web **Cobrar** aplica esa secuencia contable a FAW, el alcance local convenido para esta fase. En las remisiones FA sin timbrar consultadas, el historial mostraba el cargo de venta. El complemento fiscal queda para la integración posterior.
+
 La captura literal completa por boton y accion esta documentada en
 `legacy-mysql-capture.md`; el archivo crudo permanece local dentro de
 `captures/` porque puede contener datos de prueba.

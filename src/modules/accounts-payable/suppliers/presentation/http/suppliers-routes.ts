@@ -16,6 +16,8 @@ export const createSuppliersRouter = (controller: SuppliersController): Router =
   router.get('/:supplierId/actions/contacts', controller.panel('contacts'));
   router.get('/:supplierId/balance', controller.panel('balance'));
   router.get('/:supplierId/movements', controller.panel('movements'));
+  router.get('/:supplierId/payments/:receiptId', controller.preparePayment);
+  router.post('/:supplierId/payments/:receiptId', controller.createPayment);
   router.get('/:supplierId/invoices', controller.panel('invoices'));
   router.get('/:supplierId/products/ordered', controller.panel('ordered-products'));
   router.get('/:supplierId/fill-rate', controller.panel('fill-rate'));

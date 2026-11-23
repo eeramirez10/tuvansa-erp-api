@@ -47,6 +47,8 @@ La consulta inicial observada en OMNIS carga los identificadores con `SELECT PRV
 
 Todas las rutas anteriores se montan bajo `/api/accounts-payable/suppliers`.
 
+El saldo local de una recepción se obtiene restando de su cargo original los pagos registrados en `supplier_payments`. **Saldo** conserva ambos importes y muestra las recepciones web que tienen un pendiente positivo. **Movimientos** conserva el cargo **RA** y muestra cada abono **PP** con el folio de cheque o transferencia y el número de póliza. La correspondencia del abono proviene de `EPRV#25/120`.
+
 ## Correspondencia visual
 
 - La ficha conserva los bloques **Catálogo de proveedores**, **Condiciones** y **Acumulados**.

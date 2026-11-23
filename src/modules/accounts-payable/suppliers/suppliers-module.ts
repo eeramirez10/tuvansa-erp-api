@@ -1,4 +1,5 @@
 import type { Router } from 'express';
+import { CaptureSupplierPayment } from './application/use-cases/capture-supplier-payment.js';
 import { GetFirstSupplier } from './application/use-cases/get-first-supplier.js';
 import { GetSupplier } from './application/use-cases/get-supplier.js';
 import { NavigateSupplier } from './application/use-cases/navigate-supplier.js';
@@ -9,6 +10,8 @@ import { SuppliersWithPurchaseReceptionsDataSource } from './infrastructure/data
 import { SuppliersRepositoryImpl } from './infrastructure/repositories/suppliers-repository-impl.js';
 import { SupplierPanelsWithPurchaseReceptionsDataSource } from './infrastructure/datasources/supplier-panels-with-purchase-receptions-data-source.js';
 import { SupplierPanelsRepositoryImpl } from './infrastructure/repositories/supplier-panels-repository-impl.js';
+import { MysqlSupplierPaymentReferences } from './infrastructure/datasources/mysql-supplier-payment-references.js';
+import { PostgresSupplierPayments } from './infrastructure/datasources/postgres-supplier-payments.js';
 import { SuppliersController } from './presentation/http/suppliers-controller.js';
 import { createSuppliersRouter } from './presentation/http/suppliers-routes.js';
 
@@ -25,6 +28,7 @@ export const createSuppliersModule = (): Router => {
     new NavigateSupplier(repository),
     new GetSupplierPanel(panelsRepository),
     new GetSupplierClassifications(panelsRepository),
+    new CaptureSupplierPayment(new PostgresSupplierPayments(), new MysqlSupplierPaymentReferences()),
   );
 
   return createSuppliersRouter(controller);

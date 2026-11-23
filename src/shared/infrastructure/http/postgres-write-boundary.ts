@@ -28,6 +28,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const createPurchaseOrder = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     (path === '/purchasing/purchase-orders' || /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(duplicate|split|branches)$/.test(path));
   const createPurchaseReception = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/purchasing/purchase-receptions';
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception) { next(); return; }
+  const createSupplierPayment = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
+    /^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*$/.test(path);
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

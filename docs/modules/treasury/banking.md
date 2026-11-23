@@ -41,7 +41,7 @@ El módulo sigue Clean Architecture. Los contratos están en `domain/datasources
 | --- | --- | --- |
 | Movimientos | `/:bankAccountId/actions/movements` | OMNIS no ejecuta SQL: muestra que no puede generar movimientos cuando la contabilidad está activa |
 | Depósitos | `/:bankAccountId/actions/deposits` | OMNIS no ejecuta SQL: indica que el movimiento debe generarse mediante póliza |
-| Pagos | `/:bankAccountId/actions/payments` | En la cuenta contrastada no abrió ventana ni ejecutó SQL |
+| Pagos | `/:bankAccountId/actions/payments` | Para los pagos locales consulta el abono y la póliza en PostgreSQL |
 | Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA`; movimientos no conciliados y contabilizados |
 | Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC`; pendientes sin tránsito hasta la fecha indicada |
 | Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal |
@@ -58,3 +58,9 @@ Todos los paneles devuelven `button`, `section`, `source`, `available`,
 botones transaccionales se reproducen en el frontend, pero permanecen
 deshabilitados porque el alcance vigente es sólo lectura. Los requests
 reproducibles están en `http/treasury/bank-accounts.http`.
+
+## Pagos de recepciones migradas
+
+El origen del pago es **Proveedores → Programar pagos → Paga** (`MPRV/9 → EPRV#25/98 → /120`). Omnis abre `ECIA#11JD` para la cuenta, Cheque o Transferencia y el concepto. En TUVANSA, `/120` aplica el importe programado en un movimiento `PP`, incrementa el consecutivo de la modalidad, crea la póliza de egresos indicada por `CIAPOLIZAEGR` y la aplica mediante `MPASIVOS/99`. Se comprobó el vínculo histórico por `FAX.AREFPAG`, `FAX.APOLIZA` y `FBANMOV`.
+
+La web registra pagos parciales y liquidaciones de una recepción local en pesos. El pago recibe su folio `TW` o `CW` por cuenta y modalidad. **Pagos** y **Auxiliar** presentan el abono de la cuenta y enlazan a la póliza aplicada. Cambia el saldo contable. El registro parte sin conciliación y conserva el saldo bancario conciliado. La captura registra el movimiento contable en PostgreSQL. La transferencia bancaria y la emisión del cheque se realizan fuera de esta captura.

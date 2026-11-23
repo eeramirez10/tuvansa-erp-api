@@ -5,17 +5,16 @@ import { GetBankPanel } from './application/use-cases/get-bank-panel.js';
 import { GetFirstBankAccount } from './application/use-cases/get-first-bank-account.js';
 import { NavigateBankAccount } from './application/use-cases/navigate-bank-account.js';
 import { SearchBankAccounts } from './application/use-cases/search-bank-accounts.js';
-import { LegacyMysqlBankAccountsDataSource } from './infrastructure/datasources/legacy-mysql-bank-accounts-data-source.js';
-import { LegacyMysqlBankPanelsDataSource } from './infrastructure/datasources/legacy-mysql-bank-panels-data-source.js';
+import { BankAccountsWithSupplierPaymentsDataSource, BankPanelsWithSupplierPaymentsDataSource } from './infrastructure/datasources/banks-with-supplier-payments-data-source.js';
 import { BankAccountsRepositoryImpl } from './infrastructure/repositories/bank-accounts-repository-impl.js';
 import { BankPanelsRepositoryImpl } from './infrastructure/repositories/bank-panels-repository-impl.js';
 import { BankAccountsController } from './presentation/http/bank-accounts-controller.js';
 import { createBankAccountsRouter } from './presentation/http/bank-accounts-routes.js';
 
 export const createBankingModule = (): Router => {
-  const accountsDataSource = new LegacyMysqlBankAccountsDataSource();
+  const accountsDataSource = new BankAccountsWithSupplierPaymentsDataSource();
   const accountsRepository = new BankAccountsRepositoryImpl(accountsDataSource);
-  const panelsRepository = new BankPanelsRepositoryImpl(new LegacyMysqlBankPanelsDataSource(accountsDataSource));
+  const panelsRepository = new BankPanelsRepositoryImpl(new BankPanelsWithSupplierPaymentsDataSource(accountsDataSource));
   const controller = new BankAccountsController(
     new GetBankAccount(accountsRepository),
     new GetBankAccountByCode(accountsRepository),

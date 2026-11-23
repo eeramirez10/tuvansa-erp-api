@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import type { CaptureSupplierPayment } from '../../application/use-cases/capture-supplier-payment.js';
 import type { GetFirstSupplier } from '../../application/use-cases/get-first-supplier.js';
 import type { GetSupplier } from '../../application/use-cases/get-supplier.js';
 import type { NavigateSupplier } from '../../application/use-cases/navigate-supplier.js';
@@ -23,6 +24,17 @@ const classificationQuerySchema = z.object({
   position: z.coerce.number().int().min(1).max(9).default(1),
 });
 
+const paymentParams = supplierParamsSchema.extend({ receiptId: z.coerce.number().int().positive() });
+const paymentBody = z.strictObject({
+  requestKey: z.uuid(),
+  revision: z.int().positive(),
+  bankAccountId: z.int().positive(),
+  mode: z.enum(['transfer', 'check']),
+  amount: z.number().positive(),
+  date: z.iso.date(),
+  description: z.string().trim().max(90),
+});
+
 export class SuppliersController {
   constructor(
     private readonly getSupplier: GetSupplier,
@@ -31,6 +43,7 @@ export class SuppliersController {
     private readonly navigateSupplier: NavigateSupplier,
     private readonly getSupplierPanel: GetSupplierPanel,
     private readonly getSupplierClassifications: GetSupplierClassifications,
+    private readonly supplierPayment: CaptureSupplierPayment,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -84,6 +97,21 @@ export class SuppliersController {
       const { supplierId } = supplierParamsSchema.parse(request.params);
       const { position } = classificationQuerySchema.parse(request.query);
       response.json(await this.getSupplierClassifications.execute(supplierId, position));
+    } catch (error) { next(error); }
+  };
+
+  preparePayment: RequestHandler = async (request, response, next) => {
+    try {
+      const identity = { companyId: 1, ...paymentParams.parse(request.params) };
+      response.set('Cache-Control', 'no-store').json({ data: await this.supplierPayment.prepare(identity) });
+    } catch (error) { next(error); }
+  };
+
+  createPayment: RequestHandler = async (request, response, next) => {
+    try {
+      const identity = { companyId: 1, ...paymentParams.parse(request.params) };
+      const result = await this.supplierPayment.save(identity, 0, paymentBody.parse(request.body));
+      response.status(201).json({ data: result });
     } catch (error) { next(error); }
   };
 }

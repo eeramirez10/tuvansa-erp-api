@@ -1,0 +1,27 @@
+@baseUrl = http://localhost:3000/api
+@supplierId = copiar-id-del-proveedor
+@receiptId = copiar-id-de-la-recepcion-local
+@bankAccountId = copiar-id-de-la-cuenta-del-get
+@revision = 1
+@requestKey = generar-uuid-por-pago
+@paymentDate = 2026-11-23
+
+### Previsualizar el saldo y las cuentas autorizadas
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{receiptId}}
+
+### Registrar pago parcial de un saldo de prueba
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{receiptId}}
+Content-Type: application/json
+
+{
+  "requestKey": "{{requestKey}}",
+  "revision": {{revision}},
+  "bankAccountId": {{bankAccountId}},
+  "mode": "transfer",
+  "amount": 40,
+  "date": "{{paymentDate}}",
+  "description": "PRUEBA DE PAGO PARCIAL"
+}
+
+### Consultar el abono en Bancos
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/payments

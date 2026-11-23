@@ -1,4 +1,5 @@
 import type { PurchaseReceptionsDataSource } from '../../domain/datasources/purchase-receptions-data-source.js';
+import { readSupplierPayments } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { PurchaseReception } from '../../domain/entities/purchase-reception.js';
 import type {
   PurchaseReceptionNavigationDirection, PurchaseReceptionPanelKey, PurchaseReceptionPanelResult,
@@ -9,6 +10,7 @@ import { isLocalPurchaseReceptionId, readLocalPurchaseReceptions, type LocalRece
 
 const reception = "(result->'reception')";
 const empty = { items: [], total: 0 };
+const money = (value: number) => Number(value.toFixed(2));
 
 export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDataSource {
   constructor(private readonly legacy: LegacyMysqlPurchaseReceptionsDataSource) {}
@@ -25,16 +27,34 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
   async findById(id: number) {
     if (!isLocalPurchaseReceptionId(id)) return this.legacy.findById(id);
     const local = await this.record('id', id);
-    return local ? PurchaseReception.create(local.result.reception) : null;
+    if (!local) return null;
+    return (await this.withBalances([PurchaseReception.create(local.result.reception)]))[0]!;
   }
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
-    return local ? PurchaseReception.create(local.result.reception) : this.legacy.findByNumber(number);
+    if (!local) return this.legacy.findByNumber(number);
+    return (await this.withBalances([PurchaseReception.create(local.result.reception)]))[0]!;
+  }
+
+  private async withBalances(items: PurchaseReception[]) {
+    if (!items.length) return items;
+    const rows = items.map((item) => item.toPrimitives());
+    const debits = await readSupplierPayments(new Map<number, number>(), async (client) => {
+      const { rows: found } = await client.query<{ id: string; paid: string }>(
+        'SELECT receipt_id AS id, sum(amount) AS paid FROM tuvansa.supplier_payments WHERE receipt_id=ANY($1::bigint[]) GROUP BY receipt_id',
+        [rows.map(({ id }) => id)],
+      );
+      return new Map(found.map(({ id, paid }) => [Number(id), Number(paid)]));
+    });
+    return rows.map((row) => PurchaseReception.create({
+      ...row, totals: { ...row.totals, balance: money(row.totals.balance - (debits.get(row.id) ?? 0)) },
+    }));
   }
 
   async search(criteria: PurchaseReceptionSearchCriteria): Promise<PurchaseReceptionSearchResult> {
     const local = await this.searchLocal(criteria);
+    local.items = await this.withBalances(local.items);
     const required = criteria.limit - local.items.length;
     if (required === 0) {
       const legacy = await this.legacy.search({ ...criteria, limit: 0, offset: 0 });
@@ -99,7 +119,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     if (!local) return legacy;
     const compare = legacy ? local.reception.number.localeCompare(legacy.toPrimitives().number, 'en') : 0;
     if (legacy && (previous ? compare < 0 : compare > 0)) return legacy;
-    return PurchaseReception.create(local.reception);
+    return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
   }
 
   async getPanel(id: number, key: PurchaseReceptionPanelKey): Promise<PurchaseReceptionPanelResult | null> {
@@ -111,14 +131,26 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       return this.legacy.classificationPanel({ id, number }, classifications, 'postgres');
     }
     const amount = local.payable?.amount ?? 0;
+    const payments = await readSupplierPayments<Record<string, unknown>[]>([], async (client) => {
+      const { rows } = await client.query<{ id: string; date: string; number: string; amount: string; policyNumber: string }>(
+        `SELECT id::text,date::text,number,amount::text,policy_number AS "policyNumber"
+         FROM tuvansa.supplier_payments WHERE receipt_id=$1 AND company_id=1 ORDER BY id`, [id],
+      );
+      return rows.map((row) => ({
+        id: Number(row.id), date: row.date, transactionType: 'PP', reference: row.number, relatedDocumentId: id,
+        charges: 0, payments: Number(row.amount), signedAmount: -Number(row.amount), relatedDocument: number,
+        policyNumber: row.policyNumber, policyId: Number(row.id),
+      }));
+    });
+    const charge = local.payable ? [{
+      id, date: dates.receivedAt, transactionType: local.movement.header.type, reference: orderNumber,
+      relatedDocumentId: id, charges: amount, payments: 0, signedAmount: amount, relatedDocument: number,
+      policyNumber: local.accounting?.number ?? '', policyId: local.accounting ? id : null,
+    }] : [];
     return {
       purchaseReception: { id, number }, key, section: 'actions', button: 'Auxiliar', source: 'postgres',
-      items: local.payable ? [{
-        id, date: dates.receivedAt, transactionType: local.movement.header.type, reference: orderNumber,
-        relatedDocumentId: id, charges: amount, payments: 0, signedAmount: amount, relatedDocument: number,
-        policyNumber: local.accounting?.number ?? '',
-      }] : [],
-      summary: { total: amount },
+      items: [...charge, ...payments],
+      summary: { total: money(amount + payments.reduce((total, row) => total + Number(row.signedAmount), 0)) },
     };
   }
 }

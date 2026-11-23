@@ -1,6 +1,9 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import {
+  isLocalSupplierPaymentId, supplierPaymentsAvailable,
+} from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
+import {
   isLocalPurchaseReceptionId, readLocalPurchaseReceptions,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
@@ -10,7 +13,7 @@ import type {
 } from '../../domain/repositories/accounting-policies-repository.js';
 import type { LegacyMysqlAccountingPoliciesDataSource } from './legacy-mysql-accounting-policies-data-source.js';
 
-interface ReceiptPolicyHeader {
+interface LocalPolicyHeader {
   id: number;
   number: string;
   company: number;
@@ -18,13 +21,17 @@ interface ReceiptPolicyHeader {
   date: string;
   cheque: string;
   beneficiary: string;
+  family: string;
   concept: string;
   auditAt: string;
   exchangeRate: number;
 }
 
-interface ReceiptPolicyRecord extends ReceiptPolicyHeader {
-  lines: { account: string; department: string; debit: number; credit: number }[];
+interface LocalPolicyRecord extends LocalPolicyHeader {
+  lines: {
+    account: string; department: string; debit: number; credit: number;
+    reference?: string; accountName?: string; accountId?: number;
+  }[];
 }
 
 interface AccountRow extends RowDataPacket {
@@ -34,18 +41,40 @@ interface AccountRow extends RowDataPacket {
   type: number;
 }
 
-const family = 'COMPRAS';
-const headers = `
-    id::float8 AS id, accounting->>'number' AS number, company_id AS company, user_id AS "userId",
+const receiptFields = `
+    id, accounting->>'number' AS number, company_id AS company, user_id AS "userId",
     result #>> '{reception,dates,receivedAt}' AS date, number AS cheque,
-    result #>> '{reception,supplier,name}' AS beneficiary,
+    result #>> '{reception,supplier,name}' AS beneficiary, 'COMPRAS'::text AS family,
     concat('Recepción ', number, '  Referencia ', result #>> '{reception,supplierReference}', ' O.C. ', order_number) AS concept,
-    created_at::text AS "auditAt", coalesce((payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
-const source = 'FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL';
+    created_at AS "auditAt", coalesce((payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
+const paymentFields = `
+    payment.id, payment.policy_number AS number, payment.company_id AS company, payment.user_id AS "userId",
+    payment.date::text AS date, payment.number AS cheque,
+    receipt.result #>> '{reception,supplier,name}' AS beneficiary, 'PAGOS PR.'::text AS family,
+    payment.description AS concept, payment.created_at AS "auditAt",
+    coalesce((receipt.payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
+const paymentLines = `jsonb_build_array(
+    jsonb_build_object('account', payment.bank_code, 'accountId', payment.bank_account_id,
+      'accountName', payment.bank_name, 'department', '', 'debit', 0, 'credit', payment.amount),
+    jsonb_build_object('account', payment.supplier_account, 'accountName', payment.supplier_account_name,
+      'department', '', 'debit', payment.amount, 'credit', 0, 'reference', receipt.number)
+  )`;
 const money = (amount: number) => Number(amount.toFixed(2));
+const isLocalPolicyId = (id: number) => isLocalPurchaseReceptionId(id) || isLocalSupplierPaymentId(id);
 
-function receiptPolicy(header: ReceiptPolicyHeader, movements: AccountingPolicyMovement[] = []): AccountingPolicy {
-  const { id, number, company, userId, date, cheque, beneficiary, concept, auditAt, exchangeRate } = header;
+function localPolicies(hasPayments: boolean, detail: boolean): string {
+  const receipts = `SELECT ${receiptFields}, ${detail ? "accounting->'lines'" : "'[]'::jsonb"} AS lines
+    FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL`;
+  if (!hasPayments) return receipts;
+  return `${receipts} UNION ALL
+    SELECT ${paymentFields}, ${detail ? paymentLines : "'[]'::jsonb"} AS lines
+    FROM tuvansa.supplier_payments AS payment
+    JOIN tuvansa.purchase_receptions AS receipt ON receipt.id = payment.receipt_id AND receipt.company_id = payment.company_id
+    WHERE payment.company_id = 1`;
+}
+
+function localPolicy(header: LocalPolicyHeader, movements: AccountingPolicyMovement[] = []): AccountingPolicy {
+  const { id, number, company, userId, date, cheque, beneficiary, family, concept, auditAt, exchangeRate } = header;
   const debit = money(movements.reduce((sum, line) => sum + line.debit, 0));
   const credit = money(movements.reduce((sum, line) => sum + line.credit, 0));
   return AccountingPolicy.create({
@@ -61,8 +90,8 @@ function comparePolicyNumbers(left: string, right: string): number {
   return normalizedLeft < normalizedRight ? -1 : Number(normalizedLeft > normalizedRight);
 }
 
-async function policyWithMovements(record: ReceiptPolicyRecord): Promise<AccountingPolicy> {
-  if (record.lines.length === 0) return receiptPolicy(record);
+async function policyWithMovements(record: LocalPolicyRecord): Promise<AccountingPolicy> {
+  if (record.lines.length === 0) return localPolicy(record);
   const codes = [...new Set(record.lines.map(({ account }) => account))];
   // Derivada. Completa las cuentas de la póliza web con el catálogo de Contabilidad.
   const [rows] = await legacyMysqlPool.query<AccountRow[]>(
@@ -73,11 +102,11 @@ async function policyWithMovements(record: ReceiptPolicyRecord): Promise<Account
     const code = row.code.trim();
     if (!accounts.has(code)) accounts.set(code, row);
   }
-  return receiptPolicy(record, record.lines.map(({ account, department, debit, credit }, index) => {
+  return localPolicy(record, record.lines.map(({ account, accountId, accountName, department, debit, credit, reference }, index) => {
     const details = accounts.get(account);
     return {
-      id: index + 1, accountId: details?.id ?? 0, accountCode: account, accountName: details?.name ?? '',
-      debit, credit, reference: '', exchangeRate: record.exchangeRate, costCenter: Number(department) || 0,
+      id: index + 1, accountId: accountId ?? details?.id ?? 0, accountCode: account, accountName: accountName ?? details?.name ?? '',
+      debit, credit, reference: reference ?? '', exchangeRate: record.exchangeRate, costCenter: Number(department) || 0,
       reconciled: false, accountType: details?.type ?? 0,
     };
   }));
@@ -87,17 +116,18 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
   constructor(private readonly legacy: LegacyMysqlAccountingPoliciesDataSource) {}
 
   private record(field: 'id' | 'number', value: number | string) {
-    const filter = field === 'id' ? 'id' : "upper(accounting->>'number')";
-    return readLocalPurchaseReceptions<ReceiptPolicyRecord | null>(null, async (client) => {
-      const { rows: [row] } = await client.query<ReceiptPolicyRecord>(
-        `SELECT ${headers}, accounting->'lines' AS lines ${source} AND ${filter} = $1`, [value],
+    const filter = field === 'id' ? 'id' : 'upper(number)';
+    return readLocalPurchaseReceptions<LocalPolicyRecord | null>(null, async (client) => {
+      const view = localPolicies(await supplierPaymentsAvailable(client), true);
+      const { rows: [row] } = await client.query<{ policy: LocalPolicyRecord }>(
+        `SELECT to_jsonb(entry) AS policy FROM (${view}) AS entry WHERE ${filter} = $1`, [value],
       );
-      return row ?? null;
+      return row?.policy ?? null;
     });
   }
 
   async findById(id: number) {
-    if (!isLocalPurchaseReceptionId(id)) return this.legacy.findById(id);
+    if (!isLocalPolicyId(id)) return this.legacy.findById(id);
     const local = await this.record('id', id);
     return local ? policyWithMovements(local) : null;
   }
@@ -122,19 +152,20 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
     }
     if (criteria.family !== undefined) {
       values.push(`${criteria.family}%`);
-      conditions.push(`'${family}' ILIKE $${values.length}`);
+      conditions.push(`family ILIKE $${values.length}`);
     }
     if (criteria.date !== undefined) {
       values.push(criteria.date);
       conditions.push(`date = $${values.length}`);
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const order = filtered ? 'upper(number), id' : 'id DESC';
+    const order = filtered ? 'upper(number), id' : '"auditAt" DESC, id DESC';
     values.push(offset, limit);
-    return readLocalPurchaseReceptions<{ items: ReceiptPolicyHeader[]; total: number }>({ items: [], total: 0 }, async (client) => {
-      // Derivada. Proyecta las pólizas guardadas al recibir una orden de compra.
-      const { rows: [row] } = await client.query<{ items: ReceiptPolicyHeader[]; total: string }>(
-        `WITH policies AS (SELECT ${headers} ${source}),
+    return readLocalPurchaseReceptions<{ items: LocalPolicyHeader[]; total: number }>({ items: [], total: 0 }, async (client) => {
+      const view = localPolicies(await supplierPaymentsAvailable(client), false);
+      // Derivada. Proyecta las pólizas registradas con recepciones y pagos.
+      const { rows: [row] } = await client.query<{ items: LocalPolicyHeader[]; total: string }>(
+        `WITH policies AS (${view}),
               matched AS (SELECT * FROM policies ${where})
          SELECT (SELECT count(*) FROM matched) AS total,
                 ARRAY(SELECT to_jsonb(matched) FROM matched
@@ -151,16 +182,16 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
     const local = await this.searchLocal(criteria, filtered, filtered ? 0 : offset, filtered ? offset + limit : limit);
     if (local.total === 0) return this.legacy.search(criteria);
     if (!filtered) {
-      // Local ids follow legacy ids in the default newest-first order.
+      // New local postings precede the historical ledger in the default order.
       const legacy = await this.legacy.search({ ...criteria, offset: Math.max(offset - local.total, 0), limit: limit - local.items.length });
-      return { items: [...local.items.map((header) => receiptPolicy(header)), ...legacy.items], total: local.total + legacy.total };
+      return { items: [...local.items.map((header) => localPolicy(header)), ...legacy.items], total: local.total + legacy.total };
     }
 
     // Every legacy row before this offset is also before the requested combined page.
     const legacyOffset = Math.max(offset - local.total, 0);
     const legacy = await this.legacy.search({ ...criteria, offset: legacyOffset, limit: offset + limit - legacyOffset });
     const merged = [
-      ...local.items.map((header) => ({ id: header.id, number: header.number, entity: receiptPolicy(header) })),
+      ...local.items.map((header) => ({ id: header.id, number: header.number, entity: localPolicy(header) })),
       ...legacy.items.map((entity) => {
         const { id, number } = entity.toPrimitives();
         return { id, number, entity };
@@ -173,20 +204,22 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
   }
 
   async findAdjacent(id: number, direction: AccountingPolicyNavigationDirection) {
-    const number = isLocalPurchaseReceptionId(id)
+    const number = isLocalPolicyId(id)
       ? (await this.record('id', id))?.number ?? null
       : await this.legacy.findNumberById(id);
     if (number === null) return null;
     const previous = direction === 'previous';
     const [local, legacy] = await Promise.all([
-      readLocalPurchaseReceptions<ReceiptPolicyRecord | null>(null, async (client) => {
-        const { rows: [row] } = await client.query<ReceiptPolicyRecord>(
-          `SELECT ${headers}, accounting->'lines' AS lines ${source}
-           AND upper(accounting->>'number') ${previous ? '<' : '>'} $1
-           ORDER BY upper(accounting->>'number') ${previous ? 'DESC' : 'ASC'}, id ${previous ? 'DESC' : 'ASC'} LIMIT 1`,
+      readLocalPurchaseReceptions<LocalPolicyRecord | null>(null, async (client) => {
+        const view = localPolicies(await supplierPaymentsAvailable(client), true);
+        const order = previous ? 'DESC' : 'ASC';
+        const { rows: [row] } = await client.query<{ policy: LocalPolicyRecord }>(
+          `SELECT to_jsonb(entry) AS policy FROM (${view}) AS entry
+           WHERE upper(number) ${previous ? '<' : '>'} $1
+           ORDER BY upper(number) ${order}, id ${order} LIMIT 1`,
           [number.toUpperCase()],
         );
-        return row ?? null;
+        return row?.policy ?? null;
       }),
       this.legacy.findAdjacentByNumber(number, direction),
     ]);
@@ -200,8 +233,8 @@ export class AccountingPoliciesWithPurchaseReceptionsDataSource implements Accou
   }
 
   async getClassifications(id: number) {
-    if (!isLocalPurchaseReceptionId(id)) return this.legacy.getClassifications(id);
+    if (!isLocalPolicyId(id)) return this.legacy.getClassifications(id);
     const local = await this.record('id', id);
-    return local ? this.legacy.getClassificationCatalog(receiptPolicy(local)) : null;
+    return local ? this.legacy.getClassificationCatalog(localPolicy(local)) : null;
   }
 }

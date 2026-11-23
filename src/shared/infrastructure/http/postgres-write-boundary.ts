@@ -22,7 +22,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const editProduct = env.INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS.length > 0 && env.NEON_DATABASE_URL !== '' &&
     req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*$/.test(path);
   const purchaseOrderAction = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
-    /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(classifications|confirmation)$/.test(path);
+    /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(classifications|confirmation|authorization)$/.test(path);
   const changePurchaseOrder = env.NEON_DATABASE_URL !== '' && ['PATCH', 'DELETE'].includes(req.method) &&
     /^\/purchasing\/purchase-orders\/[1-9]\d*$/.test(path);
   const createPurchaseOrder = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/purchasing/purchase-orders';

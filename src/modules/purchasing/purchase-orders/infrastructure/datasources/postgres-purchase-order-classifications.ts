@@ -23,16 +23,16 @@ export const purchaseOrderClassificationMigrations = [{
   );`,
 }];
 
-export async function saveAssignmentMarker(client: PostgresClient, order: PurchaseOrderIdentity, fallback: string[], marker: string) {
-  const classifications = Array.from({ length: 9 }, (_, index) => index === 7 ? marker : fallback[index] ?? '');
+export async function savePurchaseOrderClassificationValue(client: PostgresClient, order: PurchaseOrderIdentity, fallback: string[], index: 7 | 8, value: string) {
+  const classifications = Array.from({ length: 9 }, (_, position) => position === index ? value : fallback[position] ?? '');
   await client.query(
     `INSERT INTO tuvansa.purchase_order_classifications(order_id, order_number, current_values, revision)
      VALUES ($1, $2, $3::jsonb, 1)
      ON CONFLICT (order_id, order_number) DO UPDATE SET
-       current_values=jsonb_set(tuvansa.purchase_order_classifications.current_values, '{7}', to_jsonb($4::text)),
+       current_values=jsonb_set(tuvansa.purchase_order_classifications.current_values, ARRAY[$5::integer::text], to_jsonb($4::text)),
        revision=tuvansa.purchase_order_classifications.revision+1, updated_at=now()
-     WHERE tuvansa.purchase_order_classifications.current_values->>7 IS DISTINCT FROM $4`,
-    [order.id, order.number, JSON.stringify(classifications), marker],
+     WHERE tuvansa.purchase_order_classifications.current_values->>($5::integer) IS DISTINCT FROM $4`,
+    [order.id, order.number, JSON.stringify(classifications), value, index],
   );
 }
 

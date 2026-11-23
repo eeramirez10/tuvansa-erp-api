@@ -5,6 +5,19 @@ const productPilots = z.string().default('')
   .transform((value) => value.trim() === '' ? [] : value.split(',').map((id) => id.trim()))
   .pipe(z.array(z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.int().positive())));
 
+const purchaseOrderApprovers = z.string().default('[]').transform((value, ctx): unknown => {
+  try { return JSON.parse(value); }
+  catch {
+    ctx.addIssue({ code: 'custom', message: 'Se esperaba una lista JSON de autorizadores de compra.' });
+    return z.NEVER;
+  }
+}).pipe(z.array(z.object({
+  userId: z.number().int().positive().max(2147483647),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  levels: z.array(z.enum(['A', 'B', 'C', 'D', 'E', 'F'])).min(1),
+}).strict()).refine((approvers) => new Set(approvers.map(({ sha256 }) => sha256)).size === approvers.length,
+  'Cada clave de autorización debe corresponder a un solo usuario.'));
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   HOST: z.string().min(1).default('0.0.0.0'),
@@ -29,6 +42,7 @@ const envSchema = z.object({
   // Optional: without Neon, the API stays available for legacy reads only.
   NEON_DATABASE_URL: z.string().trim().default(''),
   PURCHASE_ORDER_EDIT_COMPANY_ID: z.coerce.number().int().min(1).max(255).default(1),
+  PURCHASE_ORDER_APPROVER_KEYS: purchaseOrderApprovers,
   PURCHASE_ORDER_WAREHOUSES: z.string().trim().transform((value) => value.split(',').map((code) => code.trim().toUpperCase()))
     .pipe(z.array(z.string().regex(/^[A-Z0-9]{1,10}$/))).optional(),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),

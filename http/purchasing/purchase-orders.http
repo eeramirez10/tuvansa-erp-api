@@ -12,6 +12,11 @@
 @confirmationVersion = copiar-version-del-GET-confirmation
 @confirmationRevision = 0
 @confirmationMode = confirm
+@authorizationId = copiar-id-de-orden-de-prueba
+@authorizationVersion = copiar-version-del-GET-authorization
+@authorizationRevision = 0
+@authorizationClassificationRevision = 0
+@authorizationStatus =
 @creationSupplier = 35436
 @creationDate = 2026-11-23
 @creationRequestKey = 92bc9c06-bd13-4533-9de7-d2fa4e380ae2
@@ -54,6 +59,24 @@ Content-Type: application/json
   "mode": "{{confirmationMode}}",
   "revision": {{confirmationRevision}},
   "legacyVersion": "{{confirmationVersion}}"
+}
+
+### Acción: Autorizar / consultar niveles y estado
+GET {{baseUrl}}/purchasing/purchase-orders/{{authorizationId}}/actions/authorization
+
+### Acción: O.K. A (usa direction=approve o revoke)
+# Define PURCHASE_ORDER_APPROVAL_TEST_KEY fuera del repositorio y copia la versión y revisiones del GET.
+PATCH {{baseUrl}}/purchasing/purchase-orders/{{authorizationId}}/actions/authorization
+Authorization: Bearer {{$processEnv PURCHASE_ORDER_APPROVAL_TEST_KEY}}
+Content-Type: application/json
+
+{
+  "level": "A",
+  "direction": "approve",
+  "status": "{{authorizationStatus}}",
+  "revision": {{authorizationRevision}},
+  "classificationRevision": {{authorizationClassificationRevision}},
+  "legacyVersion": "{{authorizationVersion}}"
 }
 
 ### Acción: Comentarios

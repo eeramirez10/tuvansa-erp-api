@@ -9,6 +9,8 @@ import { EditPurchaseOrder } from './application/use-cases/edit-purchase-order.j
 import { CreatePurchaseOrder } from './application/use-cases/create-purchase-order.js';
 import { RemovePurchaseOrder } from './application/use-cases/remove-purchase-order.js';
 import { ConfirmPurchaseOrder } from './application/use-cases/confirm-purchase-order.js';
+import { AuthorizePurchaseOrder } from './application/use-cases/authorize-purchase-order.js';
+import { MysqlPurchaseOrderAuthorizationAccess } from './infrastructure/datasources/mysql-purchase-order-authorization-access.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from './infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
 import { LegacyMysqlPurchaseOrderEditDataSource } from './infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
 import { PostgresPurchaseOrderClassifications } from './infrastructure/datasources/postgres-purchase-order-classifications.js';
@@ -22,7 +24,8 @@ export const createPurchaseOrdersModule = (): Router => {
   const legacy = new LegacyMysqlPurchaseOrdersDataSource();
   const edits = new PostgresPurchaseOrderEdits();
   const capture = new LegacyMysqlPurchaseOrderEditDataSource(legacy);
-  const dataSource = new HybridPurchaseOrdersDataSource(legacy, new PostgresPurchaseOrderClassifications(), edits, edits);
+  const classifications = new PostgresPurchaseOrderClassifications();
+  const dataSource = new HybridPurchaseOrdersDataSource(legacy, classifications, edits, edits);
   const repository = new PurchaseOrdersRepositoryImpl(dataSource);
   const controller = new PurchaseOrdersController(
     new GetPurchaseOrder(repository),
@@ -35,6 +38,7 @@ export const createPurchaseOrdersModule = (): Router => {
     new CreatePurchaseOrder(capture, edits, repository),
     new RemovePurchaseOrder(capture, edits, edits, repository),
     new ConfirmPurchaseOrder(capture, edits, edits, repository),
+    new AuthorizePurchaseOrder(capture, edits, edits, classifications, repository, new MysqlPurchaseOrderAuthorizationAccess()),
   );
   return createPurchaseOrdersRouter(controller);
 };

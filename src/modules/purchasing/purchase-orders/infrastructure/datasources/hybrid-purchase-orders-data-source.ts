@@ -1,5 +1,6 @@
 import type { LegacyPurchaseOrdersDataSource, PurchaseOrderClassificationStorage, PurchaseOrdersDataSource } from '../../domain/datasources/purchase-orders-data-source.js';
 import type { PurchaseOrderEditStorage } from '../../domain/datasources/purchase-order-edit-data-source.js';
+import type { PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
 import type {
@@ -16,12 +17,16 @@ import type {
 
 const sortOrders = (a: PurchaseOrder, b: PurchaseOrder) =>
   a.identity.number.localeCompare(b.identity.number, 'en', { sensitivity: 'base' }) || a.identity.id - b.identity.id;
+const authorizationDate = new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
+const authorizationDateTime = new Intl.DateTimeFormat('sv-SE', {
+  dateStyle: 'short', timeStyle: 'medium', timeZone: 'America/Mexico_City',
+});
 
 export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource {
   constructor(
     private readonly dataSource: LegacyPurchaseOrdersDataSource,
     private readonly classificationStorage: PurchaseOrderClassificationStorage,
-    private readonly editStorage: PurchaseOrderEditStorage,
+    private readonly editStorage: PurchaseOrderEditStorage & Pick<PurchaseOrderAuthorizationStorage, 'findAuthorizationEvents'>,
     private readonly creation: PurchaseOrderCreateStorage,
   ) {}
 
@@ -107,7 +112,7 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
         return panel && { ...panel, source: 'mysql+postgres' };
       }
       const edit = edits[0];
-      return {
+      return this.withAuthorizationComments({
         purchaseOrder: order.identity, key, section: 'actions', button: 'Comentarios', source: 'postgres',
         items: [{ amountInWords: edit?.amountInWords ?? '' }],
         summary: {
@@ -115,18 +120,36 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
           terms: metadata.terms, currencyId: metadata.rules.currencyId, currencyName: metadata.rules.currencyName,
           exchangeRate: metadata.exchangeRate, onAccount: metadata.onAccount, labels: metadata.labels, createdAt: metadata.createdAt,
         },
-      };
+      });
     }
     if (key !== 'comments' && key !== 'ct') return this.dataSource.getPanel(id, key);
     const edits = await this.editStorage.find([id]);
     const panel = await this.dataSource.getPanel(id, key, key === 'ct' ? edits : undefined);
     if (!panel) return null;
     const edit = edits.find((item) => item.number === panel.purchaseOrder.number);
-    if (!edit) return panel;
-    if (key === 'ct') return { ...panel, source: 'mysql+postgres' };
+    if (key === 'ct') return edit ? { ...panel, source: 'mysql+postgres' } : panel;
+    if (!edit) return this.withAuthorizationComments(panel);
     const items = [...panel.items];
     if (typeof edit.amountInWords === 'string') items[0] = { ...items[0], amountInWords: edit.amountInWords };
-    return { ...panel, source: 'mysql+postgres', items, summary: { ...panel.summary, totals: edit.totals, lines: edit.lines } };
+    return this.withAuthorizationComments({
+      ...panel, source: 'mysql+postgres', items, summary: { ...panel.summary, totals: edit.totals, lines: edit.lines },
+    });
+  }
+
+  private async withAuthorizationComments(panel: PurchaseOrderPanelResult): Promise<PurchaseOrderPanelResult> {
+    const events = await this.editStorage.findAuthorizationEvents(panel.purchaseOrder);
+    if (events.length === 0) return panel;
+    const items = [...panel.items];
+    const initialLine = String(items[0]?.line4 ?? '');
+    const notes = events.map(({ level, direction, actorId, occurredAt }) =>
+      `, ${direction === 'revoke' ? '-' : ''}${level} usr:${actorId} ${authorizationDate.format(new Date(occurredAt))}`);
+    items[0] = { ...items[0], line4: initialLine + notes.join('') };
+    const summary = { ...panel.summary };
+    const levelD = events.findLast(({ level }) => level === 'D');
+    if (levelD) summary.authorizedBy = levelD.direction === 'approve' ? levelD.actorId : 0;
+    const levelC = events.findLast(({ level, direction }) => level === 'C' && direction === 'approve');
+    if (levelC) summary.modifiedAt = authorizationDateTime.format(new Date(levelC.occurredAt));
+    return { ...panel, items, summary, source: panel.source === 'mysql' ? 'mysql+postgres' : panel.source };
   }
 
   async getClassifications(id: number): Promise<PurchaseOrderClassificationPanel | null> {

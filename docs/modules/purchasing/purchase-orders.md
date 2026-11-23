@@ -21,6 +21,7 @@ Módulo de la ventana **Órdenes de compra** de OMNIS. La ruta base es:
 | Papelera / Baja de orden de compra | `GET /:purchaseOrderId/removal` | `FPENC`, `FPLIN` y revisión local vigente |
 | Baja de orden de compra / Sí | `DELETE /:purchaseOrderId` | Baja transaccional y ajuste del pendiente en PostgreSQL |
 | Confirmar todo / Desconfirmar todo | `GET /:purchaseOrderId/actions/confirmation`, `PATCH /:purchaseOrderId/actions/confirmation` | Reglas de `EOC#2/7`, `/422–423` y `MBASE/124`, persistencia derivada en PostgreSQL |
+| Autorizar / O.K. A–F | `GET /:purchaseOrderId/actions/authorization`, `PATCH /:purchaseOrderId/actions/authorization` | Reglas de `EOC#16/1–6`, permisos `FUSERS` y `FHELP`, bitácora en PostgreSQL |
 | Lápiz / Cambio de orden de compra | `GET /:purchaseOrderId/edit` | `FPENC`, `FPLIN`, `FCIA` y revisión vigente en PostgreSQL |
 | Cambio de orden de compra / Producto | `GET /:purchaseOrderId/edit/products?q=...` | Catálogo de compra `FINV`, configuración `FCIA` y unidades `FUNIDAD` |
 | Cambio de orden de compra / OK | `PATCH /:purchaseOrderId` | Persistencia derivada en PostgreSQL |
@@ -77,7 +78,7 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 | Orden en pantalla | Código Omnis 7 | Fuente y comportamiento | API web |
 |---|---|---|---|
 | Alta Piezas | `EOC#2/1 → EOC#17` (`EOC#19` según compañía) | Lee partidas y piezas. Cambio e importación escriben en `FCAJAS`; la serie usa `FTIPMV.PZ`. | Sin ruta |
-| Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. | Sin ruta |
+| Autorizar | `EOC#2/2 → EOC#16` | O.K. A–F valida estado y permisos, modifica `FPENC.PEPAR9` y registra el cambio en `FCOMENT.COML4`. | `GET/PATCH /:id/actions/authorization` |
 | Auxiliar | `EOC#2/3 → EPRV#7C/240` | Lee `FDOC` por `DREFER=PENUM`, `DEST=CIAKYT`, `DMULTICIA=LVCIA`. Presenta `DNUM` y `DFECHA`. La API fija `DEST=0` y `DMULTICIA=1` para el contexto capturado. | `GET /:id/actions/auxiliar` |
 | Cambia Prv | `EOC#2/4 → ECIA#26` | Valida `FPRV.PRVCOD`; cambia proveedor en `FPLIN.PRVSEQ` y `FPENC.PRVSEQ` y ajusta `PEPARA`. | Sin ruta |
 | Clasificar | `EOC#2/5 → EPDC#199/239–240`; guarda en `/3` | Opciones de `FAG` con `AGTIPO IN (0,2)`, ordenadas por `AGNUM`, comparadas por `AGTNUM` contra `PEPAR1–9`. `MBASE/91` determina las etiquetas. La web usa el mismo filtro, ordena por `AGSEQ`, tiene etiquetas fijas y sólo lectura. | `GET /:id/actions/classifications` |
@@ -174,3 +175,17 @@ En Omnis 7 se observaron ambos avisos con `O000001`. El clic abre **¿Desea asig
 El GET devuelve la revisión, la versión y si hay asignaciones. El PATCH recibe esa revisión y versión y el modo `confirm` o `unconfirm`. PostgreSQL guarda en una sola transacción las partidas, el total asignado, el acumulado por producto y el marcador de clasificación. **Editar** y **Baja** consultan la asignación vigente. Inventarios refleja el acumulado **Confirmado** y las partidas heredadas de **Ordenado a proveedor**. La API aplica la compañía activa y el tipo orden. El permiso individual `EOC#2/422` pertenece a la sesión de Omnis.
 
 La prueba en Neon cubrió ambos avisos en el navegador, una orden heredada con 44 unidades pendientes y la desconfirmación de una asignación que ya existía en MySQL. Se retiraron los registros de prueba de PostgreSQL y se verificaron los saldos originales.
+
+## Autorizar
+
+La ventana **Autoriza O.C.** de Omnis 7 muestra **O.K. A** a **O.K. F**. Cada botón guarda al pulsarse y **Shift + clic** invierte ese nivel cuando el estado lo permite. En `EOC#16/1–6`, A aplica si el código actual es menor a `9A`, B–E avanzan un paso desde su nivel precedente y F aplica si es menor a `9F`. La reversión de A deja `9`, B–E vuelven a su precedente y F revierte un estado `9F` o superior a `9E`.
+
+La UI web aplica estas transiciones al clasificador 9 y pide una clave de firma personal. La API resuelve el `USRSEQ` en el servidor y comprueba la compañía, la cuenta activa y los permisos por grupo de `INICIO/30`. Las entradas de `FHELP` son `MRECEP63-A` para abrir y `EOC#16/1–6` para cada nivel. Se verificó la configuración de permisos por grupo de TUVANSA. Si un permiso requiere supervisor, ese nivel queda sujeto a validación adicional en Omnis.
+
+`PURCHASE_ORDER_APPROVER_KEYS` recibe un arreglo JSON de entradas con `userId`, `sha256` y `levels`. Usa un `USRSEQ` activo y una clave aleatoria distinta por autorizador. Un ejemplo de generación local es `node -e "const c=require('node:crypto');const key=c.randomBytes(32).toString('hex');console.log({key,sha256:c.createHash('sha256').update(key).digest('hex')})"`. Guarda sólo el hash en la configuración y entrega la clave a su titular por un medio privado. La firma viaja en el encabezado HTTP `Authorization: Bearer` por HTTPS. La lista inicial vacía permite consultar la ventana y el estado.
+
+En PostgreSQL se guardan el estado y la bitácora de forma atómica. Comentarios muestra el historial proyectado sobre `COML4`, la fecha de avance a C (`PEDATE3`) y el usuario de D (`PEUSRAUT`), que se limpia al revertir D. Clasificar reserva los códigos de autorización para este flujo. El GET aporta la versión, revisión y el estado exigidos por el PATCH. La validación de concurrencia evita transiciones sobre una orden modificada.
+
+`MOCOM/36` y `EOC#2/14` aplican validaciones de impresión por alias en BABY, CADER y KARELE. El flujo de recepción de `MRECEP` contiene otros controles por alias, incluidos ALDO, LIZ, MODPAR, ZOY, NEWBALANCE, BABY y DURAZNOS. La revisión del código no encontró en estos flujos una compuerta por nivel para TUVANSA. **Cambia proveedor** dentro de Autorizar corresponde a `EOC#16/7` y queda pendiente.
+
+La prueba en Neon usó una orden temporal y claves efímeras. Verificó la firma y reversión desde el navegador, permisos por grupo, revisiones, bitácora, fecha de C y usuario de D. Los registros de prueba se retiraron al terminar.

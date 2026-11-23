@@ -14,9 +14,10 @@ import {
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrderRemovalStorage } from '../../domain/datasources/purchase-order-removal-data-source.js';
 import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
+import type { PurchaseOrderAuthorizationEvent, PurchaseOrderAuthorizationInput, PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import { PurchaseOrder, type PurchaseOrderLine } from '../../domain/entities/purchase-order.js';
 import type { PurchaseOrderIdentity, PurchaseOrderNavigationDirection, PurchaseOrderSearchCriteria, PurchaseOrderSearchResult } from '../../domain/repositories/purchase-orders-repository.js';
-import { purchaseOrderClassificationMigrations, saveAssignmentMarker } from './postgres-purchase-order-classifications.js';
+import { purchaseOrderClassificationMigrations, savePurchaseOrderClassificationValue } from './postgres-purchase-order-classifications.js';
 
 const migrations = [{
   id: 'purchase_order_edits',
@@ -84,7 +85,23 @@ const migrations = [{
     );
     CREATE INDEX purchase_order_confirmed_product ON tuvansa.purchase_order_confirmed_stock(product_id);
   `,
-}, ...purchaseOrderClassificationMigrations];
+}, ...purchaseOrderClassificationMigrations, {
+  id: 'purchase_order_authorization',
+  sql: `
+    CREATE TABLE tuvansa.purchase_order_authorizations (
+      order_id bigint NOT NULL,
+      order_number varchar(15) NOT NULL,
+      revision integer NOT NULL CHECK (revision > 0),
+      level char(1) NOT NULL CHECK (level IN ('A','B','C','D','E','F')),
+      direction text NOT NULL CHECK (direction IN ('approve','revoke')),
+      previous_status varchar(4) NOT NULL,
+      next_status varchar(4) NOT NULL,
+      actor_id integer NOT NULL CHECK (actor_id > 0),
+      occurred_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (order_id, order_number, revision)
+    );
+  `,
+}];
 
 type Stored = {
   id: string;
@@ -98,7 +115,7 @@ type LocalRow = { id: string; number: string; fingerprint: string; header: NewPu
 const asOrder = ({ id, number, header }: LocalRow) => PurchaseOrder.create({ ...header, id: Number(id), number });
 const requestConflict = () => new ConflictError('La clave de alta ya se usó para una orden con otros datos.', 'PURCHASE_ORDER_REQUEST_CONFLICT');
 
-export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage, PurchaseOrderConfirmationStorage {
+export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, PurchaseOrderCreateStorage, PurchaseOrderRemovalStorage, PurchaseOrderConfirmationStorage, PurchaseOrderAuthorizationStorage {
   private migration: Promise<void> | undefined;
 
   constructor(
@@ -324,7 +341,50 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
           [id, number, changes.map(({ productId }) => productId), changes.map(({ assigned }) => assigned), legacy],
         );
       }
-      await saveAssignmentMarker(client, snapshot, classifications, marker);
+      await savePurchaseOrderClassificationValue(client, snapshot, classifications, 7, marker);
+    });
+  }
+
+  async findAuthorizationEvents(order: PurchaseOrderIdentity): Promise<PurchaseOrderAuthorizationEvent[]> {
+    if (!this.writable()) return [];
+    return this.connection(async (client) => {
+      const { rows: [table] } = await client.query<{ available: boolean }>(
+        "SELECT to_regclass('tuvansa.purchase_order_authorizations') IS NOT NULL AS available",
+      );
+      if (!table?.available) return [];
+      const { rows } = await client.query<PurchaseOrderAuthorizationEvent>(
+        `SELECT level,direction,actor_id AS "actorId",occurred_at AS "occurredAt"
+         FROM tuvansa.purchase_order_authorizations WHERE order_id=$1 AND order_number=$2 ORDER BY revision`,
+        [order.id, order.number],
+      );
+      return rows.map((row) => ({ ...row, occurredAt: new Date(row.occurredAt).toISOString() }));
+    });
+  }
+
+  async saveAuthorization(order: PurchaseOrderIdentity, baseClassifications: string[], input: PurchaseOrderAuthorizationInput, next: string, actorId: number): Promise<void> {
+    const { id, number } = order;
+    await this.transaction(async (client) => {
+      await lockPurchaseOrderWrite(client, id);
+      await assertActivePurchaseOrder(client, order);
+      const { rows: [edit] } = await client.query<Pick<Stored, 'revision' | 'legacyVersion'>>(
+        `SELECT revision, legacy_version AS "legacyVersion" FROM tuvansa.purchase_order_edits
+         WHERE order_id=$1 AND order_number=$2`, [id, number],
+      );
+      const { rows: [classification] } = await client.query<{ revision: number; status: string }>(
+        `SELECT revision, current_values->>8 AS status FROM tuvansa.purchase_order_classifications
+         WHERE order_id=$1 AND order_number=$2`, [id, number],
+      );
+      const current = classification?.status ?? baseClassifications[8] ?? '';
+      if ((edit?.revision ?? 0) !== input.revision || (edit && edit.legacyVersion !== input.legacyVersion) ||
+        (classification?.revision ?? 0) !== input.classificationRevision || current !== input.status) {
+        throw new ConflictError('La orden cambió. Vuelve a abrir Autorizar.', 'PURCHASE_ORDER_AUTHORIZATION_STALE');
+      }
+      await savePurchaseOrderClassificationValue(client, order, baseClassifications, 8, next);
+      await client.query(
+        `INSERT INTO tuvansa.purchase_order_authorizations(order_id,order_number,revision,level,direction,previous_status,next_status,actor_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, number, input.classificationRevision + 1, input.level, input.direction, current, next, actorId],
+      );
     });
   }
 

@@ -10,6 +10,8 @@ import type { EditPurchaseOrder } from '../../application/use-cases/edit-purchas
 import type { CreatePurchaseOrder } from '../../application/use-cases/create-purchase-order.js';
 import type { RemovePurchaseOrder } from '../../application/use-cases/remove-purchase-order.js';
 import type { ConfirmPurchaseOrder } from '../../application/use-cases/confirm-purchase-order.js';
+import type { AuthorizePurchaseOrder } from '../../application/use-cases/authorize-purchase-order.js';
+import { purchaseOrderAuthorizationLevels } from '../../domain/entities/purchase-order-authorization.js';
 import type { PurchaseOrderPanelKey } from '../../domain/repositories/purchase-orders-repository.js';
 
 const idParamsSchema = z.object({ purchaseOrderId: z.coerce.number().int().positive() });
@@ -40,6 +42,12 @@ const revisionSchema = z.object({
 });
 const removalSchema = revisionSchema.extend({ number: numberParamsSchema.shape.purchaseOrderNumber }).strict();
 const confirmationSchema = revisionSchema.extend({ mode: z.enum(['confirm', 'unconfirm']) }).strict();
+const authorizationSchema = revisionSchema.extend({
+  level: z.enum(purchaseOrderAuthorizationLevels),
+  direction: z.enum(['approve', 'revoke']),
+  status: z.string().max(4),
+  classificationRevision: z.number().int().min(0).max(2147483647),
+}).strict();
 const editSchema = revisionSchema.extend({
   removeZero: z.boolean(),
   lines: z.array(lineSchema),
@@ -96,6 +104,7 @@ export class PurchaseOrdersController {
     private readonly createOrder: CreatePurchaseOrder,
     private readonly removeOrder: RemovePurchaseOrder,
     private readonly confirmOrder: ConfirmPurchaseOrder,
+    private readonly authorizeOrder: AuthorizePurchaseOrder,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -228,6 +237,23 @@ export class PurchaseOrdersController {
     try {
       const { purchaseOrderId } = idParamsSchema.parse(request.params);
       response.json({ data: await this.confirmOrder.execute(purchaseOrderId, confirmationSchema.parse(request.body)) });
+    } catch (error) { next(error); }
+  };
+
+  getAuthorization: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store');
+      response.json({ data: await this.authorizeOrder.get(purchaseOrderId) });
+    } catch (error) { next(error); }
+  };
+
+  authorize: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseOrderId } = idParamsSchema.parse(request.params);
+      const key = /^Bearer ([0-9a-f]{64})$/i.exec(request.header('authorization') ?? '')?.[1];
+      response.set('Cache-Control', 'no-store');
+      response.json({ data: await this.authorizeOrder.execute(purchaseOrderId, authorizationSchema.parse(request.body), key) });
     } catch (error) { next(error); }
   };
 }

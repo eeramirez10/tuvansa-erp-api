@@ -1,6 +1,7 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
+import { isPurchaseOrderAuthorizationStatus } from '../../domain/entities/purchase-order-authorization.js';
 import type {
   PurchaseOrderClassificationUpdate, PurchaseOrdersRepository,
 } from '../../domain/repositories/purchase-orders-repository.js';
@@ -18,6 +19,10 @@ export class UpdatePurchaseOrderClassifications {
       throw new ConflictError('Otra sesión cambió la clasificación. Vuelve a abrir la ventana.', 'PURCHASE_ORDER_CLASSIFICATIONS_STALE');
     }
     for (const [index, value] of update.current.entries()) {
+      const previous = panel.summary.current[index] ?? '';
+      if (index === 8 && value !== previous && (isPurchaseOrderAuthorizationStatus(value) || isPurchaseOrderAuthorizationStatus(previous))) {
+        throw new ApplicationError('Usa Autorizar para cambiar el nivel de autorización de la orden.', 'PURCHASE_ORDER_AUTHORIZATION_MANAGED', 422);
+      }
       if (value === '' || value === panel.summary.current[index]) continue;
       if (!panel.items.some((option) => option.classifier === index + 1 && option.compositeCode === value)) {
         throw new ApplicationError(`La opción no pertenece al clasificador ${index + 1}.`, 'INVALID_PURCHASE_ORDER_CLASSIFIER', 422);

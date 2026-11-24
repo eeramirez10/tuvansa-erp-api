@@ -1,6 +1,8 @@
 import type { PurchaseOrderEditSnapshot } from './purchase-order-edit-data-source.js';
 import type { PurchaseOrderIdentity } from '../repositories/purchase-orders-repository.js';
 
+export const purchaseOrderPieceIdStart = 6600000000000;
+
 export interface PurchaseOrderPiece {
   id: number;
   productCode: string;

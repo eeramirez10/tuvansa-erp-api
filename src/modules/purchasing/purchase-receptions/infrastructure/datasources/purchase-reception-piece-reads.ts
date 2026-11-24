@@ -32,6 +32,16 @@ export async function retirePurchaseReceptionPieces(client: PostgresClient, comp
   }
 }
 
+export async function receiptHasInvoicedPieces(client: PostgresClient, companyId: number, receiptId: number) {
+  if (!await purchaseReceptionPiecesAvailable(client)) return false;
+  const { rows } = await client.query(
+    `SELECT 1 FROM tuvansa.purchase_reception_pieces
+     WHERE company_id=$1 AND receipt_id=$2 AND NOT retired AND piece->>'invoiceNumber'<>'' LIMIT 1`,
+    [companyId, receiptId],
+  );
+  return rows.length > 0;
+}
+
 async function readPieces<T>(fallback: T, read: (client: PostgresClient) => Promise<T>, transaction?: PostgresClient) {
   if (transaction) return await purchaseReceptionPiecesAvailable(transaction) ? read(transaction) : fallback;
   if (!postgresConfigured()) return fallback;
@@ -45,10 +55,30 @@ export function purchaseReceptionPieceProducts(productIds: number[], transaction
   return readPieces(new Set<number>(), async (client) => {
     // FINV.ICONTROLPZAS stays enabled after an unused piece is retired in Proscai.
     const { rows } = await client.query<{ productId: number }>(
-      'SELECT DISTINCT product_id::float8 AS "productId" FROM tuvansa.purchase_reception_pieces WHERE product_id=ANY($1::bigint[]) AND legacy_piece_id IS NULL',
+      'SELECT DISTINCT product_id::float8 AS "productId" FROM tuvansa.purchase_reception_pieces WHERE product_id=ANY($1::bigint[]) AND request_key IS NOT NULL',
       [productIds],
     );
     return new Set(rows.map(({ productId }) => productId));
+  }, transaction);
+}
+
+interface MovedPurchasePieceOrigin {
+  id: number;
+  orderId: number;
+  orderNumber: string;
+}
+
+export function movedPurchasePieceOrigins(ids: number[], transaction?: PostgresClient) {
+  if (!ids.length) return Promise.resolve(new Map<number, MovedPurchasePieceOrigin>());
+  return readPieces(new Map<number, MovedPurchasePieceOrigin>(), async (client) => {
+    // Acceso compatible con instalaciones donde sólo se aplicó el alta manual.
+    const { rows } = await client.query<MovedPurchasePieceOrigin>(
+      `SELECT p.id::float8,(to_jsonb(p)->>'source_order_id')::float8 AS "orderId",
+         to_jsonb(p)->>'source_order_number' AS "orderNumber"
+       FROM tuvansa.purchase_reception_pieces p
+       WHERE p.id=ANY($1::bigint[]) AND to_jsonb(p)->>'source_order_id' IS NOT NULL`, [ids],
+    );
+    return new Map(rows.map((row) => [row.id, row]));
   }, transaction);
 }
 

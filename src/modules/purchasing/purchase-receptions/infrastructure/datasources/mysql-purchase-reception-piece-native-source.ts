@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2/promise';
+import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type {
-  NativeReceiptForPieces, NativeReceiptPiece, NativeReceiptPieceLine, PurchaseReceptionPieceNativeSource,
+  NativeReceiptForPieces, NativeReceiptPiece, NativeReceiptPieceLine, PurchaseOrderPieceTransferReferences,
+  PurchaseReceptionPieceNativeSource,
 } from '../../domain/datasources/purchase-reception-pieces-data-source.js';
 
 interface ReceiptRow extends RowDataPacket {
@@ -33,6 +35,18 @@ const receiptTypes = '(receipt.DESFACT IN (2, 3) OR receipt.DESCXC=2)';
 const uniqueReference = `receipt.DNUM<>'' AND NOT EXISTS (
   SELECT 1 FROM FDOC other WHERE other.DNUM=receipt.DNUM AND other.DSEQ<>receipt.DSEQ AND other.DEST=0
 )`;
+const pieceFields = `piece.CAJSEQ AS id,piece.ISEQ AS productId,COALESCE(product.ICOD,'') AS productCode,
+       piece.CAJSERIE AS serialNumber,piece.CAJPZAS AS pieces,piece.CAJCANT AS quantity,piece.CAJALM AS warehouse,
+       piece.CAJPEDIDO AS orderNumber,piece.CAJREFER AS reference,piece.CAJFECHA AS date,piece.CAJRECEPCION AS receiptNumber,
+       piece.CAJFACTURA AS invoiceNumber,piece.CAJPEDIMENTO AS customsEntry,piece.CAJFECHAIMPORT AS importDate,
+       piece.CAJADUANA AS customsOffice,piece.CAJOBS AS notes`;
+
+function normalizePiece(row: NativeReceiptPiece): NativeReceiptPiece {
+  return {
+    ...row, pieces: Number(row.pieces ?? 0), quantity: Number(row.quantity ?? 0),
+    date: nativeDate(row.date), importDate: nativeDate(row.importDate),
+  };
+}
 
 function blockedReason(receipt: ReceiptRow): string | null {
   if (receipt.canceled) return 'La recepción está cancelada.';
@@ -51,23 +65,43 @@ export async function readNativePurchaseReceptionPieces(
   const value = matchById ? identity.id : identity.number;
   const [rows] = await legacyMysqlPool.execute<PieceRow[]>(
     // EINV#28D/240 looks up the receipt number. FCAJAS has no company or DSEQ.
-    `SELECT piece.CAJSEQ AS id,piece.ISEQ AS productId,COALESCE(product.ICOD,'') AS productCode,
-       piece.CAJSERIE AS serialNumber,piece.CAJPZAS AS pieces,piece.CAJCANT AS quantity,piece.CAJALM AS warehouse,
-       piece.CAJPEDIDO AS orderNumber,piece.CAJREFER AS reference,piece.CAJFECHA AS date,piece.CAJRECEPCION AS receiptNumber,
-       piece.CAJFACTURA AS invoiceNumber,piece.CAJPEDIMENTO AS customsEntry,piece.CAJFECHAIMPORT AS importDate,
-       piece.CAJADUANA AS customsOffice,piece.CAJOBS AS notes
+    `SELECT ${pieceFields}
      FROM FDOC receipt JOIN FCAJAS piece ON piece.CAJRECEPCION=receipt.DNUM
      LEFT JOIN FINV product ON product.ISEQ=piece.ISEQ
      WHERE ${match}=? AND receipt.DMULTICIA=1 AND receipt.DEST=0 AND ${receiptTypes} AND ${uniqueReference}
      ORDER BY piece.CAJSEQ`, [value],
   );
-  return rows.map((row) => ({
-    ...row, pieces: Number(row.pieces ?? 0), quantity: Number(row.quantity ?? 0),
-    date: nativeDate(row.date), importDate: nativeDate(row.importDate),
-  }));
+  return rows.map(normalizePiece);
 }
 
-export class MysqlPurchaseReceptionPieceNativeSource implements PurchaseReceptionPieceNativeSource {
+export class MysqlPurchaseReceptionPieceNativeSource implements PurchaseReceptionPieceNativeSource, PurchaseOrderPieceTransferReferences {
+  async orderPieces(companyId: number, order: { id: number; number: string }): Promise<NativeReceiptPiece[]> {
+    if (companyId !== 1 || !order.number) return [];
+    const [rows] = await legacyMysqlPool.execute<(PieceRow & { ambiguous: number })[]>(
+      // Derivada de MRECEP/110. El folio sólo identifica su FCAJAS si pertenece a una única orden.
+      `SELECT ${pieceFields},EXISTS (
+         SELECT 1 FROM FPENC other WHERE other.PENUM=source.PENUM AND other.PESEQ<>source.PESEQ
+       ) AS ambiguous
+       FROM FPENC source JOIN FCAJAS piece ON piece.CAJFACTURA=source.PENUM AND piece.CAJRECEPCION=source.PENUM
+       LEFT JOIN FINV product ON product.ISEQ=piece.ISEQ
+       WHERE source.PESEQ=? AND source.PENUM=? AND source.PEMULTICIA=? AND source.PESPEDIDO=2
+       ORDER BY piece.CAJSEQ`, [order.id, order.number, companyId],
+    );
+    if (rows.some(({ ambiguous }) => ambiguous)) {
+      throw new ConflictError('El folio de las piezas pertenece a más de una orden de compra.', 'PURCHASE_RECEPTION_PIECE_ORDER_AMBIGUOUS');
+    }
+    return rows.map(({ ambiguous: _ambiguous, ...row }) => normalizePiece(row));
+  }
+
+  async matchingSerials(serials: string[]) {
+    if (!serials.length) return [];
+    const [rows] = await legacyMysqlPool.query<(RowDataPacket & { id: number; serialNumber: string })[]>(
+      'SELECT CAJSEQ AS id,CAJSERIE AS serialNumber FROM FCAJAS WHERE CAJSERIE IN (?)',
+      [serials],
+    );
+    return rows;
+  }
+
   async receipt(companyId: number, receiptId: number): Promise<NativeReceiptForPieces | null> {
     if (companyId !== 1) return null;
     const [[header]] = await legacyMysqlPool.execute<ReceiptRow[]>(

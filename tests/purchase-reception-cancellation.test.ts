@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { currentAdjustmentLayers, inactivePepsOrder } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
 import { PostgresInventoryAdjustmentsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-adjustments.js';
 import { inventoryPepsCostsOn } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
+import { purchaseOrderPieceIdStart, type PurchaseOrderPiece } from '../src/modules/purchasing/purchase-orders/domain/datasources/purchase-order-pieces-data-source.js';
 import { PurchaseOrder, type PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 import { LegacyMysqlPurchaseOrderEditDataSource } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
 import { LegacyMysqlPurchaseOrdersDataSource } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
@@ -10,6 +11,7 @@ import { PostgresPurchaseOrderEdits } from '../src/modules/purchasing/purchase-o
 import { CancelPurchaseReception } from '../src/modules/purchasing/purchase-receptions/application/use-cases/cancel-purchase-reception.js';
 import { CreatePurchaseReception } from '../src/modules/purchasing/purchase-receptions/application/use-cases/create-purchase-reception.js';
 import type { ReceiptCancellationSource } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-cancellation-data-source.js';
+import type { NativeReceiptPiece, PurchaseOrderPieceTransferReferences } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-pieces-data-source.js';
 import type { PurchaseReceptionPosting, PurchaseReceptionWriteContext } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-write-data-source.js';
 import { applyPurchaseOrderReceipt } from '../src/modules/purchasing/purchase-receptions/domain/entities/purchase-reception-order-effect.js';
 import { historicalReceptionCancellationsOn } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
@@ -17,6 +19,7 @@ import { localPurchasePayablesSql } from '../src/modules/purchasing/purchase-rec
 import { MysqlPurchaseReceptionWriteReferences } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/mysql-purchase-reception-write-references.js';
 import { PostgresPurchaseReceptionCancellations } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionWrites } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { movedPurchasePieceOrigins, purchaseReceptionPieceProducts } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-piece-reads.js';
 import * as salesStock from '../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 import * as postgres from '../src/shared/infrastructure/database/postgres-pool.js';
@@ -33,7 +36,7 @@ function connectionTo(db: PGlite): PostgresConnectionFactory {
   });
 }
 
-function localReceipts(connect: PostgresConnectionFactory) {
+function localReceipts(connect: PostgresConnectionFactory, pieceReferences?: PurchaseOrderPieceTransferReferences) {
   const actor = { companyId: 1, userId: 3 };
   const fiscal = { fiscalWindow: async () => ({ fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' }) };
   const legacyVersion = '1'.repeat(64);
@@ -51,7 +54,7 @@ function localReceipts(connect: PostgresConnectionFactory) {
       observations: '', piecesAssignment: '', supplierProductCode: '' }],
   };
   const edits = new PostgresPurchaseOrderEdits(connect, () => true);
-  const receipts = new PostgresPurchaseReceptionWrites(edits, connect, { layers: async () => [] });
+  const receipts = new PostgresPurchaseReceptionWrites(edits, connect, { layers: async () => [] }, pieceReferences);
   const cancel = new CancelPurchaseReception(new PostgresPurchaseReceptionCancellations(edits, connect, () => true), {
     cancellationOrder: async () => {
       const [snapshot] = await edits.find([order.id]);
@@ -101,6 +104,122 @@ function localReceipts(connect: PostgresConnectionFactory) {
   };
   return { actor, order, edits, cancel, receive, receipts, policy, requestedLines };
 }
+
+function nativeOrderPiece(fields: Partial<NativeReceiptPiece> = {}): NativeReceiptPiece {
+  return {
+    id: 501, productId: 8, productCode: 'B', serialNumber: 'NATIVE-501', pieces: 2, quantity: 3.5,
+    warehouse: '05', orderNumber: 'PEND-1', reference: 'REF-1', date: '2025-10-01',
+    receiptNumber: 'OC12345', invoiceNumber: 'OC12345', customsEntry: '252443012345678',
+    importDate: '2025-10-02', customsOffice: '430', notes: 'Serie de origen', ...fields,
+  };
+}
+
+function webOrderPiece(fields: Partial<PurchaseOrderPiece> = {}): PurchaseOrderPiece {
+  return {
+    id: 0, productCode: 'A', serial: 'WEB-ORIGEN', pieces: 1, quantity: 4, warehouse: '06',
+    document: 'OC12345', receipt: 'OC12345', ...fields,
+  };
+}
+
+it('traslada las series de la orden en la primera recepción parcial y las retira sólo cuando están sin facturar', async () => {
+  const db = new PGlite();
+  const connect = connectionTo(db);
+  const native = nativeOrderPiece();
+  const nativeCandidates = [
+    native, nativeOrderPiece({ id: 502, serialNumber: 'SÓLO-FACTURA', receiptNumber: 'OTRO' }),
+    nativeOrderPiece({ id: 503, serialNumber: 'SÓLO-RECEPCIÓN', invoiceNumber: 'OTRO' }),
+    nativeOrderPiece({ id: 504, serialNumber: 'GRUPO-REEMPLAZADO', productId: 7, productCode: 'A' }),
+  ];
+  const nativeReferences = {
+    orderPieces: vi.fn(async () => nativeCandidates),
+    matchingSerials: vi.fn(async (serials: string[]) => nativeCandidates.filter((piece) => serials.includes(piece.serialNumber))),
+  };
+  const { actor, order, edits, cancel, receive, policy, requestedLines } = localReceipts(connect, nativeReferences);
+  order.lines.push({ ...order.lines[0]!, id: 102, productId: 8, productCode: 'B', description: 'Producto B' });
+  order.totals = { ...order.totals, ordered: 8, remaining: 8, assigned: 8, subtotal: 400, tax: 64, total: 464 };
+  const web = webOrderPiece();
+  const notLinked = webOrderPiece({ serial: 'WEB-OTRO', receipt: 'OTRO', quantity: 1 });
+  const requestKey = crypto.randomUUID();
+  const cancelRequest = { requestKey: crypto.randomUUID(), date: '2025-12-04', reason: 'Entrada equivocada', confirmed: true as const };
+  const pieceRows = async () => (await db.query(
+    'SELECT id::float8, receipt_id::float8 AS "receiptId", retired, piece FROM tuvansa.purchase_reception_pieces ORDER BY id',
+  )).rows;
+  try {
+    await edits.savePieces({ id: order.id, number: order.number, lines: order.lines, totals: order.totals, amountInWords: null,
+      legacyVersion: '1'.repeat(64), revision: 0 }, [{ productCode: 'A', items: [web, notLinked] }]);
+    const first = await receive(order, 1, '2025-12-02', requestKey);
+    const id = first.reception.id;
+    const delivered = { warehouse: '01', date: '2025-12-02', receiptNumber: first.reception.number, invoiceNumber: '', orderNumber: '' };
+    expect(first.reception).toMatchObject({ totals: { units: 2, pieces: 0, total: 116 }, lines: [{ productId: 7, quantity: 2, pieces: '' }] });
+    expect(await pieceRows()).toMatchObject([
+      { id: native.id, receiptId: id, retired: false, piece: { ...native, ...delivered } },
+      { id: purchaseOrderPieceIdStart, receiptId: id, retired: false,
+        piece: { ...delivered, id: purchaseOrderPieceIdStart, productId: 7, productCode: 'A', serialNumber: web.serial, quantity: 4 } },
+    ]);
+    expect(await edits.listPieceOverrides({ id: order.id, number: order.number })).toMatchObject([
+      { productCode: 'A', items: [{ id: purchaseOrderPieceIdStart + 1, serial: notLinked.serial }] },
+    ]);
+    expect(await movedPurchasePieceOrigins([native.id, purchaseOrderPieceIdStart, 502], await connect())).toEqual(new Map([
+      [native.id, { id: native.id, orderId: order.id, orderNumber: order.number }],
+      [purchaseOrderPieceIdStart, { id: purchaseOrderPieceIdStart, orderId: order.id, orderNumber: order.number }],
+    ]));
+    expect(await purchaseReceptionPieceProducts([7, 8], await connect())).toEqual(new Set());
+    expect(await receive(order, 1, '2025-12-02', requestKey)).toEqual(first);
+    expect(nativeReferences.orderPieces).toHaveBeenCalledTimes(1);
+
+    // Simulate the invoice binding that /111 checks before canceling the exact receipt.
+    await db.query("UPDATE tuvansa.purchase_reception_pieces SET piece=jsonb_set(piece,'{invoiceNumber}',to_jsonb('FA1'::text)) WHERE id=$1", [native.id]);
+    await expect(cancel.prepare(1, id)).resolves.toMatchObject({ canWrite: false, reason: expect.stringContaining('factura') });
+    await expect(cancel.save(actor, id, cancelRequest)).rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_CANCELLATION_BLOCKED' });
+    expect(await pieceRows()).toMatchObject([{ retired: false }, { retired: false }]);
+    await db.query("UPDATE tuvansa.purchase_reception_pieces SET piece=jsonb_set(piece,'{invoiceNumber}',to_jsonb(''::text)) WHERE id=$1", [native.id]);
+    const cancelled = await cancel.save(actor, id, cancelRequest);
+    expect(await cancel.save(actor, id, cancelRequest)).toEqual(cancelled);
+    expect(await pieceRows()).toMatchObject([{ id: native.id, receiptId: id, retired: true }, { id: purchaseOrderPieceIdStart, receiptId: id, retired: true }]);
+
+    // A subsequent receipt must skip the retired native source despite the unchanged MySQL record.
+    const [snapshot] = await edits.find([order.id]);
+    const afterCancel = PurchaseOrder.create(order).withEditedLines(snapshot!, true).toPrimitives();
+    const second = await receive(afterCancel, snapshot!.revision, '2025-12-05', crypto.randomUUID());
+    expect(second.reception.id).not.toBe(id);
+    expect(nativeReferences.orderPieces).toHaveBeenCalledTimes(2);
+    expect(await pieceRows()).toHaveLength(2);
+    expect((await db.query('SELECT quantity::float8 FROM tuvansa.purchase_reception_inventory ORDER BY receipt_id')).rows)
+      .toEqual([{ quantity: 2 }, { quantity: 2 }]);
+    expect((await db.query('SELECT quantity::float8 FROM tuvansa.purchase_reception_cancellation_inventory')).rows).toEqual([{ quantity: -2 }]);
+    expect(applyPurchaseOrderReceipt(afterCancel, requestedLines, policy).order.lines[0]?.fulfilled).toBe(2);
+  } finally { await db.close(); }
+}, 15000);
+
+it('revierte la recepción, movimientos y revisión de la orden si una serie de origen está duplicada', async () => {
+  const db = new PGlite();
+  const connect = connectionTo(db);
+  const native = nativeOrderPiece();
+  const competing = { id: 741, serialNumber: native.serialNumber };
+  const nativeReferences = {
+    orderPieces: async () => [native],
+    matchingSerials: vi.fn(async () => [native, competing]),
+  };
+  const { order, edits, receive } = localReceipts(connect, nativeReferences);
+  const web = webOrderPiece();
+  try {
+    await edits.savePieces({ id: order.id, number: order.number, lines: order.lines, totals: order.totals, amountInWords: null,
+      legacyVersion: '1'.repeat(64), revision: 0 }, [{ productCode: 'A', items: [web] }]);
+    const requestKey = crypto.randomUUID();
+    const save = () => receive(order, 1, '2025-12-02', requestKey);
+    await expect(save()).rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_PIECE_TRANSFER_CONFLICT' });
+    expect((await edits.find([order.id]))[0]).toMatchObject({ revision: 1, totals: { fulfilled: 0, remaining: 4, assigned: 4 } });
+    expect(await edits.listPieceOverrides({ id: order.id, number: order.number })).toMatchObject([{ items: [{ serial: web.serial }] }]);
+    expect((await db.query(`SELECT (SELECT count(*)::int FROM tuvansa.purchase_receptions) AS receipts,
+      (SELECT count(*)::int FROM tuvansa.purchase_reception_inventory) AS inventory,
+      (SELECT count(*)::int FROM tuvansa.purchase_order_stock_deltas) AS pending,
+      (SELECT count(*)::int FROM tuvansa.purchase_reception_pieces) AS pieces`)).rows)
+      .toEqual([{ receipts: 0, inventory: 0, pending: 0, pieces: 0 }]);
+    nativeReferences.matchingSerials.mockResolvedValue([native]);
+    await expect(save()).resolves.toMatchObject({ reception: { totals: { units: 2, total: 116 } } });
+    expect((await db.query('SELECT count(*)::int FROM tuvansa.purchase_reception_pieces')).rows).toEqual([{ count: 2 }]);
+  } finally { await db.close(); }
+}, 15000);
 
 it('reopens an older RW without changing the other receipt or restoring purchase allocations', async () => {
   const db = new PGlite();

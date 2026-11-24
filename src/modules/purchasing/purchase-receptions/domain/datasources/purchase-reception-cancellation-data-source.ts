@@ -19,6 +19,7 @@ export interface ReceiptCancellationSource {
   paymentActive: boolean;
   lastReversalDate: string | null;
   alreadyRecorded: PostingReversalResult | null;
+  piecesInvoiced?: boolean;
   historical?: { version: string; blockedReason: string | null };
 }
 

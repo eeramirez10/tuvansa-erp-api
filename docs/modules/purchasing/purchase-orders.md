@@ -145,6 +145,10 @@ Las rutas son relativas a `/api/purchasing/purchase-orders`. «Sin ruta» indica
 - Cambio en CT conserva surtido, asignado y los importes de la orden, como en `MBASE/124`. El guardado se verificó con una matriz de prueba en una orden aislada de Neon.
 - Alta Piezas guarda en PostgreSQL por orden y producto. Las series automáticas usan prefijo `W`. Importar acepta filas de código, cantidad y serie separadas por tabuladores para productos de la orden. **OK** guarda todo el archivo en una revisión. Cancelar o una serie duplicada deja la orden intacta. El origen del valor `#45` usado para comparar el total en `EOC#17/411` sigue pendiente de confirmar.
 - **Piezas → Confirmar** guarda las asignaciones, el clasificador `ASIGNAD` y el confirmado de Inventarios en la misma transacción. Los folios, las cantidades pedidas y surtidas, y el acumulado pendiente se conservan.
+- Al registrar la primera recepción, **Piezas** deja de mostrar las series
+  trasladadas que tenían ambos vínculos al folio de la orden. El mismo
+  identificador aparece en **Recepciones → Piezas**. Véase
+  [Recepciones](purchase-receptions.md#traspaso-desde-la-orden-de-compra).
 
 ### Impresión y etiquetas de TUVANSA
 

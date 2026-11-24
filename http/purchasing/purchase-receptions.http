@@ -55,6 +55,9 @@ GET {{baseUrl}}/purchasing/purchase-receptions/341534/actions/pedimento
 ### Piezas registradas en una recepción existente
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/pieces
 
+### Piezas trasladadas desde la orden después de guardar la recepción de prueba
+GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/pieces
+
 ### Consultar los datos de Pzas. de una partida de prueba
 GET {{baseUrl}}/purchasing/purchase-receptions/{{piecesReceiptId}}/actions/pieces/lines/{{piecesLineId}}
 

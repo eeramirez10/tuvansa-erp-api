@@ -9,6 +9,7 @@ import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasource
 import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
 import { readLocalPurchaseReceptions } from '../../../purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { movedPurchasePieceOrigins } from '../../../purchase-receptions/infrastructure/datasources/purchase-reception-piece-reads.js';
 import { receiptCancellationSql } from '../../../purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { purchaseReceptionCancellationsAvailable } from '../../../purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import type {
@@ -152,12 +153,17 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
       const panel = await this.dataSource.getPanel(id, key, undefined, local?.order.identity);
       if (!panel) return null;
       const overrides = await this.editStorage.listPieceOverrides(panel.purchaseOrder);
-      if (!overrides.length) return panel;
       const products = new Set(overrides.map(({ productCode }) => productCode));
-      const merged = [
+      const originals = [
         ...readPurchaseOrderPieces(panel.items).filter((item) => !products.has(item.productCode)),
         ...overrides.flatMap(({ items }) => items),
-      ].sort((left, right) => left.id - right.id);
+      ];
+      const moved = await movedPurchasePieceOrigins(originals.map(({ id }) => id));
+      const merged = originals.filter(({ id }) => {
+        const origin = moved.get(id);
+        return origin?.orderId !== panel.purchaseOrder.id || origin.orderNumber !== panel.purchaseOrder.number;
+      }).sort((left, right) => left.id - right.id);
+      if (!overrides.length && merged.length === originals.length) return panel;
       return {
         ...panel, source: local ? 'postgres' : 'mysql+postgres', items: merged.map((item) => ({ ...item })),
         summary: { totalQuantity: Number(merged.reduce((sum, piece) => sum + piece.quantity, 0).toFixed(3)) },

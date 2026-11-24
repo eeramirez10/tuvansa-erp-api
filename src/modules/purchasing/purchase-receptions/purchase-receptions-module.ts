@@ -37,13 +37,14 @@ export const createPurchaseReceptionsModule = (): Router => {
   const edits = new PostgresPurchaseOrderEdits();
   const capture = new LegacyMysqlPurchaseOrderEditDataSource(legacyOrders);
   const receptionReferences = new MysqlPurchaseReceptionWriteReferences(capture, edits);
+  const nativePieces = new MysqlPurchaseReceptionPieceNativeSource();
   const controller = new PurchaseReceptionsController(
     new GetPurchaseReception(repository),
     new GetPurchaseReceptionByNumber(repository),
     new SearchPurchaseReceptions(repository),
     new NavigatePurchaseReception(repository),
     new GetPurchaseReceptionPanel(repository),
-    new CreatePurchaseReception(receptionReferences, new PostgresPurchaseReceptionWrites(edits)),
+    new CreatePurchaseReception(receptionReferences, new PostgresPurchaseReceptionWrites(edits, undefined, undefined, nativePieces)),
     async (number) => (await edits.findLocalByNumber(number))?.order.identity.id ?? (await legacyOrders.findByNumber(number))?.identity.id,
   );
   const expenses = new CreatePurchaseExpenses(new MysqlPurchaseExpenseReferences(), new PostgresPurchaseExpenses());
@@ -54,7 +55,7 @@ export const createPurchaseReceptionsModule = (): Router => {
     new PostgresPurchaseReceptionCancellations(edits, undefined, undefined, historical), receptionReferences, fiscal,
   );
   const pieces = new PurchaseReceptionPiecesController(
-    new ManagePurchaseReceptionPieces(new PostgresPurchaseReceptionPieces(new MysqlPurchaseReceptionPieceNativeSource())),
+    new ManagePurchaseReceptionPieces(new PostgresPurchaseReceptionPieces(nativePieces)),
   );
   return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces);
 };

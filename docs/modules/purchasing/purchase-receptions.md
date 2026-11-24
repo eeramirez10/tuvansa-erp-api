@@ -203,6 +203,31 @@ la recepción `RA09214`. **Alta Piezas L.** muestra que el complemento
 está desactivado. La comprobación usa `ERECEPC#13/20,21,29,71`,
 `EINV#22A/401,411`, `EINV#28D/14,18,240` y `ECIA#11JC/600`.
 
+### Traspaso desde la orden de compra
+
+**Nueva recepción → OK** (`POST /`) guarda las piezas en la misma
+transacción que la entrada. `MRECEP/38 → 110` busca las filas de
+`FCAJAS` cuyo `CAJFACTURA` y `CAJRECEPCION` coinciden con el folio de
+la orden. `EOC#17` asigna esos dos valores al dar de alta la pieza.
+La consulta de la API es derivada de esos procedimientos.
+
+La primera recepción, aunque sea parcial, traslada todo el conjunto.
+Cada pieza conserva su identificador y serie, toma el folio, fecha y
+almacén de la recepción, y queda libre de referencias a pedido y factura.
+El movimiento de existencias y el pendiente de la orden reflejan solamente
+las cantidades recibidas. Los sucesivos folios y reintentos conservan una
+sola ubicación por pieza.
+
+`MRECEP/111` bloquea la cancelación si encontró piezas ligadas a una
+factura. La web comprueba ese vínculo para la recepción RW y retira las
+piezas libres en la misma transacción que revierte el movimiento. El
+historial conserva la orden de origen. En la copia consultada, la
+vinculación directa por serie en Facturación usa `CIACOMPORTA[53]`, con
+valor `0`. `MFACT/38 → 110 → 116` propaga piezas previamente asignadas a
+un pedido, condición sin casos observados en esta instalación.
+
+### Acciones por pieza y por partida
+
 | Acción | Endpoint | Efecto |
 | --- | --- | --- |
 | Alta Piezas / Edita pzas | `GET /:id/actions/pieces/lines/:lineId` | Lee la partida seleccionada, su valor de piezas, la cantidad disponible y la serie propuesta por el consecutivo PZ |

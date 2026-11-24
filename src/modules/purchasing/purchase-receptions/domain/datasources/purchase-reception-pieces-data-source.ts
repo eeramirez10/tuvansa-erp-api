@@ -48,6 +48,11 @@ export interface PurchaseReceptionPieceNativeSource {
   sequence(companyId: number): Promise<number | null>;
 }
 
+export interface PurchaseOrderPieceTransferReferences {
+  orderPieces(companyId: number, order: { id: number; number: string }): Promise<NativeReceiptPiece[]>;
+  matchingSerials(serials: string[]): Promise<Array<{ id: number; serialNumber: string }>>;
+}
+
 export interface PieceLineSnapshot {
   lineId: number;
   productCode: string;

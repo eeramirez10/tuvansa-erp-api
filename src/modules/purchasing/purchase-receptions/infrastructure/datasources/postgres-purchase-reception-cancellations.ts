@@ -16,7 +16,7 @@ import { historicalReceptionCancellationsOn } from './historical-purchase-recept
 import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.js';
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { verifyReceiptLayerStock } from './purchase-reception-peps.js';
-import { lockPurchaseReceptionPieces, retirePurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { lockPurchaseReceptionPieces, receiptHasInvoicedPieces, retirePurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
 const firstId = purchaseReceptionCancellationIdStart;
@@ -91,7 +91,10 @@ async function original(client: PostgresClient, companyId: number, receiptId: nu
     ? await client.query<{ result: PostingReversalResult }>(
       'SELECT result FROM tuvansa.purchase_reception_cancellations WHERE receipt_id=$1 AND company_id=$2', [receiptId, companyId],
     ) : { rows: [] };
-  return { ...row, paymentActive: active, lastReversalDate, alreadyRecorded: cancellation?.result ?? null };
+  return {
+    ...row, paymentActive: active, lastReversalDate, alreadyRecorded: cancellation?.result ?? null,
+    piecesInvoiced: await receiptHasInvoicedPieces(client, companyId, receiptId),
+  };
 }
 
 function verifyWarehouse(client: PostgresClient, { warehouse, requests }: ReceiptCancellationStock, lock: boolean) {

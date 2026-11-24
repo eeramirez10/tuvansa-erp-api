@@ -9,10 +9,13 @@ import { MysqlInventoryAdjustmentReferences } from '../../../../inventories/move
 import { effectivePepsCost, effectivePepsCustoms, inventoryPepsCostsOn, type InventoryPepsCostSnapshot } from '../../../../inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
 import { localPhysicalStock, lockWarehouseStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { PostgresPurchaseOrderEdits } from '../../../purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
+import type { PurchaseOrderPieceTransferReferences } from '../../domain/datasources/purchase-reception-pieces-data-source.js';
 import type {
   PurchaseReceptionSaveResult, PurchaseReceptionWriteCommand, PurchaseReceptionWriteDataSource,
 } from '../../domain/datasources/purchase-reception-write-data-source.js';
 import { ensurePurchaseReceptionPepsSchema, receivedPepsCost, saveReceiptPepsCosts } from './purchase-reception-peps.js';
+import { ensurePurchaseReceptionPieceTransfersSchema } from './purchase-reception-piece-schema.js';
+import { transferPurchaseOrderPieces } from './postgres-purchase-reception-piece-transfers.js';
 
 const receiptIdStart = 6700000000000;
 export const isLocalPurchaseReceptionId = (id: number) => id >= receiptIdStart && id < receiptIdStart + 100000000;
@@ -92,6 +95,7 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
     private readonly orders: PostgresPurchaseOrderEdits,
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly layerReferences: Pick<MysqlInventoryAdjustmentReferences, 'layers'> = new MysqlInventoryAdjustmentReferences(),
+    private readonly pieceReferences?: PurchaseOrderPieceTransferReferences,
   ) {}
 
   writable() { return this.orders.writable(); }
@@ -164,7 +168,10 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
   }
 
   async commit({ actor, context, effect, posting, input, fingerprint }: PurchaseReceptionWriteCommand): Promise<PurchaseReceptionSaveResult> {
-    this.migration ??= this.migrate(ensurePurchaseReceptionSchema).catch(() => {
+    this.migration ??= this.migrate(async (client) => {
+      await ensurePurchaseReceptionSchema(client);
+      await ensurePurchaseReceptionPieceTransfersSchema(client);
+    }).catch(() => {
       delete this.migration;
       throw new ApplicationError('No fue posible preparar recepciones en PostgreSQL.', 'PURCHASE_RECEPTION_POSTGRES_UNAVAILABLE', 503);
     });
@@ -228,6 +235,7 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
       );
       await writeLayerStock(client, 'receipt_id', id, movementLines, false);
       await saveReceiptPepsCosts(client, id, costs);
+      await transferPurchaseOrderPieces(client, actor.companyId, context.order, result.reception, this.pieceReferences);
       return result;
     });
   }

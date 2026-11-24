@@ -23,7 +23,7 @@ import type { PurchaseOrderDuplicateStorage } from '../../domain/datasources/pur
 import type { PurchaseOrderColorSizeChangeStorage } from '../../domain/datasources/purchase-order-color-size-change-data-source.js';
 import type { PurchaseOrderSplitReference, PurchaseOrderSplitStorage } from '../../domain/datasources/purchase-order-split-data-source.js';
 import type { PurchaseOrderBranchTransferIdentity, PurchaseOrderBranchTransferStorage } from '../../domain/datasources/purchase-order-branch-transfer-data-source.js';
-import type { PurchaseOrderPiece, PurchaseOrderPieceGroup, PurchaseOrderPiecesStorage } from '../../domain/datasources/purchase-order-pieces-data-source.js';
+import { purchaseOrderPieceIdStart, type PurchaseOrderPiece, type PurchaseOrderPieceGroup, type PurchaseOrderPiecesStorage } from '../../domain/datasources/purchase-order-pieces-data-source.js';
 import type { PurchaseOrderConfirmationStorage, PurchaseOrderConfirmedStock } from '../../domain/datasources/purchase-order-confirmation-data-source.js';
 import type { PurchaseOrderAuthorizationEvent, PurchaseOrderAuthorizationInput, PurchaseOrderAuthorizationStorage } from '../../domain/datasources/purchase-order-authorization-data-source.js';
 import type { PurchaseOrderSupplierChangeInput, PurchaseOrderSupplierChangeMode, PurchaseOrderSupplierChangeStorage, PurchaseOrderSupplierChoice } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
@@ -157,7 +157,7 @@ const migrations = [{
 }, {
   id: 'purchase_order_pieces',
   sql: `
-    CREATE SEQUENCE tuvansa.purchase_order_piece_ids START WITH 6600000000000 MAXVALUE 6600099999998;
+    CREATE SEQUENCE tuvansa.purchase_order_piece_ids START WITH ${purchaseOrderPieceIdStart} MAXVALUE 6600099999998;
     CREATE TABLE tuvansa.purchase_order_pieces (
       order_id bigint NOT NULL,
       order_number varchar(15) NOT NULL,
@@ -615,7 +615,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
       await lockPurchasePieceSerials(client);
       const count = products.reduce((total, { items }) => total + items.filter(({ id }) => id === 0).length, 0);
       const { rows } = count ? await client.query<{ id: string; serial: string }>(
-        `SELECT number AS id, 'W' || LPAD((number - 6599999999999)::text, 8, '0') AS serial
+        `SELECT number AS id, 'W' || LPAD((number - ${purchaseOrderPieceIdStart - 1})::text, 8, '0') AS serial
          FROM (SELECT nextval('tuvansa.purchase_order_piece_ids') AS number FROM generate_series(1,$1::int)) AS allocated`, [count],
       ) : { rows: [] };
       let index = 0;

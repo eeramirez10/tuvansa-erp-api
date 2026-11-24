@@ -13,7 +13,7 @@ import type {
   ProductSearchResult,
   ProductWriteValues,
 } from '../../domain/repositories/products-repository.js';
-import { applyProductWriteValues, blankProduct, type ProductUnit } from './product-catalog-record.js';
+import { applyProductWriteValues, blankProduct, normalizeProductDate, normalizeProductDates, type ProductUnit } from './product-catalog-record.js';
 import { assertProductSnapshot, productCatalogAvailable, productCatalogTransaction } from './postgres-product-catalog-snapshot.js';
 import type { LegacyMysqlProductsDataSource } from './legacy-mysql-products-data-source.js';
 import { isNewCatalogProduct } from './product-catalog-references.js';
@@ -122,7 +122,8 @@ export class PostgresProductsDataSource implements ProductsDataSource {
       : ['fens', 'fplin'].includes(row.deletionRelation ?? ''));
     if (!nativeLinks && !await localReference(client, id)) editableFields.unshift('code');
     return Product.create({
-      ...row.document, editing: { writable: true, revision: catalogRevision(row.revision), editableFields },
+      ...normalizeProductDates(row.document),
+      editing: { writable: true, revision: catalogRevision(row.revision), editableFields },
     });
   }
 
@@ -180,7 +181,8 @@ export class PostgresProductsDataSource implements ProductsDataSource {
         [active, search, criteria.limit, criteria.offset],
       );
       const page = result.rows[0];
-      return { total: Number(page?.total ?? 0), items: (page?.items ?? []).map(Product.create) };
+      const items = (page?.items ?? []).map((document) => Product.create(normalizeProductDates(document)));
+      return { total: Number(page?.total ?? 0), items };
     });
   }
 
@@ -290,7 +292,7 @@ export class PostgresProductsDataSource implements ProductsDataSource {
       const row = (await selectProduct(client, productId, { lock: true })).rows[0];
       if (!row) return null;
       const { id, code, description } = row.document;
-      let deactivatedAt = row.document.deactivatedAt;
+      let deactivatedAt = normalizeProductDate(row.document.deactivatedAt);
       if (blocked === row.document.isActive) {
         const { rows: [clock] } = await client.query<{ today: string }>(
           "SELECT (now() AT TIME ZONE 'America/Mexico_City')::date::text AS today",

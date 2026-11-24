@@ -113,4 +113,22 @@ describe('catálogo de productos / PostgreSQL aislado', () => {
     await expect(stageProductCatalog(connect, snapshot())).rejects.toThrow('tiene cambios locales');
     expect((await db.query('SELECT number FROM tuvansa.orders')).rows).toEqual([{ number: 'NP5000000000' }]);
   });
+
+  it('devuelve fechas de calendario al abrir y buscar fichas importadas con fechas binarias', async () => {
+    await db.query('UPDATE tuvansa.inventory_products SET document=$2 WHERE id=$1', [legacyDuplicate.id, {
+      ...legacyDuplicate,
+      createdAt: Buffer.from('2020-03-09').toJSON(),
+      deactivatedAt: Buffer.from('2022-11-25').toJSON(),
+      accumulated: {
+        ...legacyDuplicate.accumulated, lastPurchaseAt: Buffer.from('2024-02-29').toJSON(), lastSaleAt: '2025-02-30',
+      },
+    }]);
+    const expected = {
+      isActive: false, createdAt: '2020-03-09', deactivatedAt: '2022-11-25',
+      accumulated: { lastPurchaseAt: '2024-02-29', lastSaleAt: null },
+    };
+    expect((await catalog.findById(legacyDuplicate.id))?.toPrimitives()).toMatchObject(expected);
+    const search = await catalog.search({ status: 'inactive', offset: 0, limit: 10 });
+    expect(search.items.map((product) => product.toPrimitives())).toMatchObject([expected]);
+  });
 });

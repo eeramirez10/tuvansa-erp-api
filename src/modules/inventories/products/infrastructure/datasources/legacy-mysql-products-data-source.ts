@@ -11,13 +11,16 @@ import type {
   ProductSearchResult,
   ProductWriteValues,
 } from '../../domain/repositories/products-repository.js';
+import { normalizeProductDate } from './product-catalog-record.js';
+
+type LegacyProductDate = string | Buffer | null;
 
 export interface ProductRow extends RowDataPacket {
   id: number;
   code: string;
   description: string;
   typeId: number;
-  deactivatedAt: string | null;
+  deactivatedAt: LegacyProductDate;
   familyCode: string;
   unitId: number;
   unitCode: string | null;
@@ -26,8 +29,8 @@ export interface ProductRow extends RowDataPacket {
   catalogUnitDescription: string | null;
   colorAndSize: number | null;
   hasPhoto: number;
-  offerFrom: string | null;
-  offerUntil: string | null;
+  offerFrom: LegacyProductDate;
+  offerUntil: LegacyProductDate;
   salePrice1: number;
   salePrice2: number;
   salePrice3: number;
@@ -47,8 +50,8 @@ export interface ProductRow extends RowDataPacket {
   primaryAccount: string;
   secondaryAccount: string;
   costOfSalesAccount: string;
-  lastPurchaseAt: string | null;
-  lastSaleAt: string | null;
+  lastPurchaseAt: LegacyProductDate;
+  lastSaleAt: LegacyProductDate;
   assigned: number;
   confirmed: number;
   customerOrders: number;
@@ -63,7 +66,7 @@ export interface ProductRow extends RowDataPacket {
   pieceStock: number;
   salesLastSixWeeks: number;
   inventoryDays: number;
-  createdAt: string | null;
+  createdAt: LegacyProductDate;
 }
 
 interface CountRow extends RowDataPacket { total: number }
@@ -174,12 +177,14 @@ const businessDateFormatter = new Intl.DateTimeFormat('en-CA', {
 });
 
 export const toProduct = (row: ProductRow, today = businessDateFormatter.format(new Date())): Product => {
+  const offerFrom = normalizeProductDate(row.offerFrom);
+  const offerUntil = normalizeProductDate(row.offerUntil);
   const props: ProductProps = {
     id: row.id,
     code: row.code,
     description: row.description,
     isActive: row.deactivatedAt === null,
-    deactivatedAt: row.deactivatedAt,
+    deactivatedAt: normalizeProductDate(row.deactivatedAt),
     classification: {
       type: typeFromId(row.typeId),
       familyCode: row.familyCode,
@@ -196,8 +201,7 @@ export const toProduct = (row: ProductRow, today = businessDateFormatter.format(
       hasPhoto: row.hasPhoto === 1,
     },
     prices: {
-      hasActiveOffer: row.offerFrom != null && row.offerUntil != null
-        && row.offerFrom <= today && row.offerUntil >= today,
+      hasActiveOffer: offerFrom !== null && offerUntil !== null && offerFrom <= today && offerUntil >= today,
       sale: [
         { amount: row.salePrice1, currencyId: row.saleCurrency1 },
         { amount: row.salePrice2, currencyId: row.saleCurrency2 },
@@ -224,8 +228,8 @@ export const toProduct = (row: ProductRow, today = businessDateFormatter.format(
       },
     },
     accumulated: {
-      lastPurchaseAt: row.lastPurchaseAt,
-      lastSaleAt: row.lastSaleAt,
+      lastPurchaseAt: normalizeProductDate(row.lastPurchaseAt),
+      lastSaleAt: normalizeProductDate(row.lastSaleAt),
       assigned: row.assigned,
       confirmed: row.confirmed,
       customerOrders: row.customerOrders,
@@ -242,7 +246,7 @@ export const toProduct = (row: ProductRow, today = businessDateFormatter.format(
       salesLastSixMonths: row.salesLastSixWeeks,
       inventoryDays: row.inventoryDays,
     },
-    createdAt: row.createdAt,
+    createdAt: normalizeProductDate(row.createdAt),
   };
   return Product.create(props);
 };

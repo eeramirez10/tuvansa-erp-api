@@ -3,6 +3,34 @@ import type { ProductWriteValues } from '../../domain/repositories/products-repo
 
 export type ProductUnit = ProductProps['classification']['unit'] & { usesColorAndSize: boolean };
 
+export function normalizeProductDate(value: unknown): string | null {
+  let text = value;
+  if (Buffer.isBuffer(value)) {
+    text = value.toString('utf8');
+  } else if (value && typeof value === 'object' && 'type' in value && value.type === 'Buffer'
+    && 'data' in value && Array.isArray(value.data) && value.data.length === 10
+    && value.data.every((byte: unknown) => typeof byte === 'number' && Number.isInteger(byte) && byte >= 0 && byte <= 127)) {
+    text = Buffer.from(value.data).toString('ascii');
+  }
+  if (typeof text !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(text)
+    || text.startsWith('0000-') || text === '1900-12-31') return null;
+  const date = new Date(`${text}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === text ? text : null;
+}
+
+export function normalizeProductDates(document: ProductProps): ProductProps {
+  return {
+    ...document,
+    createdAt: normalizeProductDate(document.createdAt),
+    deactivatedAt: normalizeProductDate(document.deactivatedAt),
+    accumulated: {
+      ...document.accumulated,
+      lastPurchaseAt: normalizeProductDate(document.accumulated.lastPurchaseAt),
+      lastSaleAt: normalizeProductDate(document.accumulated.lastSaleAt),
+    },
+  };
+}
+
 export const blankProduct = (id: number, date: string): ProductProps => ({
   id,
   code: '',

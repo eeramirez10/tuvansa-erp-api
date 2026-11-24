@@ -39,6 +39,11 @@ descripción, EAN o UPC; `status` acepta `active`, `inactive` y `all`.
 La comparación de `q` no distingue mayúsculas/minúsculas, incluso cuando la
 colación de la base legacy sí lo hace.
 
+Las fechas de Alta, Baja, Última compra y Última venta se devuelven como
+`AAAA-MM-DD` o `null`. La lectura recupera las fechas válidas que MySQL
+devuelve como bytes y las que ya quedaron guardadas en ese formato en
+el catálogo de PostgreSQL.
+
 ## Mapeo de la ficha
 
 | Panel | Etiqueta OMNIS | Campo API | Columna |

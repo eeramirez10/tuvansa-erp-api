@@ -108,6 +108,25 @@ describe('Inventarios PT - Catalogo de productos', () => {
     });
   });
 
+  it('normaliza las fechas binarias que devuelve MySQL antes de exportar la ficha', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-21T02:00:00Z'));
+    vi.spyOn(legacyMysqlPool, 'execute').mockResolvedValueOnce([[
+      {
+        id: 47087, typeId: 1, createdAt: Buffer.from('2020-03-09'), deactivatedAt: null,
+        lastPurchaseAt: Buffer.from('2024-02-29'), lastSaleAt: Buffer.from('0000-00-00'),
+        offerFrom: Buffer.from('2026-11-20'), offerUntil: Buffer.from('2026-11-20'),
+      },
+    ], []]);
+    const result = await new LegacyMysqlProductsDataSource().findById(47087);
+
+    expect(result?.toPrimitives()).toMatchObject({
+      isActive: true, createdAt: '2020-03-09', deactivatedAt: null,
+      accumulated: { lastPurchaseAt: '2024-02-29', lastSaleAt: null },
+      prices: { hasActiveOffer: true },
+    });
+  });
+
   it('conserva la moneda de Lista 6 aunque Otros cambie la moneda de origen', async () => {
     const values = { revision: 1, changes: { baseCurrency: 2 }, changedAt: '2026-11-20' };
     const adapter = new ProductsRepositoryImpl(repository(), undefined, { get: async () => values });

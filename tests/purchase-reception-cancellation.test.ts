@@ -78,11 +78,13 @@ function localReceipts(connect: PostgresConnectionFactory, pieceReferences?: Pur
   };
   const edits = new PostgresPurchaseOrderEdits(connect, () => true);
   const receipts = new PostgresPurchaseReceptionWrites(edits, connect, { layers: async () => [] }, pieceReferences);
+  const originalOrders = new Map([[order.id, order]]);
   const cancel = new CancelPurchaseReception(new PostgresPurchaseReceptionCancellations(edits, connect, () => true), {
-    cancellationOrder: async () => {
-      const [snapshot] = await edits.find([order.id]);
-      return snapshot ? {
-        order: PurchaseOrder.create(order).withEditedLines(snapshot, true).toPrimitives(), revision: snapshot.revision,
+    cancellationOrder: async (orderId) => {
+      const original = originalOrders.get(orderId);
+      const [snapshot] = await edits.find([orderId]);
+      return original && snapshot ? {
+        order: PurchaseOrder.create(original).withEditedLines(snapshot, true).toPrimitives(), revision: snapshot.revision,
         legacyVersion, amountInWords: null, supplierRevision: 0, stale: false,
       } : null;
     },
@@ -94,6 +96,7 @@ function localReceipts(connect: PostgresConnectionFactory, pieceReferences?: Pur
     current: PurchaseOrderProps, revision: number, receivedAt: string, requestKey: string,
     pepsLayer?: PurchaseReceptionPosting['lines'][number]['pepsLayer'],
   ) => {
+    if (!originalOrders.has(current.id)) originalOrders.set(current.id, current);
     const { id: orderLineId, price } = current.lines[0]!;
     const lines = [{ orderLineId, quantity: 2 }];
     const subtotal = 2 * price;
@@ -348,18 +351,6 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
       { ...originalLayer, id: lotId, document: first.reception.number, initial: 2, available: 2, layerOrder: 1, cost: 50, adValorem: 0 },
       { ...nextLayer, id: otherLotId, document: second.reception.number, initial: 2, available: 2, layerOrder: 2, cost: 80, adValorem: 0 },
     ]);
-    const beforeTransfer = await readLayers();
-    const transfer = await inventory.create({
-      requestKey: crypto.randomUUID(), type: 'TR', date: '2025-12-04', warehouse: '01', destinationWarehouse: '12',
-      lines: [{ productId, quantity: 1 }],
-    });
-    expect(transfer.lines).toMatchObject([
-      { warehouse: '01', quantity: -1, cost: 65, lotId: 0 },
-      { warehouse: '12', quantity: 1, cost: 65, lotId: 0 },
-    ]);
-    await inventory.cancel(transfer.header.id);
-    expect(await readLayers()).toEqual(beforeTransfer);
-    expect(await readCost()).toEqual({ average: 65, last: 80, adValorem: 0 });
     expect(await cancel.prepare(1, first.reception.id)).toMatchObject({ canWrite: true, amount: 116 });
     const exit = await inventory.create({ requestKey: crypto.randomUUID(), type: 'SI', date: '2025-12-04', warehouse: '01',
       lines: [{ productId, quantity: 2 }] });
@@ -399,6 +390,25 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
     expect((await db.query(`SELECT id::float8,cancelled FROM (${payables}) t ORDER BY id`)).rows).toEqual([
       { id: first.reception.id, cancelled: true }, { id: second.reception.id, cancelled: false },
     ]);
+    const beforeTransfer = await readLayers();
+    expect(await cancel.prepare(1, second.reception.id)).toMatchObject({ canWrite: true });
+    const transfer = await inventory.create({
+      requestKey: crypto.randomUUID(), type: 'TR', date: '2025-12-06', warehouse: '01', destinationWarehouse: '12',
+      lines: [{ productId, quantity: 1 }],
+    });
+    expect(transfer.lines).toMatchObject([
+      { warehouse: '01', quantity: -1, cost: 65, lotId: 0 },
+      { warehouse: '12', quantity: 1, cost: 65, lotId: 0 },
+    ]);
+    expect(await readLayers()).toEqual(beforeTransfer);
+    await inventory.cancel(transfer.header.id);
+    expect(await readLayers()).toMatchObject([
+      { id: lotId, available: 0 },
+      { id: otherLotId, initial: 2, available: 1, layerOrder: 2 },
+      { document: transfer.header.document, warehouse: '12', initial: 1, available: 1, cost: 80, layerOrder: 4 },
+    ]);
+    expect(await readCost()).toEqual({ average: 65, last: 80, adValorem: 0 });
+    expect(await cancel.prepare(1, second.reception.id)).toMatchObject({ canWrite: false, reason: expect.stringContaining('ya se utilizó') });
     const nextExit = await inventory.create({ requestKey: crypto.randomUUID(), type: 'SI', date: '2025-12-06', warehouse: '01',
       lines: [{ productId, quantity: 1 }] });
     expect(nextExit.lines).toMatchObject([{ lotId: otherLotId, quantity: -1, cost: 65 }]);

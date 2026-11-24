@@ -5,7 +5,7 @@ import request from 'supertest';
 import { afterAll, expect, it, vi } from 'vitest';
 import { env } from '../src/config/env.js';
 import { createMovementsModule } from '../src/modules/inventories/movements/movements-module.js';
-import { adjustmentLotState } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
+import { adjustmentLotState, inactivePepsOrder } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
 import { blankProduct } from '../src/modules/inventories/products/infrastructure/datasources/product-catalog-record.js';
 import { migratePostgresProductCatalog } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-catalog-schema.js';
 import { migrateProductOtherData } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-other-data-source.js';
@@ -33,7 +33,7 @@ vi.mock('../src/shared/infrastructure/database/postgres-pool.js', async (importO
 vi.mock('../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js', async (importOriginal) => ({
   ...await importOriginal<object>(),
   readLegacySaleStock: async (warehouse: string) => warehouse === '01'
-    ? new Map([[62835, { onHand: 5, assigned: 0 }]]) : new Map(),
+    ? new Map([[62835, { onHand: 5, assigned: 0 }], [62836, { onHand: 5, assigned: 0 }]]) : new Map(),
 }));
 
 vi.mock('../src/modules/inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js', () => ({
@@ -48,14 +48,15 @@ vi.mock('../src/modules/inventories/movements/infrastructure/datasources/mysql-i
     }
 
     async products(warehouse: string) {
+      const peps = {
+        description: 'Producto PEPS', unit: 'PZ', cost: 160, transferCost: 175.4321,
+        layerCost: 159.4801, adValorem: 0.5199, active: true, simple: false, peps: true, customsEntry: '123456789012345',
+        customsOffice: '240', importDate: '2024-12-26', legacyOnHand: warehouse === '01' ? 5 : 0, legacyAssigned: 0,
+      };
       return new Map([[13265, {
         id: 13265, code: '01300935', description: 'Prueba', unit: 'PZ', cost: 1.2345, transferCost: 2.3456,
         active: true, simple: true, legacyOnHand: 0, legacyAssigned: 0,
-      }], [62835, {
-        id: 62835, code: '01511263', description: 'Producto PEPS', unit: 'PZ', cost: 160, transferCost: 175.4321,
-        layerCost: 159.4801, adValorem: 0.5199, active: true, simple: false, peps: true, customsEntry: '123456789012345',
-        customsOffice: '240', importDate: '2024-12-26', legacyOnHand: warehouse === '01' ? 5 : 0, legacyAssigned: 0,
-      }]]);
+      }], [62835, { id: 62835, code: '01511263', ...peps }], [62836, { id: 62836, code: 'PEPS-SIN-CAPAS', ...peps }]]);
     }
 
     async documentExists(number: string) { return number === 'EI1000'; }
@@ -214,7 +215,7 @@ it('registra un TR con ambas partidas y solo lo cancela si hay existencia libre 
   await request(app).delete(`${route}/${initial.body.data.header.id}`).expect(204);
 }, 30000);
 
-it('traspasa un producto PEPS entre almacenes con la cola global disponible para despachar', async () => {
+it('conserva la cola PEPS al traspasar, la ajusta al cancelar y conserva el detalle original', async () => {
   const route = '/api/inventories/movements';
   const app = express().use(express.json()).use(route, createMovementsModule()).use(errorHandler);
   const productId = 62835;
@@ -241,10 +242,11 @@ it('traspasa un producto PEPS entre almacenes con la cola global disponible para
   }).expect(201);
   expect(issued.lines).toMatchObject([{ warehouse: '12', lotWarehouse: '11', lotId: 17836, quantity: -1 }]);
   expect((await request(app).get(movePath).expect(200)).body.data.cancellationAvailable).toBe(false);
+  const layersBeforeRejection = await adjustmentLotState(productId, true);
   await request(app).delete(movePath).expect(409);
+  expect(await adjustmentLotState(productId, true)).toEqual(layersBeforeRejection);
   await request(app).delete(`${route}/${issued.header.id}`).expect(204);
   expect((await request(app).get(movePath).expect(200)).body.data.cancellationAvailable).toBe(true);
-  await request(app).delete(movePath).expect(204);
   await request(app).delete(movePath).expect(204);
   const { rows } = await db.query(`SELECT warehouse,reversal,quantity::float8 FROM tuvansa.inventory_adjustment_stock
      WHERE adjustment_id=$1 ORDER BY reversal,warehouse`, [moved.header.id]);
@@ -252,12 +254,60 @@ it('traspasa un producto PEPS entre almacenes con la cola global disponible para
     { warehouse: '01', reversal: false, quantity: -2 }, { warehouse: '12', reversal: false, quantity: 2 },
     { warehouse: '01', reversal: true, quantity: 2 }, { warehouse: '12', reversal: true, quantity: -2 },
   ]);
-  expect((await request(app).get(movePath).expect(200)).body.data.lines).toMatchObject([
-    { warehouse: '01', type: 'K', lotId: 0, quantity: 0 }, { warehouse: '12', type: 'K', lotId: 0, quantity: 0 },
+  const reversedLayers = await adjustmentLotState(productId, true);
+  const reversalLayer = reversedLayers.local.find(({ document }) => document === moved.header.document)!;
+  expect(reversalLayer).toMatchObject({
+    warehouse: '12', initial: 2, available: 2, layerOrder: (openingLayers.orders.get(17836) ?? 1) + 1,
+    cost: 159.4801, adValorem: 0.5199,
+    customsEntry: '123456789012345', customsOffice: '240', date: '2024-12-26',
+  });
+  expect(reversedLayers.deltas.get(17836)).toBe((openingLayers.deltas.get(17836) ?? 0) - 2);
+  expect(reversedLayers.deltas.get(reversalLayer.id)).toBe(2);
+  const canceled = await request(app).get(movePath).expect(200);
+  expect(canceled.body.data).toMatchObject({ cancellationAvailable: false, totals: { cost: 0, quantity: 0 } });
+  expect(canceled.body.data.lines).toMatchObject([
+    { id: moved.lines[0].id, warehouse: '01', type: 'K', lotId: reversalLayer.id, lotWarehouse: '12', quantity: 0, cost: 0 },
+    { id: moved.lines[1].id, warehouse: '12', type: 'K', lotId: 17836, lotWarehouse: '11', quantity: 0, cost: 0 },
   ]);
-  const { local, orders, deltas } = await adjustmentLotState(productId, true);
-  expect({ local, orders }).toEqual({ local: openingLayers.local, orders: openingLayers.orders });
-  expect(deltas.get(17836) ?? 0).toBe(openingLayers.deltas.get(17836) ?? 0);
+  await request(app).delete(movePath).expect(204);
+  expect(await adjustmentLotState(productId, true)).toEqual(reversedLayers);
+  expect((await request(app).get(movePath).expect(200)).body).toEqual(canceled.body);
+  expect((await request(app).post(route).send(transfer).expect(201)).body.data).toEqual(moved);
+}, 30000);
+
+it('divide la partida K al consumir varias capas e inactiva una capa con saldo neto cero', async () => {
+  const route = '/api/inventories/movements';
+  const app = express().use(express.json()).use(route, createMovementsModule()).use(errorHandler);
+  const productId = 62836;
+  const base = { date: '2026-11-24', warehouse: '01', lines: [{ productId, quantity: 1 }] };
+  const transfer = { ...base, type: 'TR', destinationWarehouse: '12' };
+  const first = (await request(app).post(route).send({ ...transfer, requestKey: randomUUID() }).expect(201)).body.data;
+  await request(app).delete(`${route}/${first.header.id}`).expect(204);
+  const emptyQueue = await adjustmentLotState(productId, true);
+  expect(emptyQueue.deltas.size).toBe(0);
+  expect(emptyQueue.local).toMatchObject([{
+    document: first.header.document, initial: 1, available: 0, layerOrder: inactivePepsOrder,
+  }]);
+
+  const entry = (await request(app).post(route).send({ ...base, type: 'EI', requestKey: randomUUID() }).expect(201)).body.data;
+  const earlierLayer = entry.lines[0].lotId;
+  const second = (await request(app).post(route).send({
+    ...transfer, requestKey: randomUUID(), lines: [{ productId, quantity: 2 }],
+  }).expect(201)).body.data;
+  const path = `${route}/${second.header.id}`;
+  await request(app).delete(path).expect(204);
+  const state = await adjustmentLotState(productId, true);
+  const newLayer = state.local.find(({ document }) => document === second.header.document)!;
+  expect(state.orders.get(earlierLayer)).toBe(inactivePepsOrder);
+  expect(state.deltas.get(earlierLayer)).toBe(0);
+  expect(newLayer).toMatchObject({ warehouse: '12', initial: 2, available: 1, layerOrder: 2 });
+  const { lines } = (await request(app).get(path).expect(200)).body.data;
+  expect(lines).toMatchObject([
+    { id: second.lines[0].id, warehouse: '01', type: 'K', lotId: newLayer.id, lotWarehouse: '12', quantity: 0, cost: 0 },
+    { id: second.lines[1].id, warehouse: '12', type: 'K', lotId: earlierLayer, lotWarehouse: '01', quantity: 0, cost: 0 },
+    { warehouse: '12', type: 'K', lotId: newLayer.id, lotWarehouse: '12', quantity: 0, cost: 0 },
+  ]);
+  expect(lines[2].id).toBeGreaterThan(lines[1].id);
 }, 30000);
 
 it('habilita el producto web desde Otros y respeta almacén, paginación y filtro XXX en su Auxiliar', async () => {

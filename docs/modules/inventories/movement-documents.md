@@ -183,9 +183,22 @@ deltas inversos, conserva el detalle original y muestra las partidas `K` con
 el mismo folio. El registro y la cancelación bloquean ambos almacenes en el
 mismo orden y se aplican en una sola transacción de PostgreSQL.
 
-La cancelación web invierte los asientos por almacén del TR original y
-conserva la cola PEPS. En German, `MFACT/112` llama a `MCPAR03/21` con
-las capas habilitadas al invertir las partidas.
+Al cancelar un TR con PEPS global activo, la entrada de la reversión crea
+una capa con el folio y el almacén de destino del TR. La salida descuenta
+de la cola global en orden PEPS. Las partidas `K` conservan las referencias
+a las capas afectadas y la salida usa una partida por capa si necesita
+varias. El alta original queda guardada con sus cantidades y costos.
+La lógica deriva de `MFACT/112` y `MCPAR03/21, /28, /33, /37`.
+
+| Vista | Botón | Endpoint | Evidencia | Tablas |
+| --- | --- | --- | --- | --- |
+| Inventarios → Documentos | Cancelar | `DELETE /api/inventories/movements/:id` | `tr-sistemas-cancelado.json` y procedimientos de German | `FAXINV`, `FALM`, `FLOTES` en German. `inventory_adjustments`, `inventory_adjustment_stock`, `inventory_adjustment_layers` e `inventory_adjustment_layer_stock` en PostgreSQL |
+
+La reversión bloquea los almacenes y la cola PEPS de cada producto.
+Existencias, capas y partidas `K` se guardan juntas. Repetir el DELETE
+responde `204` y conserva el resultado de la primera cancelación.
+Si se consume una capa de recepción, la recepción requiere recuperar el
+saldo de esa misma capa para poder cancelarse.
 
 ### Prueba nativa de un traspaso PEPS global
 
@@ -206,8 +219,7 @@ de la capa anterior `17836` de `RA09139`. Los dos renglones de
 `FAXINV` quedaron con tipo `K`, cantidad y costo cero, y referencias a
 las capas `18118` (almacén de la partida 01) y `17836` (partida 12).
 El total del producto y el saldo global de las capas quedaron en cinco
-unidades. El encabezado conservó `DCANCELADA=0`. El efecto de la
-cancelación sobre las capas queda pendiente en la web.
+unidades. El encabezado conservó `DCANCELADA=0`.
 
 Evidencia local: `tr-sistemas-antes.json`, `tr-sistemas-registrado.json`,
 `tr-sistemas-cancelado.json`, `20261124-tr-sistemas-registrado.png` y
@@ -215,8 +227,10 @@ Evidencia local: `tr-sistemas-antes.json`, `tr-sistemas-registrado.json`,
 `20261124-native-transfer-tr-user-blocked.png` registra el rechazo de
 `TR` al probar con el perfil anterior.
 
-La prueba web en PostgreSQL movió dos unidades del almacén 01 al 12
-mediante `TRW00000017`. Una salida de una unidad desde el 12 usó la capa
-histórica del producto y bloqueó la cancelación del TR por existencia
-libre insuficiente. Después de revertir la salida, se canceló el TR y
-los saldos regresaron a 5 y 0 con la misma cola PEPS.
+Las pruebas web verifican el bloqueo por existencia libre insuficiente
+en el destino, el ajuste de capas después de recuperar esa existencia,
+la cancelación que consume varias capas y la respuesta a un DELETE repetido.
+En PostgreSQL de pruebas, `TRW00000019` regresó las existencias de 01 y 12
+de 4 y 1 a 5 y 0, consumió una unidad de la capa que encabezaba la cola
+en ese momento y creó otra en el 12. Dos DELETE simultáneos devolvieron
+`204` y aplicaron una sola reversión. Se retiró el folio temporal al terminar.

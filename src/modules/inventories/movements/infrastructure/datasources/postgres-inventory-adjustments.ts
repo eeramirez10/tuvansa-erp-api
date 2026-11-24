@@ -124,6 +124,45 @@ function adjustmentCost(value: number, product: AdjustmentProduct) {
 
 type CaptureLine = Omit<MovementLine, 'id'>;
 
+async function loadPepsValuation(client: PostgresClient, ids: number[], products: Map<number, AdjustmentProduct>) {
+  for (const [productId, snapshot] of await inventoryPepsCostsOn(client, ids)) {
+    const product = products.get(productId)!;
+    const valuation = effectivePepsCost({
+      average: Number((Number(product.transferCost) - Number(product.adValorem)).toFixed(4)),
+      last: Number(product.layerCost), adValorem: Number(product.adValorem),
+    }, snapshot);
+    product.cost = valuation.last + valuation.adValorem;
+    product.transferCost = valuation.average + valuation.adValorem;
+    product.layerCost = valuation.last;
+    product.adValorem = valuation.adValorem;
+    const customs = effectivePepsCustoms({
+      customsEntry: product.customsEntry ?? '', customsOffice: product.customsOffice ?? '', date: product.importDate ?? null,
+    }, snapshot);
+    product.customsEntry = customs.customsEntry;
+    product.customsOffice = customs.customsOffice;
+    product.importDate = customs.date;
+  }
+}
+
+function pepsEntryData(
+  product: AdjustmentProduct, warehouse: string, document: string, quantity: number, layerOrder: number,
+) {
+  // MCPAR03/28 y /51. Con el encabezado de pedimento vacío, la capa toma los datos de FINV.
+  return {
+    productId: product.id, warehouse, document, initial: quantity, layerOrder, date: product.importDate ?? null,
+    cost: adjustmentCost(product.layerCost!, product), adValorem: adjustmentCost(product.adValorem!, product),
+    customsEntry: product.customsEntry ?? '', customsOffice: product.customsOffice ?? '',
+  };
+}
+
+async function assignMovementLineIds(client: PostgresClient, lines: CaptureLine[]): Promise<MovementLine[]> {
+  if (!lines.length) return [];
+  const { rows } = await client.query<{ id: string }>(
+    "SELECT nextval('tuvansa.inventory_adjustment_line_ids') AS id FROM generate_series(1,$1::int)", [lines.length],
+  );
+  return lines.map((line, index) => ({ ...line, id: Number(rows[index]!.id) }));
+}
+
 function allocatePepsExit(
   line: CaptureLine, product: AdjustmentProduct, layers: AdjustmentLayer[], queueChanges: Map<number, number>,
 ): CaptureLine[] {
@@ -139,7 +178,10 @@ function allocatePepsExit(
     allocated.push({ ...line, quantity: -quantity, lotId: layer.id, lotWarehouse: layer.warehouse,
       ...(layer.customsEntry ? { customsEntry: layer.customsEntry } : {}) });
     layer.available = scaledLayerStock(layer.available - quantity);
-    if (layer.available === 0) queueChanges.set(layer.id, inactivePepsOrder);
+    if (layer.available === 0) {
+      layer.layerOrder = inactivePepsOrder;
+      queueChanges.set(layer.id, inactivePepsOrder);
+    }
     remaining = scaledStock(remaining - quantity);
   }
   if (remaining > 0) throw insufficientLayer(product.code, line.warehouse);
@@ -244,23 +286,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       const products = await loadCatalogProducts(client, productIds, await this.references.products(warehouse, productIds));
       const pepsProducts = new Set(productIds.filter((id) => capture.automaticPeps && products.get(id)?.peps));
       await lockPepsProducts(client, [...pepsProducts]);
-      for (const [productId, snapshot] of await inventoryPepsCostsOn(client, [...pepsProducts])) {
-        const product = products.get(productId)!;
-        const valuation = effectivePepsCost({
-          average: Number((Number(product.transferCost) - Number(product.adValorem)).toFixed(4)),
-          last: Number(product.layerCost), adValorem: Number(product.adValorem),
-        }, snapshot);
-        product.cost = valuation.last + valuation.adValorem;
-        product.transferCost = valuation.average + valuation.adValorem;
-        product.layerCost = valuation.last;
-        product.adValorem = valuation.adValorem;
-        const customs = effectivePepsCustoms({
-          customsEntry: product.customsEntry ?? '', customsOffice: product.customsOffice ?? '', date: product.importDate ?? null,
-        }, snapshot);
-        product.customsEntry = customs.customsEntry;
-        product.customsOffice = customs.customsOffice;
-        product.importDate = customs.date;
-      }
+      await loadPepsValuation(client, [...pepsProducts], products);
       const sourceLines = lines.map(({ productId, quantity, cost }) => {
         const product = products.get(productId);
         if (!product) throw new NotFoundError('Producto de inventario');
@@ -305,16 +331,13 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         : sourceLines;
       const signedLines = destinationWarehouse ? postedLines.flatMap((line) => [line,
         { ...line, quantity: -line.quantity, warehouse: destinationWarehouse }]) : postedLines;
-      const { rows: ids } = await client.query<{ id: string }>(
-        "SELECT nextval('tuvansa.inventory_adjustment_line_ids') AS id FROM generate_series(1,$1::int)", [signedLines.length],
-      );
       const saved: MovementDocument = {
         header: {
           id, document: number, date, reference: reference ?? '', reference2: destinationWarehouse ? warehouse : '',
           warehouse: destinationWarehouse ?? warehouse, supplierCode: '', customerCode: '',
           customerName: '', type, status: 0, company: 1, userId: 0, inventoryFlag: 1, billingFlag: 0,
         },
-        lines: signedLines.map((line, index) => ({ ...line, id: Number(ids[index]!.id) })),
+        lines: await assignMovementLineIds(client, signedLines),
         totals: {
           quantity: scaledStock(signedLines.reduce((sum, line) => sum + line.quantity, 0)),
           cost: movementCost(postedLines, movement.sign),
@@ -349,14 +372,9 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         result.push(...allocatePepsExit(line, product, queue, queueChanges));
         continue;
       }
-      // MCPAR03/28 y /51. Con el encabezado de pedimento vacío, la capa toma los datos de FINV.
       const layerOrder = newOrders.get(product.id) ?? nextPepsOrder(queue);
       newOrders.set(product.id, Math.min(layerOrder + 1, 9999));
-      const lotId = await createAdjustmentLayer(client, {
-        productId: product.id, warehouse, date: product.importDate ?? null, document, initial: line.quantity,
-        cost: adjustmentCost(product.layerCost!, product), adValorem: adjustmentCost(product.adValorem!, product),
-        customsEntry: product.customsEntry ?? '', customsOffice: product.customsOffice ?? '', layerOrder,
-      });
+      const lotId = await createAdjustmentLayer(client, pepsEntryData(product, warehouse, document, line.quantity, layerOrder));
       result.push({ ...line, lotId });
     }
     return result;
@@ -377,7 +395,8 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
     const grouped = byWarehouse(movement.lines);
     if (lock) {
       for (const { warehouse, deltas } of grouped) await lockWarehouseStock(client, warehouse, [...deltas.keys()]);
-      await lockPepsProducts(client, movement.lines.filter(({ lotId }) => lotId > 0).map(({ productId }) => productId));
+      const layered = movement.lines.filter(({ lotId }) => movement.header.type === 'TR' || lotId > 0);
+      await lockPepsProducts(client, layered.map(({ productId }) => productId));
     }
     for (const { warehouse, deltas } of grouped) {
       const outgoing = [...deltas].filter(([, quantity]) => quantity > 0);
@@ -426,6 +445,57 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
     return queueChanges;
   }
 
+  private async transferCancellationLines(
+    client: PostgresClient, original: MovementDocument, queueChanges: Map<number, number>,
+  ): Promise<MovementLine[]> {
+    if (original.header.type !== 'TR' || !(await this.references.capture()).automaticPeps) return original.lines;
+
+    const { document, warehouse, reference2: origin } = original.header;
+    const ids = [...new Set(original.lines.filter(({ lotId }) => !lotId).map(({ productId }) => productId))];
+    if (!ids.length) return original.lines;
+    const products = await loadCatalogProducts(client, ids, await this.references.products(origin, ids));
+    const layered = ids.filter((id) => products.get(id)?.peps);
+    if (!layered.length) return original.lines;
+    await loadPepsValuation(client, layered, products);
+    const queues = groupPepsLayers(await currentAdjustmentLayers(client, layered, await this.references.layers(layered)));
+    const created: AdjustmentLayer[] = [];
+    const lines: MovementLine[] = [];
+    const splits: CaptureLine[] = [];
+
+    // MFACT/112 invierte las partidas en su orden original. MCPAR03/28 usa el almacén del folio.
+    for (const line of original.lines) {
+      const product = products.get(line.productId);
+      if (line.lotId || !product?.peps) {
+        lines.push(line);
+        continue;
+      }
+      const queue = queues.get(product.id) ?? [];
+      if (line.quantity < 0) {
+        const data = pepsEntryData(product, warehouse, document, -line.quantity, nextPepsOrder(queue));
+        const id = await createAdjustmentLayer(client, data);
+        const layer = { ...data, id, available: data.initial, expiresAt: null, lot: '', number: '', location: '' };
+        queue.push(layer);
+        queues.set(product.id, queue);
+        created.push(layer);
+        lines.push({ ...line, lotId: id, lotWarehouse: warehouse });
+      } else {
+        // La asignación usa el signo de la reversión. El diario recibe el signo original.
+        const allocations = allocatePepsExit({ ...line, quantity: -line.quantity }, product, queue, queueChanges)
+          .map((allocation) => ({ ...allocation, quantity: -allocation.quantity }));
+        const [first, ...rest] = allocations;
+        lines.push({ ...first!, id: line.id });
+        splits.push(...rest);
+      }
+    }
+    // Una capa creada y agotada en la misma reversión tiene saldo neto cero en el diario.
+    const exhausted = created.filter(({ available }) => available === 0).map(({ id }) => id);
+    if (exhausted.length) {
+      await client.query('UPDATE tuvansa.inventory_adjustment_layers SET layer_order=$1 WHERE id=ANY($2::bigint[])',
+        [inactivePepsOrder, exhausted]);
+    }
+    return [...lines, ...await assignMovementLineIds(client, splits)];
+  }
+
   async cancel(id: number): Promise<void> {
     await this.transaction(async (client) => {
       const { rows: [saved] } = await client.query<{ original: MovementDocument; canceled: boolean }>(
@@ -437,11 +507,12 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       const { original } = saved;
       await this.checkCancellationStock(client, original, true);
       const queueChanges = await this.pepsCancellationOrder(client, original);
+      const lines = await this.transferCancellationLines(client, original, queueChanges);
       await writeDeltas(client, original, true);
-      await writeLayerStock(client, 'adjustment_id', original.header.id, original.lines, true, queueChanges);
+      await writeLayerStock(client, 'adjustment_id', original.header.id, lines, true, queueChanges);
       const canceled: MovementDocument = {
         ...original,
-        lines: original.lines.map((line) => ({ ...line, type: 'K', quantity: 0, cost: 0, pieces: 0, piecesText: '' })),
+        lines: lines.map((line) => ({ ...line, type: 'K', quantity: 0, cost: 0, pieces: 0, piecesText: '' })),
         totals: { quantity: 0, cost: 0 },
       };
       await client.query('UPDATE tuvansa.inventory_adjustments SET movement=$2::jsonb,canceled_at=now() WHERE id=$1', [id, JSON.stringify(canceled)]);

@@ -4,6 +4,7 @@ import { NotFoundError } from '../../../../../shared/domain/errors/not-found-err
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { isLocalPurchaseOrderId } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrdersRepository } from '../../domain/repositories/purchase-orders-repository.js';
+import { purchaseLabelProductFields, readPurchaseLabelProducts } from '../../../shared/mysql-purchase-label-products.js';
 
 interface AddressRow extends RowDataPacket {
   name?: string; taxId?: string; street?: string; number?: string; neighborhood?: string;
@@ -12,10 +13,6 @@ interface AddressRow extends RowDataPacket {
 interface MovementRow extends RowDataPacket { format: string; adHoc: number; }
 interface ProductRow extends RowDataPacket { id: number; weight: number; vatCode: number; currencyId: number; }
 interface OperatorRow extends RowDataPacket { requested?: string; approved?: string; }
-interface LabelProductRow extends RowDataPacket {
-  id: number; extendedDescription: string; secondDescription: string; ean: string; upc: string; location: string;
-}
-
 const clean = (display: unknown) => typeof display === 'string' ? display.trim() : '';
 const money = (value: number) => Number(value.toFixed(2));
 const address = (row?: AddressRow) => row ? {
@@ -34,23 +31,10 @@ export class MysqlPurchaseOrderPrintReferences {
     if (!found) throw new NotFoundError('Orden de compra');
     const order = found.toPrimitives();
     const lines = order.lines.filter(({ assigned, productId }) => assigned > 0 && productId > 0);
-    if (!lines.length) return { lines: [] };
-    const ids = [...new Set(lines.map(({ productId }) => productId))];
-    const [rows] = await legacyMysqlPool.execute<LabelProductRow[]>(
-      `SELECT FINV.ISEQ AS id, FINV.IEAN AS ean, FINV.IUPC AS upc, FINV.ILOCALIZ AS location,
-        FINV2.I2DESCR AS extendedDescription, FINV2.I2DESCR2 AS secondDescription
-       FROM FINV LEFT JOIN FINV2 ON FINV2.I2KEY=FINV.ISEQ
-       WHERE FINV.ISEQ IN (${ids.map(() => '?').join(',')})`, ids,
-    );
-    const details = new Map(rows.map((row) => [row.id, row]));
-    return { lines: lines.map(({ id: lineId, productId, assigned, productCode, description }) => {
-      const row = details.get(productId);
-      return {
-        lineId, assigned, productCode, description,
-        extendedDescription: clean(row?.extendedDescription), secondDescription: clean(row?.secondDescription),
-        ean: clean(row?.ean), upc: clean(row?.upc), location: clean(row?.location),
-      };
-    }) };
+    const products = await readPurchaseLabelProducts(lines.map(({ productId }) => productId));
+    return { lines: lines.map(({ id: lineId, productId, assigned, productCode, description }) => ({
+      lineId, assigned, productCode, description, ...purchaseLabelProductFields(products.get(productId)),
+    })) };
   }
 
   async execute(id: number, confirmed: boolean) {

@@ -191,10 +191,30 @@ por pago PP y RA09280 el bloqueo por existencia insuficiente.
 | Boton OMNIS | Endpoint | Fuente real |
 |---|---|---|
 | Auxiliar | `GET /:id/actions/auxiliary` | `FAX LEFT JOIN FDOC`, por `DSEQ`, orden `ASEQ` |
-| Clasificar | `GET /:id/actions/classifications` | `DPAR1..DPAR9`; catalogos `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)` |
+| Clasificar | `GET /:id/actions/classifications` | `DPAR1..DPAR9`; catálogo `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)`, orden `AGNUM`. Rótulos de `FYG.ABITITPAR2` con respaldo de `FCIA.CIAPAR1..9`. |
+| Clasificar → Guardar | `PATCH /:id/actions/classifications` | PostgreSQL `tuvansa.purchase_reception_classifications` y `tuvansa.purchase_reception_comments` para el flete. |
 | Piezas | `GET /:id/actions/pieces` | Derivada de `EINV#28D/240`. Consulta `FCAJAS.CAJRECEPCION` por folio exacto y agrega las piezas y series guardadas en PostgreSQL |
 
-El modal **Auxiliar del documento** presenta Fecha, T.M., Referencia, Cargos y Abonos, mas el total inferior. **Clasificar** presenta nueve clasificadores y conserva `Guardar` deshabilitado en el frontend.
+El modal **Auxiliar del documento** presenta Fecha, T.M., Referencia, Cargos y Abonos, más el total inferior.
+
+### Clasificar y guardar
+
+En German, `ERECEPC#13/24` abre **Clasificadores** (`ERECEP#19`).
+`/0` carga los rótulos con `MBASE/91` y `MEMTIPOPAR=2`. `/239–240`
+ordena las opciones de `FAG` por `AGNUM` y selecciona el `AGTNUM`
+vigente. **Guardar** pasa por `INICIO/30` con `ERECEP#19/19` y
+actualiza los nueve `DPAR` de `FDOC` con `MBASE/77` y `/69`.
+La ventana también abrió en la recepción cancelada `RA09189`.
+Evidencia `20261124-ERECEP19-FIELDS-PROCEDURES.txt` y
+`bank-inline-receipt-secondary-07.png`.
+
+El PATCH recibe los nueve valores `current` y la `revision` del GET.
+Los cambios aceptan un `AGTNUM` de su propio grupo o un valor vacío.
+El editor permite conservar códigos históricos fuera del catálogo.
+La revisión evita sobrescribir una clasificación o flete modificados desde otra ventana.
+La persistencia derivada guarda únicamente las modificaciones y aplica la
+misma referencia de flete en **Comentarios**, **Clasificar** y la ficha.
+Los accesos individuales al cuadro quedan en la sesión de Omnis.
 
 ## Piezas en una recepción
 
@@ -290,9 +310,22 @@ La cancelación revierte el movimiento, la póliza y la orden de origen.
 El movimiento K de Cuentas por Pagar se registra con el proveedor vigente.
 La revisión protege cambios simultáneos y permite regresar al proveedor original.
 
+## Etiquetas
+
+**Etiquetas** consulta `GET /:id/actions/labels`, que devuelve los formatos
+A–F configurados en `FYG.PCL_Z201_BI*` y las partidas con cantidad facturada
+positiva. `ERECEPC#13/26` usa `ECPAETIEAN/151(2,#SHIFT)` cuando está activo
+`CIACOMPORTA[74]`. `ECPAETIEAN/153` carga cada partida por `FAXINV.AISEQ`
+y toma `AICANTF` para las copias. La captura del selector del documento
+`RA09214` confirmó el formato A por defecto.
+
+La vista previa web usa el formato elegido y las referencias de producto
+de `FINV` y `FINV2`. Redondea a copias enteras y usa la partida enfocada
+si se abre con **Mayús**. **Imprimir** abre la impresión del navegador.
+
 ## Botones conservados sin mutacion
 
-La vista conserva Etiquetas, Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
+La vista conserva Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
 
 Estas acciones secundarias se muestran con un aviso de sólo lectura.
 

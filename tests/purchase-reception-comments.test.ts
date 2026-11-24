@@ -7,6 +7,7 @@ import type { LegacyMysqlPurchaseReceptionsDataSource } from '../src/modules/pur
 import { MysqlPurchaseReceptionCommentsSource } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/mysql-purchase-reception-comments-source.js';
 import { localPurchasePayablesSql } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { PostgresPurchaseReceptionComments } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-comments.js';
+import { PostgresPurchaseReceptionClassifications } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-classifications.js';
 import { ensurePurchaseReceptionSchema } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 import * as postgres from '../src/shared/infrastructure/database/postgres-pool.js';
@@ -45,6 +46,56 @@ it('uses the exact FDOC.DSEQ for FCOMENT and converts native line and date forma
     expect(database).toHaveBeenCalledTimes(1);
   } finally { database.mockRestore(); }
 });
+
+it('shares the transport classifier with Comentarios, validates group membership and rejects obsolete revisions', async () => {
+  const db = new PGlite();
+  const connect = async (): Promise<postgres.PostgresClient> => ({
+    query: (sql, values) => db.query(sql, values),
+    release: () => undefined,
+  });
+  const source = {
+    findById: async () => PurchaseReception.create(reception),
+    classificationCatalog: async () => ({
+      labels: ['', '', '', '', '', '', 'FLETE', 'TIPO DE PROVEE', 'PROYECTO'],
+      items: [
+        { classifier: 7, code: '01', description: 'Transporte', compositeCode: '701' },
+        { classifier: 8, code: '01', description: 'Proveedor', compositeCode: '801' },
+      ],
+    }),
+  };
+  const comments = new PostgresPurchaseReceptionComments({
+    read: async () => ({
+      reception: { id, number: reception.number, supplierCode: 'P200' }, supplierId: 200, fields, reason: null,
+    }),
+    labels: async () => ['', '', '', '', ''],
+    transportName: async (code) => code === '701' ? 'Transporte' : '',
+  }, connect, () => true);
+  const classifications = new PostgresPurchaseReceptionClassifications(source, connect, () => true);
+  try {
+    const original = (await classifications.read(id))!.summary;
+    const openingComment = (await comments.read(1, id))!;
+    const invalid = [...original.current];
+    invalid[8] = '701';
+    await expect(classifications.save(id, { current: invalid, revision: original.revision }))
+      .rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_CLASSIFICATION_INVALID' });
+
+    const current = [...original.current];
+    current[6] = '701';
+    current[7] = '801';
+    const saved = await classifications.save(id, { current, revision: original.revision });
+    expect(saved.summary.current).toEqual(current);
+    expect(await comments.read(1, id)).toMatchObject({ fields: { transportCode: '701' }, transportName: 'Transporte' });
+    await expect(comments.save(1, id, openingComment)).rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_COMMENTS_CONFLICT' });
+
+    const latest = (await comments.read(1, id))!;
+    await comments.save(1, id, { ...latest, fields: { ...latest.fields, transportCode: '' } });
+    await expect(classifications.save(id, saved.summary)).rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_CLASSIFICATIONS_STALE' });
+    expect((await classifications.read(id))?.summary.current).toEqual(['', '', '', '', '', '', '', '801', '']);
+    expect(reception.classifications[6]).toBe('7');
+  } finally {
+    await db.close();
+  }
+}, 30000);
 
 it('edits the native comments as metadata without changing the receipt source', async () => {
   const db = new PGlite();

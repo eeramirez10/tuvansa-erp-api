@@ -37,8 +37,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const writeReceptionPiece = env.NEON_DATABASE_URL !== '' &&
     ((['POST', 'PATCH'].includes(req.method) && /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/pieces\/lines\/[1-9]\d*$/.test(path)) ||
       (req.method === 'PATCH' && /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/pieces\/[1-9]\d*\/serial$/.test(path)));
-  const editReceptionComments = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
-    /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/(comments|change-supplier)$/.test(path);
+  const editReception = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
+    /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/(classifications|comments|change-supplier)$/.test(path);
   const documentReception = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/document$/.test(path);
   const createSupplierPayment = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
@@ -74,6 +74,6 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     ((req.method === 'POST' && (path === '/accounting/policies' ||
        /^\/accounting\/policies\/[1-9]\d*\/actions\/(apply|unapply)$/.test(path))) ||
      (['PATCH','DELETE'].includes(req.method) && /^\/accounting\/policies\/[1-9]\d*$/.test(path)));
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeReceptionPiece || editReceptionComments || documentReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeReceptionPiece || editReception || documentReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

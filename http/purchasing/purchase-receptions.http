@@ -176,6 +176,19 @@ Content-Type: application/json
 ### Entrada de Inventarios
 GET {{baseUrl}}/inventories/movements/{{receptionId}}
 
+### Consultar el catálogo y revisión de Clasificar
+GET {{baseUrl}}/purchasing/purchase-receptions/{{historicalReceptionId}}/actions/classifications
+
+### Guardar la clasificación de la recepción en PostgreSQL de pruebas
+# Copia la revisión y los nueve códigos del GET. Cambia el valor del grupo que corresponda.
+PATCH {{baseUrl}}/purchasing/purchase-receptions/{{historicalReceptionId}}/actions/classifications
+Content-Type: application/json
+
+{
+  "current": {{receiptClassifications}},
+  "revision": "{{receiptClassificationRevision}}"
+}
+
 ### Consultar elegibilidad de una RA histórica en la copia local
 GET {{baseUrl}}/purchasing/purchase-receptions/{{historicalReceptionId}}/actions/cancel-reception
 

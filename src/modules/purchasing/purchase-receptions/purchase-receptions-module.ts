@@ -15,11 +15,13 @@ import { ManagePurchaseReceptionDocumentation } from './application/use-cases/ma
 import { NavigatePurchaseReception } from './application/use-cases/navigate-purchase-reception.js';
 import { ReversePurchasePosting } from './application/use-cases/reverse-purchase-posting.js';
 import { SearchPurchaseReceptions } from './application/use-cases/search-purchase-receptions.js';
+import { UpdatePurchaseReceptionClassifications } from './application/use-cases/update-purchase-reception-classifications.js';
 import { LegacyMysqlPurchaseReceptionsDataSource } from './infrastructure/datasources/legacy-mysql-purchase-receptions-data-source.js';
 import { HybridPurchaseReceptionsDataSource } from './infrastructure/datasources/hybrid-purchase-receptions-data-source.js';
 import { MysqlHistoricalReceptionCancellationSource } from './infrastructure/datasources/mysql-historical-reception-cancellation-source.js';
 import { MysqlPostingReversalReferences } from './infrastructure/datasources/mysql-posting-reversal-references.js';
 import { MysqlPurchaseExpenseReferences } from './infrastructure/datasources/mysql-purchase-expense-references.js';
+import { MysqlPurchaseReceptionLabels } from './infrastructure/datasources/mysql-purchase-reception-labels.js';
 import { MysqlPurchaseReceptionPieceNativeSource } from './infrastructure/datasources/mysql-purchase-reception-piece-native-source.js';
 import { MysqlPurchaseReceptionCommentsSource } from './infrastructure/datasources/mysql-purchase-reception-comments-source.js';
 import { MysqlPurchaseReceptionWriteReferences } from './infrastructure/datasources/mysql-purchase-reception-write-references.js';
@@ -28,6 +30,7 @@ import { PostgresPurchaseReceptionCancellations } from './infrastructure/datasou
 import { PostgresPurchaseReceptionPieces } from './infrastructure/datasources/postgres-purchase-reception-pieces.js';
 import { PostgresPurchaseReceptionSupplierChanges } from './infrastructure/datasources/postgres-purchase-reception-supplier-changes.js';
 import { PostgresPurchaseReceptionComments } from './infrastructure/datasources/postgres-purchase-reception-comments.js';
+import { PostgresPurchaseReceptionClassifications } from './infrastructure/datasources/postgres-purchase-reception-classifications.js';
 import { PostgresPurchaseReceptionDocumentations } from './infrastructure/datasources/postgres-purchase-reception-documentations.js';
 import { PostgresPurchaseExpenses } from './infrastructure/datasources/postgres-purchase-expenses.js';
 import { PostgresPurchasePostingReversals } from './infrastructure/datasources/postgres-purchase-posting-reversals.js';
@@ -36,13 +39,16 @@ import { PurchaseReceptionsController } from './presentation/http/purchase-recep
 import { createPurchaseExpenseRouter } from './presentation/http/purchase-expense-routes.js';
 import { PurchaseReceptionPiecesController } from './presentation/http/purchase-reception-pieces-controller.js';
 import { PurchaseReceptionCommentsController } from './presentation/http/purchase-reception-comments-controller.js';
+import { PurchaseReceptionClassificationsController } from './presentation/http/purchase-reception-classifications-controller.js';
 import { PurchaseReceptionDocumentationController } from './presentation/http/purchase-reception-documentation-controller.js';
+import { PurchaseReceptionLabelsController } from './presentation/http/purchase-reception-labels-controller.js';
 import { PurchaseReceptionSupplierChangeController } from './presentation/http/purchase-reception-supplier-change-controller.js';
 import { createPurchaseReceptionsRouter } from './presentation/http/purchase-receptions-routes.js';
 
 export const createPurchaseReceptionsModule = (): Router => {
   const legacyReceptions = new LegacyMysqlPurchaseReceptionsDataSource();
-  const repository = new PurchaseReceptionsRepositoryImpl(new HybridPurchaseReceptionsDataSource(legacyReceptions));
+  const classificationStorage = new PostgresPurchaseReceptionClassifications(legacyReceptions);
+  const repository = new PurchaseReceptionsRepositoryImpl(new HybridPurchaseReceptionsDataSource(legacyReceptions, classificationStorage));
   const legacyOrders = new LegacyMysqlPurchaseOrdersDataSource();
   const edits = new PostgresPurchaseOrderEdits();
   const capture = new LegacyMysqlPurchaseOrderEditDataSource(legacyOrders);
@@ -76,5 +82,10 @@ export const createPurchaseReceptionsModule = (): Router => {
   const supplierChange = new PurchaseReceptionSupplierChangeController(
     new ChangePurchaseReceptionSupplier(new PostgresPurchaseReceptionSupplierChanges()),
   );
-  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces, comments, documentation, supplierChange);
+  const classifications = new PurchaseReceptionClassificationsController(new UpdatePurchaseReceptionClassifications(classificationStorage));
+  const labels = new PurchaseReceptionLabelsController(new MysqlPurchaseReceptionLabels(repository));
+  return createPurchaseReceptionsRouter(
+    controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces, comments,
+    documentation, supplierChange, classifications, labels,
+  );
 };

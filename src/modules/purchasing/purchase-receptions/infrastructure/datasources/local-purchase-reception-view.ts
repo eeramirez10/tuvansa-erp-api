@@ -1,7 +1,7 @@
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { PurchaseReceptionProps } from '../../domain/entities/purchase-reception.js';
 import {
-  expenseCancellationSql, readPurchaseDocuments, receiptCancellationSql, receiptDocumentationSql, type PurchaseDocumentTables,
+  expenseCancellationSql, purchaseDocumentTables, readPurchaseDocuments, receiptCancellationSql, receiptDocumentationSql, type PurchaseDocumentTables,
 } from './postgres-purchase-payables.js';
 
 export interface LocalReceptionViewRecord {
@@ -64,10 +64,21 @@ function expenseView(includeLines: boolean, withCancellations: boolean) {
 export function readLocalReceptionView<T>(
   fallback: T, includeLines: boolean, read: (client: PostgresClient, view: string) => Promise<T>,
 ) {
-  return readPurchaseDocuments(fallback, (client, tables: PurchaseDocumentTables) => {
-    const sources = [];
-    if (tables.receipts) sources.push(receiptView(tables.receiptCancellations, tables.documentations));
-    if (tables.expenses) sources.push(expenseView(includeLines, tables.expenseCancellations));
-    return read(client, sources.join(' UNION ALL '));
-  });
+  return readPurchaseDocuments(fallback, (client, tables) => read(client, localReceptionView(tables, includeLines)));
+}
+
+function localReceptionView(tables: PurchaseDocumentTables, includeLines: boolean) {
+  const sources = [];
+  if (tables.receipts) sources.push(receiptView(tables.receiptCancellations, tables.documentations));
+  if (tables.expenses) sources.push(expenseView(includeLines, tables.expenseCancellations));
+  return sources.join(' UNION ALL ');
+}
+
+export async function readLocalReceptionOn(client: PostgresClient, companyId: number, id: number) {
+  const view = localReceptionView(await purchaseDocumentTables(client), false);
+  if (!view) return null;
+  const { rows: [row] } = await client.query<Pick<LocalReceptionViewRecord, 'reception'>>(
+    `SELECT reception FROM (${view}) documents WHERE company_id=$1 AND id=$2`, [companyId, id],
+  );
+  return row?.reception ?? null;
 }

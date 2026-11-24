@@ -15,7 +15,7 @@ export interface PurchaseDocumentTables {
   supplierChanges: boolean;
 }
 
-async function purchaseDocumentTables(client: PostgresClient): Promise<PurchaseDocumentTables> {
+export async function purchaseDocumentTables(client: PostgresClient): Promise<PurchaseDocumentTables> {
   const { rows: [tables] } = await client.query<PurchaseDocumentTables>(
     `SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS receipts,
             to_regclass('tuvansa.purchase_expense_documents') IS NOT NULL AS expenses,

@@ -14,7 +14,7 @@ import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.j
 import { isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { lockPurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
 
-const migrations = [{ id: 'purchase_reception_comments', sql: `
+export const purchaseReceptionCommentsMigrations = [{ id: 'purchase_reception_comments', sql: `
   CREATE TABLE tuvansa.purchase_reception_comments (
     company_id integer NOT NULL CHECK(company_id=1),
     receipt_id bigint NOT NULL,
@@ -185,7 +185,7 @@ export class PostgresPurchaseReceptionComments implements PurchaseReceptionComme
 
   async save(companyId: number, receiptId: number, input: PurchaseReceptionCommentsInput) {
     if (!this.configured()) throw new ApplicationError(unavailable, 'PURCHASE_RECEPTION_COMMENTS_NOT_CONFIGURED', 503);
-    this.migration ??= this.using((client) => migratePostgres(client, migrations)).catch((error: unknown) => {
+    this.migration ??= this.using((client) => migratePostgres(client, purchaseReceptionCommentsMigrations)).catch((error: unknown) => {
       delete this.migration;
       throw error;
     });
@@ -220,6 +220,31 @@ export class PostgresPurchaseReceptionComments implements PurchaseReceptionComme
       }
     });
   }
+}
+
+type ReceiptIdentity = Pick<PurchaseReceptionProps, 'id' | 'number' | 'supplier'>;
+
+export async function readReceiptTransport(client: PostgresClient, companyId: number, receipt: ReceiptIdentity) {
+  const saved = await commentsOn(client, companyId, receipt.id);
+  if (matches(saved, receipt.number, receipt.supplier.id)) return { code: saved.fields.transportCode, canWrite: true };
+  return { code: undefined, canWrite: !saved };
+}
+
+export async function saveReceiptTransport(
+  client: PostgresClient, companyId: number, receipt: ReceiptIdentity, code: string,
+) {
+  const { rows } = await client.query(
+    `INSERT INTO tuvansa.purchase_reception_comments(company_id,receipt_id,receipt_number,supplier_id,fields,revision)
+     VALUES($1,$2,$3,$4,jsonb_build_object('transportCode',$5::text),1)
+     ON CONFLICT(company_id,receipt_id) DO UPDATE SET
+       fields=tuvansa.purchase_reception_comments.fields || excluded.fields,
+       revision=tuvansa.purchase_reception_comments.revision+1,updated_at=now()
+     WHERE tuvansa.purchase_reception_comments.receipt_number=excluded.receipt_number
+       AND tuvansa.purchase_reception_comments.supplier_id=excluded.supplier_id
+     RETURNING receipt_id`,
+    [companyId, receipt.id, receipt.number, receipt.supplier.id, code],
+  );
+  if (!rows.length) throw conflict('El folio o proveedor de la recepción cambió en Proscai.');
 }
 
 export async function receiptCommentDueDate(client: PostgresClient, companyId: number, receipt: {

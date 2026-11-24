@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { PurchaseReceptionsDataSource } from '../../domain/datasources/purchase-receptions-data-source.js';
+import type { PurchaseReceptionClassifier } from '../../domain/datasources/purchase-reception-classifications-data-source.js';
 import { PurchaseReception, type PurchaseReceptionLine } from '../../domain/entities/purchase-reception.js';
 import type {
   PurchaseReceptionNavigationDirection,
@@ -366,16 +367,34 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
   }
 
   async classificationPanel(identity: { id: number; number: string }, current: string[], source: PurchaseReceptionPanelResult['source']): Promise<PurchaseReceptionPanelResult> {
-    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
-      `SELECT FAG.AGT AS classifier, FAG.AGNUM AS code, FAG.AGDESCR AS description, FAG.AGTNUM AS compositeCode
-       FROM FAG
-       WHERE FAG.AGT BETWEEN '1' AND '9' AND FAG.AGTIPO IN (0, 2)
-       ORDER BY FAG.AGT, FAG.AGSEQ`,
-    );
+    const { items, labels } = await this.classificationCatalog();
     return {
       purchaseReception: identity, key: 'classifications', section: 'actions', button: 'Clasificar', source,
-      items: rows.map((row) => ({ ...row })),
-      summary: { current },
+      items, summary: { current, labels },
+    };
+  }
+
+  async classificationCatalog() {
+    // Derivadas de ERECEP#19/0 y /240 y de la selección MEMTIPOPAR=2 en MBASE/91.
+    const positions = Array.from({ length: 9 }, (_, index) => index + 1);
+    const [[items], [[titles]]] = await Promise.all([
+      legacyMysqlPool.execute<(RowDataPacket & PurchaseReceptionClassifier)[]>(
+        `SELECT CAST(AGT AS UNSIGNED) AS classifier, AGNUM AS code, AGDESCR AS description, AGTNUM AS compositeCode
+         FROM FAG WHERE AGT IN ('1','2','3','4','5','6','7','8','9') AND AGTIPO IN (0,2)
+         ORDER BY AGT,AGNUM,AGSEQ`,
+      ),
+      legacyMysqlPool.execute<RowDataPacket[]>(
+        `SELECT ${positions.map((position) => `CIAPAR${position} AS label${position}`).join(',')},
+           (SELECT YGDAT FROM FYG WHERE YGKEY='ABITITPAR2' LIMIT 1) AS configuredLabels
+         FROM FCIA WHERE CIASEQ=1`,
+      ),
+    ]);
+    const configuredLabels = typeof titles?.configuredLabels === 'string' ? titles.configuredLabels.split(',') : null;
+    return {
+      items: items.map(({ classifier, code, description, compositeCode }) => ({ classifier, code, description, compositeCode })),
+      labels: positions.map((position) => configuredLabels
+        ? configuredLabels[position - 1] ?? ''
+        : String(titles?.[`label${position}`] ?? '')),
     };
   }
 }

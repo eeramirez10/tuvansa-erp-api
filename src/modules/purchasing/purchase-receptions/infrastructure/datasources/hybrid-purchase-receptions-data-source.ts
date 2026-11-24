@@ -19,6 +19,7 @@ import { supplierPaymentReversalSql, type PurchasePostingReversalReference } fro
 import { supplierPaymentReversalsAvailable } from './purchase-posting-reversal-tables.js';
 import { withReceiptPieceLines, withReceiptPieces } from './purchase-reception-piece-reads.js';
 import { purchaseReceptionCommentsAvailable, withReceiptComments } from './postgres-purchase-reception-comments.js';
+import { PostgresPurchaseReceptionClassifications, withReceiptClassifications } from './postgres-purchase-reception-classifications.js';
 import { readReceiptSupplierChanges, receiptSupplierChangesAvailable, withReceiptSupplierChange } from './purchase-reception-supplier-change-reads.js';
 
 const reception = 'reception';
@@ -34,7 +35,10 @@ const documentationMovement = ({ id, sourceId, sourceNumber, date, amount }: Pur
 });
 
 export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDataSource {
-  constructor(private readonly legacy: LegacyMysqlPurchaseReceptionsDataSource) {}
+  constructor(
+    private readonly legacy: LegacyMysqlPurchaseReceptionsDataSource,
+    private readonly classifications = new PostgresPurchaseReceptionClassifications(legacy),
+  ) {}
 
   private record(field: 'id' | 'number', value: string | number) {
     return readLocalReceptionView<LocalReceptionViewRecord | null>(null, true, async (client, view) => {
@@ -62,7 +66,8 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
 
   private async localDetail(receipt: PurchaseReceptionProps) {
     const document = /^RW\d/.test(receipt.number) ? await withReceiptPieceLines(receipt) : receipt;
-    return (await this.withBalances([PurchaseReception.create(await withReceiptSupplierChange(await withReceiptComments(document)))]))[0]!;
+    const classified = await withReceiptClassifications(await withReceiptComments(document));
+    return (await this.withBalances([PurchaseReception.create(await withReceiptSupplierChange(classified))]))[0]!;
   }
 
   private async withHistoricalCancellations(items: PurchaseReception[]) {
@@ -94,7 +99,8 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const [item] = await this.withHistoricalCancellations([receipt]);
     const document = item!.toPrimitives();
     const withPieces = isHistoricalRA(document.number) ? await withReceiptPieceLines(document) : document;
-    return PurchaseReception.create(await withReceiptSupplierChange(await withReceiptComments(withPieces)));
+    const classified = await withReceiptClassifications(await withReceiptComments(withPieces));
+    return PurchaseReception.create(await withReceiptSupplierChange(classified));
   }
 
   private async withBalances(items: PurchaseReception[]) {
@@ -205,6 +211,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
   }
 
   async getPanel(id: number, key: PurchaseReceptionPanelKey): Promise<PurchaseReceptionPanelResult | null> {
+    if (key === 'classifications') return this.classifications.read(id);
     if (!isLocalDocument(id)) {
       const panel = await this.legacy.getPanel(id, key);
       if (panel && key === 'pieces') return withReceiptPieces(panel);
@@ -230,12 +237,9 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     }
     const local = await this.record('id', id);
     if (!local) return null;
-    const { number, dates, orderNumber, supplierReference, classifications, cancellation, pedimento } = local.reception;
+    const { number, dates, orderNumber, supplierReference, cancellation, pedimento } = local.reception;
     if (key === 'pieces') {
       return withReceiptPieces({ purchaseReception: { id, number }, key, section: 'actions', button: 'Piezas', source: 'postgres', items: [] });
-    }
-    if (key === 'classifications') {
-      return this.legacy.classificationPanel({ id, number }, classifications, 'postgres');
     }
     if (key === 'pedimento') {
       return {

@@ -17,6 +17,7 @@ import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { verifyReceiptLayerStock } from './purchase-reception-peps.js';
 import { lockPurchaseReceptionPieces, receiptHasInvoicedPieces, retirePurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { matchesReceiptSupplierChange, receiptSupplierChangesOn } from './purchase-reception-supplier-change-reads.js';
 import { purchaseReceptionDocumentationsOn } from './purchase-reception-documentation-reads.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
@@ -203,6 +204,8 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
       }
     };
     return this.orders.postReceipt(order, pending, [], undefined, supplierRevision, replay, async (client) => {
+      const [change] = await receiptSupplierChangesOn(client, { receiptIds: [source.id] });
+      const supplier = matchesReceiptSupplierChange(change, source.receipt) ? change.supplier : source.receipt.supplier;
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.purchase_reception_cancellation_ids') AS id");
       const id = Number(allocation!.id);
       const suffix = String(id - firstId + 1).padStart(8, '0');
@@ -218,7 +221,8 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
         "SELECT nextval('tuvansa.purchase_reception_line_ids') AS id FROM generate_series(1,$1::int)", [source.movement.lines.length],
       );
       const movement: MovementDocument = {
-        header: { ...source.movement.header, id, document: number, date: input.date, type: 'K', reference: source.receipt.number, userId },
+        header: { ...source.movement.header, id, document: number, date: input.date, type: 'K',
+          reference: source.receipt.number, supplierCode: supplier.code, userId },
         lines: source.movement.lines.map((line, index) => ({ ...line, id: Number(lineIds[index]!.id), type: 'K', quantity: -line.quantity, userId })),
         totals: { quantity: -source.movement.totals.quantity, cost: -source.movement.totals.cost },
       };
@@ -230,7 +234,7 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
         [id, source.historical ? null : source.id, companyId, userId, input.requestKey, fingerprint, input.date, input.reason, number, policyNumber,
           JSON.stringify(movement), JSON.stringify(accounting), JSON.stringify(result), source.historical ? source.id : null,
           source.historical ? JSON.stringify({
-            supplierId: source.receipt.supplier.id, supplierName: source.receipt.supplier.name, number: source.receipt.number,
+            supplierId: supplier.id, supplierName: supplier.name, number: source.receipt.number,
             supplierReference: source.receipt.supplierReference, amount: source.payable!.amount,
             policyNumber: source.accounting!.number, version: source.historical.version,
           }) : null],

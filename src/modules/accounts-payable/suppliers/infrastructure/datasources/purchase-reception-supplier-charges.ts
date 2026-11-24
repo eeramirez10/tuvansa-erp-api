@@ -11,22 +11,29 @@ const paymentScope = `WHERE ${paymentDocumentIdSql('payment')} = receipt.id AND 
 
 export async function purchaseReceptionSupplierBalances(supplierIds: number[]): Promise<Map<number, number>> {
   if (supplierIds.length === 0) return new Map();
-  const localBalances = readPurchasePayables(new Map<number, number>(), async (client, source) => {
+  const localBalances = readPurchasePayables<{ supplierId: number; balance: number; reassignedCancellations: number[] }[]>([], async (client, source) => {
     const hasPayments = await supplierPaymentsAvailable(client);
     const reversal = supplierPaymentReversalSql(hasPayments && await supplierPaymentReversalsAvailable(client));
     const paid = hasPayments ? `coalesce((SELECT ${reversal.paid}
       FROM tuvansa.supplier_payments AS payment ${reversal.join} ${paymentScope}), 0)` : '0';
-    const { rows } = await client.query<{ supplierId: number; balance: number }>(
-      `SELECT receipt.supplier_id::float8 AS "supplierId",sum(receipt.principal - receipt.documented_amount - ${paid})::float8 AS balance
+    const { rows } = await client.query<{ supplierId: number; balance: number; reassignedCancellations: number[] }>(
+      `SELECT receipt.supplier_id::float8 AS "supplierId",
+         sum(CASE WHEN receipt.cancelled THEN 0 ELSE receipt.principal-receipt.documented_amount-${paid} END)::float8 AS balance,
+         coalesce(array_agg(receipt.id::float8) FILTER (WHERE receipt.historical_transfer_in AND receipt.cancelled),
+           ARRAY[]::float8[]) AS "reassignedCancellations"
        FROM (${source}) AS receipt
-       WHERE receipt.company_id=1 AND (receipt.principal>0 OR receipt.historical_documentation) AND NOT receipt.cancelled
+       WHERE receipt.company_id=1 AND (receipt.principal>0 OR receipt.historical_documentation OR receipt.historical_transfer_out)
+         AND (NOT receipt.cancelled OR receipt.historical_transfer_in)
          AND receipt.supplier_id=ANY($1::bigint[])
        GROUP BY receipt.supplier_id`, [supplierIds],
     );
-    return new Map(rows.map(({ supplierId, balance }) => [supplierId, balance]));
+    return rows;
   });
-  const [balances, historical] = await Promise.all([localBalances, readHistoricalReceptionCancellations({ supplierIds })]);
-  for (const { supplierId, amount } of historical) {
+  const [local, historical] = await Promise.all([localBalances, readHistoricalReceptionCancellations({ supplierIds })]);
+  const balances = new Map(local.map(({ supplierId, balance }) => [supplierId, balance]));
+  const reassignedCancellations = new Set(local.flatMap((row) => row.reassignedCancellations));
+  for (const { receiptId, supplierId, amount } of historical) {
+    if (reassignedCancellations.has(receiptId)) continue;
     balances.set(supplierId, (balances.get(supplierId) ?? 0) - amount);
   }
   return balances;
@@ -72,6 +79,10 @@ export interface SupplierPurchaseReceptionCharge {
     createdAt: string;
   } | null;
   historicalDocumentation: boolean;
+  canPay: boolean;
+  historicalTransferIn: boolean;
+  historicalTransferOut: boolean;
+  sourceMovementId: number | null;
 }
 
 export async function purchaseReceptionSupplierCharges(supplierId: number): Promise<SupplierPurchaseReceptionCharge[]> {
@@ -97,9 +108,11 @@ export async function purchaseReceptionSupplierCharges(supplierId: number): Prom
               receipt.policy_id::float8 AS "policyId",
               (CASE WHEN receipt.cancelled THEN 0 ELSE receipt.principal-receipt.documented_amount-${paid} END)::float8 AS remaining,
               receipt.cancellation,receipt.documentation,receipt.historical_documentation AS "historicalDocumentation",
+              receipt.can_pay AS "canPay",receipt.historical_transfer_in AS "historicalTransferIn",
+              receipt.historical_transfer_out AS "historicalTransferOut",receipt.source_movement_id::float8 AS "sourceMovementId",
               ${items} AS payments,coalesce(CURRENT_DATE - receipt.due_at,0) AS days,receipt.created_at::text AS "createdAt"
        FROM (${source}) AS receipt ${join}
-       WHERE receipt.company_id=1 AND (receipt.principal>0 OR receipt.historical_documentation)
+       WHERE receipt.company_id=1 AND (receipt.principal>0 OR receipt.historical_documentation OR receipt.historical_transfer_out)
          AND (NOT receipt.cancelled OR receipt.cancellation IS NOT NULL) AND receipt.supplier_id=$1
        ORDER BY receipt.id`, [supplierId],
     );

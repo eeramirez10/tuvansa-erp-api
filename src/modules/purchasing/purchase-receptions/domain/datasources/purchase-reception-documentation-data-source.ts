@@ -25,6 +25,7 @@ export interface ReceptionDocumentationSource {
   id: number;
   number: string;
   supplier: { id: number; code: string; name: string };
+  supplierAccount?: string;
   date: string | null;
   dueAt: string | null;
   amount: number;

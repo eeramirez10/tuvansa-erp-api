@@ -3,6 +3,7 @@ import type { PostgresClient, PostgresConnectionFactory } from '../../../../../s
 import type { MovementCancellationDataSource, MovementsDataSource } from '../../domain/datasources/movements-data-source.js';
 import type { MovementDocument, MovementHeader, MovementLine } from '../../domain/entities/inventory-movement.js';
 import type { MovementSearchCriteria, MovementSearchResult } from '../../domain/repositories/movements-repository.js';
+import { receiptSupplierChangesAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-supplier-change-reads.js';
 import { movementTransaction, readMovementPolicy } from './postgres-inventory-movements-snapshot.js';
 
 interface DocumentRow {
@@ -199,10 +200,18 @@ export class PostgresMovementsDataSource implements MovementsDataSource, Movemen
       const sort = sortFields.find(([, value]) => value !== undefined)?.[0] ?? 'document';
       const order = `lower(header->>'${sort}'), id`;
       values.push(searchLimit, criteria.limit, criteria.offset);
+      const documents = await receiptSupplierChangesAvailable(client) ? `(
+        SELECT d.id, CASE WHEN c.receipt_id IS NULL THEN d.original_document
+          ELSE jsonb_set(d.original_document,'{header,supplierCode}',to_jsonb(c.supplier_code)) END AS original_document
+        FROM tuvansa.inventory_movement_documents d LEFT JOIN tuvansa.purchase_reception_supplier_changes c
+          ON c.company_id=(d.original_document #>> '{header,company}')::int AND c.receipt_id=d.id
+          AND c.receipt_number=d.original_document #>> '{header,document}' AND c.historical
+          AND d.original_document #>> '{header,type}'='RA'
+      ) AS inventory_documents` : 'tuvansa.inventory_movement_documents';
       const result = await client.query<{ items: MovementHeader[]; total: string }>(
         `WITH matched AS (
            SELECT id, original_document->'header' AS header
-           FROM tuvansa.inventory_movement_documents WHERE ${conditions.join(' AND ')}
+           FROM ${documents} WHERE ${conditions.join(' AND ')}
            ORDER BY lower(original_document #>> '{header,${sort}}'), id LIMIT $${values.length - 2}
          )
          SELECT (SELECT count(*)::text FROM matched) AS total,

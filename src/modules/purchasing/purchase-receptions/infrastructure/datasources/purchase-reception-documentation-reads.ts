@@ -48,7 +48,10 @@ const migrations = [{ id: 'purchase_reception_documentations', sql: `
   );
   CREATE UNIQUE INDEX purchase_reception_documentation_document_number
     ON tuvansa.purchase_reception_documentation_documents(company_id,upper(number));
-` }];
+` }, {
+  id: 'purchase_reception_documentations_supplier_account',
+  sql: `ALTER TABLE tuvansa.purchase_reception_documentations ADD COLUMN supplier_account text`,
+}];
 
 export async function ensurePurchaseReceptionDocumentationSchema(client: PostgresClient) {
   await ensurePurchaseReceptionSchema(client);

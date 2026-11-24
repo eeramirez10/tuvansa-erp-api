@@ -3,6 +3,7 @@ import { LegacyMysqlPurchaseOrderEditDataSource } from '../purchase-orders/infra
 import { LegacyMysqlPurchaseOrdersDataSource } from '../purchase-orders/infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
 import { PostgresPurchaseOrderEdits } from '../purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import { CancelPurchaseReception } from './application/use-cases/cancel-purchase-reception.js';
+import { ChangePurchaseReceptionSupplier } from './application/use-cases/change-purchase-reception-supplier.js';
 import { CreatePurchaseExpenses } from './application/use-cases/create-purchase-expenses.js';
 import { CreatePurchaseReception } from './application/use-cases/create-purchase-reception.js';
 import { GetPurchaseReceptionByNumber } from './application/use-cases/get-purchase-reception-by-number.js';
@@ -25,6 +26,7 @@ import { MysqlPurchaseReceptionWriteReferences } from './infrastructure/datasour
 import { PostgresPurchaseReceptionWrites } from './infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { PostgresPurchaseReceptionCancellations } from './infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionPieces } from './infrastructure/datasources/postgres-purchase-reception-pieces.js';
+import { PostgresPurchaseReceptionSupplierChanges } from './infrastructure/datasources/postgres-purchase-reception-supplier-changes.js';
 import { PostgresPurchaseReceptionComments } from './infrastructure/datasources/postgres-purchase-reception-comments.js';
 import { PostgresPurchaseReceptionDocumentations } from './infrastructure/datasources/postgres-purchase-reception-documentations.js';
 import { PostgresPurchaseExpenses } from './infrastructure/datasources/postgres-purchase-expenses.js';
@@ -35,6 +37,7 @@ import { createPurchaseExpenseRouter } from './presentation/http/purchase-expens
 import { PurchaseReceptionPiecesController } from './presentation/http/purchase-reception-pieces-controller.js';
 import { PurchaseReceptionCommentsController } from './presentation/http/purchase-reception-comments-controller.js';
 import { PurchaseReceptionDocumentationController } from './presentation/http/purchase-reception-documentation-controller.js';
+import { PurchaseReceptionSupplierChangeController } from './presentation/http/purchase-reception-supplier-change-controller.js';
 import { createPurchaseReceptionsRouter } from './presentation/http/purchase-receptions-routes.js';
 
 export const createPurchaseReceptionsModule = (): Router => {
@@ -70,5 +73,8 @@ export const createPurchaseReceptionsModule = (): Router => {
   const documentation = new PurchaseReceptionDocumentationController(
     new ManagePurchaseReceptionDocumentation(new PostgresPurchaseReceptionDocumentations()),
   );
-  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces, comments, documentation);
+  const supplierChange = new PurchaseReceptionSupplierChangeController(
+    new ChangePurchaseReceptionSupplier(new PostgresPurchaseReceptionSupplierChanges()),
+  );
+  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces, comments, documentation, supplierChange);
 };

@@ -72,7 +72,7 @@ export interface SupplierPaymentCommand {
   userId: number;
   input: SupplierPaymentInput;
   fingerprint: string;
-  resolvePosting(lookup?: BankAccountLookup, catalog?: SupplierPaymentCatalogTerms | null): Promise<{
+  resolvePosting(lookup?: BankAccountLookup, catalog?: SupplierPaymentCatalogTerms | null, liability?: SupplierPaymentLiability | null): Promise<{
     policyType: string;
     supplierAccount: string;
     supplierAccountName: string;

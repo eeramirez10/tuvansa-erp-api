@@ -264,9 +264,35 @@ positivo y una diferencia de 0.00. La recepción original queda saldada y sus do
 se consultan como cargos pagables del proveedor. El traspaso corresponde a Cuentas por Pagar.
 La documentación bloquea la cancelación de la recepción.
 
+## Cambia Prv
+
+| Acción | Endpoint | Evidencia y efecto |
+| --- | --- | --- |
+| Cambia Prv / Confirmar | `GET /:id/actions/change-supplier` | `ERECEPC#13/23`, acceso `ERECEPC#13/44` y captura de proveedor en `ECIA#26`. La ficha devuelve el proveedor vigente y la revisión |
+| Buscar proveedor | `GET /:id/actions/change-supplier/suppliers?code=…&name=…` | Derivada de `ECIA#26/100 → INICIO/44`. Consulta proveedores elegibles por código o nombre |
+| Búsqueda de proveedor / OK | `PATCH /:id/actions/change-supplier` | La lectura usa `FDOC.DSEQ`, `FAX`, `FAXINV` y la línea de pasivo de la póliza. PostgreSQL guarda el proveedor efectivo y el vínculo original |
+
+Se observó la confirmación y el selector en la RA pendiente `RA09214`, en
+la pagada `RA09260`, en la cancelada `RA09189` y en el gasto `GI1169` con
+movimientos DO y PP. El procedimiento nativo cambia `PRVSEQ` en `FDOC`,
+`FAX` y `FAXINV` por el mismo `DSEQ`, y reconstruye `DPARA`, `DPAR0` y
+`DCLINOM`. La ventana no comprueba dependencias externas antes de aceptar.
+
+La web habilita RA/RW vigentes en pesos con el cargo original íntegro,
+sin historial de pagos o documentación, y con un proveedor activo en la
+misma cuenta contable del pasivo. Así se traslada el saldo completo en la
+ficha, Auxiliar, **Proveedores → Saldo/Movimientos** e **Inventarios →
+Documentos**. Las consultas históricas de compras por proveedor y compras
+desglosadas también reflejan el proveedor efectivo. En las recepciones RW,
+el proveedor efectivo puede pagar el cargo o registrarlo con Documenta.
+
+La cancelación revierte el movimiento, la póliza y la orden de origen.
+El movimiento K de Cuentas por Pagar se registra con el proveedor vigente.
+La revisión protege cambios simultáneos y permite regresar al proveedor original.
+
 ## Botones conservados sin mutacion
 
-La vista conserva Cambia Prv, Etiquetas, Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
+La vista conserva Etiquetas, Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
 
 Estas acciones secundarias se muestran con un aviso de sólo lectura.
 

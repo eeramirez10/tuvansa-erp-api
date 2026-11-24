@@ -81,11 +81,10 @@ export async function assertActiveSupplierCatalog(client: PostgresClient, id: nu
   }
 }
 
-export function searchSupplierCatalogRecords(query: string, exact: boolean): Promise<SupplierCatalogRecord[]> {
-  if (!postgresConfigured()) return Promise.resolve([]);
-  return connection(async (client) => {
-    if (!await available(client)) return [];
-    const { rows } = await client.query<SupplierCatalogRecord>(
+export function searchSupplierCatalogRecords(query: string, exact: boolean, client?: PostgresClient): Promise<SupplierCatalogRecord[]> {
+  const find = async (connection: PostgresClient) => {
+    if (!await available(connection)) return [];
+    const { rows } = await connection.query<SupplierCatalogRecord>(
       `SELECT ${columns} FROM tuvansa.supplier_catalog
        WHERE CASE WHEN $2::boolean THEN lower(code)=lower($1) OR lower(original_code)=lower($1)
          ELSE strpos(lower(code),lower($1))>0 OR strpos(lower(original_code),lower($1))>0
@@ -93,13 +92,16 @@ export function searchSupplierCatalogRecords(query: string, exact: boolean): Pro
        ORDER BY lower(code),id`, [query.trim(), exact],
     );
     return rows;
-  });
+  };
+  return client ? find(client) : postgresConfigured() ? connection(find) : Promise.resolve([]);
 }
 
 const dependencies = [
   ['purchase_receptions', "dep.result#>>'{reception,supplier,id}'=target.id::text", 'El proveedor tiene recepciones de compra registradas.'],
   ['purchase_expense_documents', 'dep.supplier_id=target.id', 'El proveedor tiene gastos GA registrados.'],
   ['purchase_reception_documentations', 'dep.supplier_id=target.id', 'El proveedor tiene recepciones documentadas.'],
+  ['purchase_reception_supplier_changes', 'dep.supplier_id=target.id OR dep.original_supplier_id=target.id',
+    'El proveedor tiene cambios registrados en recepciones.'],
   ['supplier_payments', 'dep.supplier_id=target.id', 'El proveedor tiene pagos PP registrados.'],
   ['purchase_orders', "dep.header#>>'{supplier,id}'=target.id::text", 'El proveedor tiene órdenes o cotizaciones web.'],
   ['purchase_order_supplier_changes', "dep.previous_supplier_id=target.id OR dep.supplier->>'id'=target.id::text", 'El proveedor aparece en el historial de órdenes.'],

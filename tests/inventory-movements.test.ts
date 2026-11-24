@@ -2,6 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMovementsModule } from '../src/modules/inventories/movements/movements-module.js';
+import { LegacyMysqlMovementsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/legacy-mysql-movements-data-source.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -118,6 +119,24 @@ describe('inventory movement lookup', () => {
       expect.stringContaining('WHERE FAXINV.DSEQ = ? ORDER BY FAXINV.AISEQ'),
       [125],
     ]);
+  });
+
+  it('binds one historical supplier change as typed literals in the movement detail query', async () => {
+    const receipt = { ...header, id: 343646, document: 'RA09214', type: 'RA', supplierCode: '35436' };
+    const source = new LegacyMysqlMovementsDataSource();
+    execute.mockResolvedValueOnce([[receipt]]).mockResolvedValueOnce([[line]]);
+    const result = await source.findById(receipt.id, [{
+      receiptId: receipt.id, receiptNumber: receipt.document, originalSupplierId: 35,
+      supplier: { id: 36, code: receipt.supplierCode, name: 'Proveedor nuevo' },
+      amount: 100, supplierAccount: '2005', historical: true, charge: null, revision: 1,
+    }]);
+
+    expect(result).toMatchObject({ header: receipt, lines: [line] });
+    expect(execute.mock.calls[0]).toEqual([
+      expect.stringContaining('CAST(? AS CHAR CHARACTER SET utf8) AS supplier_code'),
+      [receipt.id, receipt.document, 35, 36, receipt.supplierCode, 'Proveedor nuevo', receipt.id],
+    ]);
+    expect(execute.mock.calls[0]?.[0]).toContain('receipt_supplier.original_supplier_id=FDOC.PRVSEQ');
   });
 
   it('returns 404 for an absent document without querying its details', async () => {

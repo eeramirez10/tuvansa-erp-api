@@ -49,6 +49,21 @@ GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/a
 ### Accion: Clasificar
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/classifications
 
+### Cambia Prv / Proveedor actual, elegibilidad y revisión
+GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/change-supplier
+
+### Búsqueda de proveedores elegibles por código
+GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/change-supplier/suppliers?code=35341
+
+### Confirmar Cambia Prv en una recepción temporal del proveedor 35436
+PATCH {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/change-supplier
+Content-Type: application/json
+
+{
+  "revision": "{{version}}",
+  "supplierCode": "35341"
+}
+
 ### Comentarios y revisión para la edición
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/comments
 

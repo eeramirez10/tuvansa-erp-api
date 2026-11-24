@@ -147,7 +147,7 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
          ${withPayments ? 'p.revision' : '1'} AS revision,
          ${withPayments ? 'p.latest_reversal_date' : 'null::text'} AS "latestReversalDate",
          CASE WHEN r.supplier_account IS NOT NULL THEN
-           jsonb_build_object('code',r.supplier_account,'name',r.supplier_account_name) END AS liability
+           jsonb_build_object('code',r.supplier_account,'name',coalesce(r.supplier_account_name,'')) END AS liability
        FROM (${source}) r
        ${withPayments ? `CROSS JOIN LATERAL (
          SELECT COALESCE(${reversal.paid},0) AS paid, ${reversal.revision} AS revision,
@@ -155,7 +155,7 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
          FROM tuvansa.supplier_payments payment ${reversal.join}
          WHERE ${paymentDocumentIdSql('payment')} = r.id AND payment.company_id=r.company_id AND payment.supplier_id=r.supplier_id
        ) p` : ''}
-       WHERE r.id=$1 AND r.company_id=$2 AND r.supplier_id=$3`,
+       WHERE r.id=$1 AND r.company_id=$2 AND r.supplier_id=$3 AND r.can_pay`,
       [identity.receiptId, identity.companyId, identity.supplierId],
     );
     return row ?? null;
@@ -243,7 +243,7 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
     );
     const supplier = await supplierCatalogRecord(supplierId, client);
     const { bank, policyType, supplierAccount, supplierAccountName } = await resolvePosting(this.bankCatalog?.lookupOn(client),
-      supplier ? { accountCode: supplier.supplier.fiscal.accountingAccount, intercompany: supplier.intercompany } : null);
+      supplier ? { accountCode: supplier.supplier.fiscal.accountingAccount, intercompany: supplier.intercompany } : null, target.liability);
 
     const { rows: [allocation] } = await client.query<{ id: string; sequence: number }>(
       `INSERT INTO tuvansa.supplier_payment_bank_counters(bank_account_id,mode,sequence) VALUES ($1,$2,1)

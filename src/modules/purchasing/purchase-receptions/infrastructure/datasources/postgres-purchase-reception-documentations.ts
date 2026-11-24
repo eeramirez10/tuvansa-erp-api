@@ -18,6 +18,7 @@ import {
   ensurePurchaseReceptionDocumentationSchema, purchaseReceptionDocumentationsOn,
 } from './purchase-reception-documentation-reads.js';
 import { lockPurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { matchesReceiptSupplierChange, receiptSupplierChangesOn } from './purchase-reception-supplier-change-reads.js';
 import { purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
 const disabled = 'Documenta convencional no está habilitado para la compañía.';
@@ -90,15 +91,22 @@ export class PostgresPurchaseReceptionDocumentations implements PurchaseReceptio
     const source = local
       ? await localReception(client, companyId, receiptId, lock) : await this.native.reception(receiptId);
     if (!source) return null;
-    const [documentations, cancellations, enabled, dueAt] = await Promise.all([
+    const [documentations, cancellations, enabled, dueAt, [change]] = await Promise.all([
       purchaseReceptionDocumentationsOn(client, { sourceIds: [receiptId] }),
       local ? [] : historicalReceptionCancellationsOn(client, { receiptIds: [receiptId] }),
       this.native.enabled(),
       receiptCommentDueDate(client, companyId, source),
+      receiptSupplierChangesOn(client, { receiptIds: [receiptId] }),
     ]);
     const reason = !enabled ? disabled : cancellations.length ? 'La recepción ya fue cancelada.' : source.reason;
     const { nativeRecord, ...snapshot } = source;
-    return { ...snapshot, dueAt, reason, recorded: documentations[0]?.result ?? nativeRecord };
+    return {
+      ...snapshot, dueAt, reason, recorded: documentations[0]?.result ?? nativeRecord,
+      ...(matchesReceiptSupplierChange(change, source) && change.historical === !local ? {
+        supplier: change.supplier, supplierAccount: change.supplierAccount,
+        version: JSON.stringify([source.version, change.revision, change.supplierAccount]),
+      } : {}),
+    };
   }
 
   source(companyId: number, receiptId: number) {
@@ -155,10 +163,10 @@ export class PostgresPurchaseReceptionDocumentations implements PurchaseReceptio
     receiptId: number, input: Parameters<PurchaseReceptionDocumentationDataSource['commit']>[0]['input'],
     fingerprint: string, validate: Parameters<PurchaseReceptionDocumentationDataSource['commit']>[0]['validate'],
   ) {
+    await lockPurchaseReceptionPieces(client, companyId, receiptId);
     const initial = await this.read(client, companyId, receiptId);
     if (!initial) throw new NotFoundError('Recepción de compra');
     await assertActiveSupplierCatalog(client, initial.supplier.id);
-    await lockPurchaseReceptionPieces(client, companyId, receiptId);
     const source = await this.read(client, companyId, receiptId, true);
     if (!source) throw new NotFoundError('Recepción de compra');
     validate(source);
@@ -180,11 +188,11 @@ export class PostgresPurchaseReceptionDocumentations implements PurchaseReceptio
     await client.query(
       `INSERT INTO tuvansa.purchase_reception_documentations
        (id,source_id,local_receipt_id,source_number,company_id,supplier_id,supplier_code,supplier_name,user_id,
-        request_key,fingerprint,date,due_date,amount,result)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+        request_key,fingerprint,date,due_date,amount,result,supplier_account)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)`,
       [documentationId, receiptId, isLocalPurchaseReceptionId(receiptId) ? receiptId : null, source.number, companyId,
         source.supplier.id, source.supplier.code, source.supplier.name, userId, input.requestKey, fingerprint,
-        source.date, source.dueAt, source.amount, JSON.stringify(result)],
+        source.date, source.dueAt, source.amount, JSON.stringify(result), source.supplierAccount ?? null],
     );
     for (const [index, document] of result.documents.entries()) {
       await client.query(

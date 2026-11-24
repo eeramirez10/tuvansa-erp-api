@@ -11,7 +11,7 @@ const money = (amount: number) => Number(amount.toFixed(2));
 function balanceRow(charge: SupplierPurchaseReceptionCharge) {
   return {
     id: charge.id, company: charge.company, document: charge.number, date: charge.date,
-    receiptId: charge.id, canPay: true,
+    receiptId: charge.id, canPay: charge.canPay,
     dueDate: charge.dueAt, days: charge.days, originalAmount: charge.principal, amount: charge.remaining,
     currency: charge.currencyId, reference: charge.orderNumber || charge.supplierReference, scheduledAt: null,
     secondaryReference: '', route: '', exchangeRate: charge.exchangeRate, folio: charge.supplierReference,
@@ -20,7 +20,8 @@ function balanceRow(charge: SupplierPurchaseReceptionCharge) {
 
 function movementRow(charge: SupplierPurchaseReceptionCharge) {
   return {
-    id: charge.id, company: charge.company, date: charge.date, document: charge.number,
+    id: charge.sourceMovementId ?? charge.id, company: charge.company, date: charge.date, document: charge.number,
+    ...(charge.historicalTransferIn ? { receiptId: charge.id } : {}),
     amount: charge.principal, movementType: charge.movementType, paymentReference: charge.orderNumber || charge.supplierReference,
     userId: charge.userId, exchangeDifference: 0, exchangeRate: charge.exchangeRate,
     policy: charge.policyNumber ?? '', policyId: charge.policyId, documentReference: charge.supplierReference,
@@ -43,6 +44,7 @@ function paymentRow(charge: SupplierPurchaseReceptionCharge, payment: SupplierPu
 
 function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
   return charges.flatMap((charge) => {
+    if (charge.historicalTransferOut) return [];
     const original = movementRow(charge);
     const movements = charge.historicalDocumentation ? [] : [{ createdAt: charge.createdAt, row: original }];
     const documentation = charge.documentation;
@@ -109,16 +111,23 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
     ]);
     if (charges.length === 0 && historical.length === 0) return result;
 
+    const movedOut = new Set(charges.filter((charge) => charge.historicalTransferOut).map((charge) => charge.id));
+    const projectedReversals = new Set(charges.filter((charge) => charge.historicalTransferIn && charge.cancellation).map((charge) => charge.id));
+    const separateReversals = historical.filter(({ receiptId }) => !projectedReversals.has(receiptId));
     const balance = charges.reduce((total, charge) => total + charge.remaining, 0);
-    const reversed = historical.reduce((total, cancellation) => total + cancellation.amount, 0);
+    const reversed = separateReversals.reduce((total, cancellation) => total + cancellation.amount, 0);
     const supplier = { ...result.supplier, currentBalance: money(result.supplier.currentBalance + balance - reversed) };
-    if (key === 'movements') return {
-      ...result, supplier,
-      items: [...result.items, ...localMovements(charges), ...historicalCancellationMovements(historical, result.items)],
-    };
+    if (key === 'movements') {
+      const visible = result.items.filter(({ receiptId }) => !movedOut.has(Number(receiptId)));
+      return {
+        ...result, supplier,
+        items: [...visible, ...localMovements(charges), ...historicalCancellationMovements(separateReversals, visible)],
+      };
+    }
 
-    const open = charges.filter(({ remaining }) => remaining > 0).map(balanceRow);
     const canceledIds = new Set(historical.map(({ receiptId }) => receiptId));
+    const open = charges.filter(({ id, remaining }) => remaining > 0 && !canceledIds.has(id)).map(balanceRow);
+    for (const receiptId of movedOut) canceledIds.add(receiptId);
     for (const charge of charges) {
       if (charge.historicalDocumentation && charge.documentation) canceledIds.add(charge.documentation.sourceId);
     }

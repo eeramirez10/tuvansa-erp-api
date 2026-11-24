@@ -19,12 +19,14 @@ import { supplierPaymentReversalSql, type PurchasePostingReversalReference } fro
 import { supplierPaymentReversalsAvailable } from './purchase-posting-reversal-tables.js';
 import { withReceiptPieceLines, withReceiptPieces } from './purchase-reception-piece-reads.js';
 import { purchaseReceptionCommentsAvailable, withReceiptComments } from './postgres-purchase-reception-comments.js';
+import { readReceiptSupplierChanges, receiptSupplierChangesAvailable, withReceiptSupplierChange } from './purchase-reception-supplier-change-reads.js';
 
 const reception = 'reception';
 const empty = { items: [], total: 0 };
 const money = (value: number) => Number(value.toFixed(2));
 const isLocalDocument = (id: number) => isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseDocumentId(id);
 const isHistoricalRA = (number: string) => /^RA\d/.test(number);
+
 
 const documentationMovement = ({ id, sourceId, sourceNumber, date, amount }: PurchaseReceptionDocumentationRecord) => ({
   id, date, transactionType: 'DO', reference: '', relatedDocumentId: sourceId, relatedDocument: sourceNumber,
@@ -60,7 +62,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
 
   private async localDetail(receipt: PurchaseReceptionProps) {
     const document = /^RW\d/.test(receipt.number) ? await withReceiptPieceLines(receipt) : receipt;
-    return (await this.withBalances([PurchaseReception.create(await withReceiptComments(document))]))[0]!;
+    return (await this.withBalances([PurchaseReception.create(await withReceiptSupplierChange(await withReceiptComments(document)))]))[0]!;
   }
 
   private async withHistoricalCancellations(items: PurchaseReception[]) {
@@ -92,7 +94,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const [item] = await this.withHistoricalCancellations([receipt]);
     const document = item!.toPrimitives();
     const withPieces = isHistoricalRA(document.number) ? await withReceiptPieceLines(document) : document;
-    return PurchaseReception.create(await withReceiptComments(withPieces));
+    return PurchaseReception.create(await withReceiptSupplierChange(await withReceiptComments(withPieces)));
   }
 
   private async withBalances(items: PurchaseReception[]) {
@@ -115,16 +117,18 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
   }
 
   async search(criteria: PurchaseReceptionSearchCriteria): Promise<PurchaseReceptionSearchResult> {
-    const local = await this.searchLocal(criteria);
+    const [local, historicalChanges] = await Promise.all([
+      this.searchLocal(criteria), readReceiptSupplierChanges({ historical: true }),
+    ]);
     local.items = await this.withBalances(local.items);
     const required = criteria.limit - local.items.length;
     if (required === 0) {
-      const legacy = await this.legacy.search({ ...criteria, limit: 0, offset: 0 });
+      const legacy = await this.legacy.search({ ...criteria, limit: 0, offset: 0 }, historicalChanges);
       return { items: local.items, total: local.total + legacy.total };
     }
     const legacy = await this.legacy.search({
       ...criteria, offset: Math.max(0, criteria.offset - local.total), limit: required,
-    });
+    }, historicalChanges);
     return { items: [...local.items, ...await this.withHistoricalCancellations(legacy.items)], total: local.total + legacy.total };
   }
 
@@ -153,7 +157,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const where = conditions.join(' AND ');
     const orderBy = parameters.length ? 'number,id' : 'id DESC';
     return readLocalReceptionView<PurchaseReceptionSearchResult>(empty, false, async (client, view) => {
-      const documents = await purchaseReceptionCommentsAvailable(client) ? `
+      const comments = await purchaseReceptionCommentsAvailable(client) ? `
         SELECT d.id,d.company_id,d.number,COALESCE(c.fields->>'orderNumber',d.order_number) AS order_number,
           d.reception || jsonb_strip_nulls(jsonb_build_object(
             'orderNumber',c.fields->>'orderNumber','supplierReference',c.fields->>'supplierReference','warehouse',c.fields->>'warehouse'
@@ -161,6 +165,13 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
         FROM (${view}) d LEFT JOIN tuvansa.purchase_reception_comments c
           ON c.company_id=d.company_id AND c.receipt_id=d.id AND c.receipt_number=d.number
           AND c.supplier_id=(d.reception#>>'{supplier,id}')::bigint` : view;
+      const documents = await receiptSupplierChangesAvailable(client) ? `
+        SELECT d.id,d.company_id,d.number,d.order_number,
+          CASE WHEN c.receipt_id IS NULL THEN d.reception
+            ELSE jsonb_set(d.reception,'{supplier}',jsonb_build_object('id',c.supplier_id,'code',c.supplier_code,'name',c.supplier_name)) END AS reception
+        FROM (${comments}) d LEFT JOIN tuvansa.purchase_reception_supplier_changes c
+          ON c.company_id=d.company_id AND c.receipt_id=d.id AND c.receipt_number=d.number
+          AND c.original_supplier_id=(d.reception#>>'{supplier,id}')::bigint AND NOT c.historical` : comments;
       const { rows: [row] } = await client.query<{ total: string; results: PurchaseReceptionSaveResultRow[] }>(
         `WITH documents AS (${documents})
          SELECT (SELECT count(*) FROM documents WHERE ${where}) AS total,

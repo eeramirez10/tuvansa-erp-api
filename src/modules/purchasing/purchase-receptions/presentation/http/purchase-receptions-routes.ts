@@ -6,10 +6,12 @@ import type { PurchaseReceptionsController } from './purchase-receptions-control
 import type { PurchaseReceptionPiecesController } from './purchase-reception-pieces-controller.js';
 import type { PurchaseReceptionCommentsController } from './purchase-reception-comments-controller.js';
 import type { PurchaseReceptionDocumentationController } from './purchase-reception-documentation-controller.js';
+import type { PurchaseReceptionSupplierChangeController } from './purchase-reception-supplier-change-controller.js';
 
 export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController, expenses: Router,
   reversals: ReversePurchasePosting, receiptCancellations: CancelPurchaseReception, pieces: PurchaseReceptionPiecesController,
-  comments: PurchaseReceptionCommentsController, documentation: PurchaseReceptionDocumentationController): Router => {
+  comments: PurchaseReceptionCommentsController, documentation: PurchaseReceptionDocumentationController,
+  supplierChange: PurchaseReceptionSupplierChangeController): Router => {
   const router = Router();
   const cancellation = postingReversalHandlers(reversals, 'expense');
   const cancelReceipt = purchaseReceptionCancellationHandlers(receiptCancellations);
@@ -24,6 +26,9 @@ export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsCon
   router.get('/:purchaseReceptionId/actions/classifications', controller.panel('classifications'));
   router.get('/:purchaseReceptionId/actions/comments', comments.get);
   router.patch('/:purchaseReceptionId/actions/comments', comments.save);
+  router.get('/:purchaseReceptionId/actions/change-supplier', supplierChange.preview);
+  router.get('/:purchaseReceptionId/actions/change-supplier/suppliers', supplierChange.suppliers);
+  router.patch('/:purchaseReceptionId/actions/change-supplier', supplierChange.save);
   router.get('/:purchaseReceptionId/actions/document', documentation.preview);
   router.post('/:purchaseReceptionId/actions/document', documentation.save);
   router.get('/:purchaseReceptionId/actions/pedimento', controller.panel('pedimento'));

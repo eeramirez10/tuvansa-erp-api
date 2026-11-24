@@ -10,6 +10,8 @@ import type {
   PurchaseReceptionSearchResult,
 } from '../../domain/repositories/purchase-receptions-repository.js';
 import { readNativePurchaseReceptionPieces } from './mysql-purchase-reception-piece-native-source.js';
+import { legacyReceiptSupplierSearch } from './legacy-receipt-supplier-search.js';
+import type { ReceiptSupplierChange } from './purchase-reception-supplier-change-reads.js';
 
 interface HeaderRow extends RowDataPacket {
   id: number; number: string; orderNumber: string; supplierReference: string;
@@ -54,14 +56,14 @@ function uniqueCustomsReceiptNumber(companyOnly: boolean) {
   )`;
 }
 
-const selectHeader = `
+const selectHeader = (supplier = legacyReceiptSupplierSearch([])) => `
   FDOC.DSEQ AS id,
   FDOC.DNUM AS number,
   FDOC.DREFER AS orderNumber,
   FDOC.DREFERELLOS AS supplierReference,
-  FDOC.PRVSEQ AS supplierId,
-  FPRV.PRVCOD AS supplierCode,
-  FPRV.PRVNOM AS supplierName,
+  ${supplier.id} AS supplierId,
+  ${supplier.code} AS supplierCode,
+  ${supplier.name} AS supplierName,
   FDOC.DDEPTO AS department,
   FDOC.DALMACEN AS warehouse,
   FDOC.DSUCURSAL AS branch,
@@ -201,7 +203,7 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
 
   private async header(where: string, parameters: Array<string | number>): Promise<PurchaseReception | null> {
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
-      `SELECT ${selectHeader}
+      `SELECT ${selectHeader()}
        FROM FDOC
        LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ
        WHERE ${documentFilter} AND ${where}
@@ -220,11 +222,12 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
     return this.header('FDOC.DNUM = ?', [number]);
   }
 
-  async search(criteria: PurchaseReceptionSearchCriteria): Promise<PurchaseReceptionSearchResult> {
+  async search(criteria: PurchaseReceptionSearchCriteria, supplierChanges: ReceiptSupplierChange[] = []): Promise<PurchaseReceptionSearchResult> {
+    const supplier = legacyReceiptSupplierSearch(supplierChanges);
     const conditions = [documentFilter];
-    const parameters: Array<string | number> = [];
+    const parameters: Array<string | number> = [...supplier.values];
     if (criteria.query !== undefined) {
-      conditions.push('(UPPER(FDOC.DNUM) LIKE UPPER(?) OR UPPER(FDOC.DREFER) LIKE UPPER(?) OR UPPER(FDOC.DREFERELLOS) LIKE UPPER(?) OR UPPER(FPRV.PRVCOD) LIKE UPPER(?) OR UPPER(FPRV.PRVNOM) LIKE UPPER(?))');
+      conditions.push(`(UPPER(FDOC.DNUM) LIKE UPPER(?) OR UPPER(FDOC.DREFER) LIKE UPPER(?) OR UPPER(FDOC.DREFERELLOS) LIKE UPPER(?) OR UPPER(${supplier.code}) LIKE UPPER(?) OR UPPER(${supplier.name}) LIKE UPPER(?))`);
       parameters.push(...Array(5).fill(`%${criteria.query}%`));
     }
     if (criteria.documentNumber !== undefined) { conditions.push('FDOC.DNUM LIKE ?'); parameters.push(`${criteria.documentNumber}%`); }
@@ -233,20 +236,20 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
     if (criteria.supplierReference !== undefined) { conditions.push('FDOC.DREFERELLOS LIKE ?'); parameters.push(`${criteria.supplierReference}%`); }
     if (criteria.deliveryNote !== undefined) { conditions.push('FDOC.DTALON LIKE ?'); parameters.push(`${criteria.deliveryNote}%`); }
     if (criteria.folio !== undefined) { conditions.push('FDOC.DFOLIO LIKE ?'); parameters.push(`${criteria.folio}%`); }
-    if (criteria.supplierCode !== undefined) { conditions.push('FPRV.PRVCOD LIKE ?'); parameters.push(`${criteria.supplierCode}%`); }
+    if (criteria.supplierCode !== undefined) { conditions.push(`${supplier.code} LIKE ?`); parameters.push(`${criteria.supplierCode}%`); }
     if (criteria.warehouse !== undefined) { conditions.push('FDOC.DALMACEN LIKE ?'); parameters.push(`${criteria.warehouse}%`); }
     const where = conditions.join(' AND ');
     const hasFilters = Object.keys(criteria).some((key) => !['offset', 'limit'].includes(key));
     const order = hasFilters ? 'FDOC.DNUM, FDOC.DSEQ' : 'FDOC.DSEQ DESC';
+    const from = `FROM FDOC LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ ${supplier.join}`;
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
-      `SELECT ${selectHeader}
-       FROM FDOC LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ
+      `SELECT ${selectHeader(supplier)} ${from}
        WHERE ${where}
        ORDER BY ${order} LIMIT ? OFFSET ?`,
       [...parameters, criteria.limit, criteria.offset],
     );
     const [countRows] = await legacyMysqlPool.execute<CountRow[]>(
-      `SELECT COUNT(*) AS total FROM FDOC LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ WHERE ${where}`,
+      `SELECT COUNT(*) AS total ${from} WHERE ${where}`,
       parameters,
     );
     return { items: rows.map((row) => toReception(row, [])), total: countRows[0]?.total ?? 0 };

@@ -38,7 +38,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     ((['POST', 'PATCH'].includes(req.method) && /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/pieces\/lines\/[1-9]\d*$/.test(path)) ||
       (req.method === 'PATCH' && /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/pieces\/[1-9]\d*\/serial$/.test(path)));
   const editReceptionComments = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
-    /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/comments$/.test(path);
+    /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/(comments|change-supplier)$/.test(path);
   const documentReception = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/document$/.test(path);
   const createSupplierPayment = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&

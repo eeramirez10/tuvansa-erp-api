@@ -74,6 +74,6 @@ export class MysqlSupplierPaymentReferences implements SupplierPaymentReferences
     const [rules] = configuration;
     if (!rules || configuration.length !== 1) return null;
     const { policyType, supplierAccount, supplierAccountName } = rules;
-    return { policyType, supplierAccount, supplierAccountName: liability?.name ?? supplierAccountName, bankAccounts };
+    return { policyType, supplierAccount, supplierAccountName: liability?.name || supplierAccountName, bankAccounts };
   }
 }

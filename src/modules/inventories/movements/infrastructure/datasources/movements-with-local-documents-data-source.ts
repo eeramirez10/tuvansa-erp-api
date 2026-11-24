@@ -1,12 +1,14 @@
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { isLocalPurchaseReceptionId, readLocalPurchaseReceptions } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { isLocalPurchaseReceptionCancellationId, purchaseReceptionCancellationsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
+import { readReceiptSupplierChanges, receiptSupplierChangesAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-supplier-change-reads.js';
 import { isLocalSalesRemissionId, readSalesRemissions } from '../../../../sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { isLocalSalesRemissionCancellationId, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { MovementCancellationDataSource, MovementsDataSource } from '../../domain/datasources/movements-data-source.js';
 import type { MovementDocument, MovementHeader } from '../../domain/entities/inventory-movement.js';
 import type { MovementSearchCriteria, MovementSearchResult } from '../../domain/repositories/movements-repository.js';
+import { LegacyMysqlMovementsDataSource } from './legacy-mysql-movements-data-source.js';
 import { isLocalInventoryAdjustmentId, readLocalInventoryAdjustments } from './postgres-inventory-adjustments.js';
 
 const searchLimit = 1000;
@@ -23,6 +25,19 @@ function readTable<T>(table: LocalMovementTable, fallback: T, read: (client: Pos
   if (table === 'inventory_adjustments') return readLocalInventoryAdjustments(fallback, read);
   return readLocalPurchaseReceptions(fallback, async (client) => table === 'purchase_receptions' || await purchaseReceptionCancellationsAvailable(client)
     ? read(client) : fallback);
+}
+
+async function inventoryMovementSource(client: PostgresClient, table: LocalMovementTable) {
+  if (table !== 'purchase_receptions' || !await receiptSupplierChangesAvailable(client)) {
+    return `tuvansa.${table}`;
+  }
+  return `(
+    SELECT r.id,CASE WHEN c.receipt_id IS NULL THEN r.movement
+      ELSE jsonb_set(r.movement,'{header,supplierCode}',to_jsonb(c.supplier_code)) END AS movement
+    FROM tuvansa.purchase_receptions r LEFT JOIN tuvansa.purchase_reception_supplier_changes c
+      ON c.company_id=r.company_id AND c.receipt_id=r.id AND c.receipt_number=r.number
+      AND c.original_supplier_id=(r.result #>> '{reception,supplier,id}')::bigint AND NOT c.historical
+  ) AS purchase_movements`;
 }
 
 export class MovementsWithLocalDocumentsDataSource implements MovementsDataSource, MovementCancellationDataSource {
@@ -60,9 +75,10 @@ export class MovementsWithLocalDocumentsDataSource implements MovementsDataSourc
     const prefix = Math.min(searchLimit, criteria.offset + criteria.limit);
     values.push(prefix);
     const searchTable = (table: LocalMovementTable) => readTable<MovementSearchResult>(table, empty, async (client) => {
+      const source = await inventoryMovementSource(client, table);
       const { rows: [row] } = await client.query<{ items: MovementHeader[]; total: string }>(
         `WITH matched AS (
-           SELECT id, movement->'header' AS header FROM tuvansa.${table}
+           SELECT id, movement->'header' AS header FROM ${source}
            WHERE ${conditions.join(' AND ')}
            ORDER BY lower(movement #>> '{header,${sort}}'), id LIMIT ${searchLimit}
          )
@@ -90,15 +106,26 @@ export class MovementsWithLocalDocumentsDataSource implements MovementsDataSourc
     };
   }
 
-  findById(id: number): Promise<MovementDocument | null> {
+  async findById(id: number): Promise<MovementDocument | null> {
     const table = isLocalPurchaseReceptionId(id) ? 'purchase_receptions' : isLocalSalesRemissionId(id) ? 'sales_remissions'
       : isLocalPurchaseReceptionCancellationId(id) ? 'purchase_reception_cancellations'
         : isLocalSalesRemissionCancellationId(id) ? 'sales_remission_cancellations'
           : isLocalInventoryAdjustmentId(id) ? 'inventory_adjustments' : null;
-    if (!table) return this.base.findById(id);
+    if (!table) {
+      if (this.base instanceof LegacyMysqlMovementsDataSource) {
+        const changes = await readReceiptSupplierChanges({ receiptIds: [id] });
+        return this.base.findById(id, changes.filter((change) => change.historical));
+      }
+      const document = await this.base.findById(id);
+      if (!document || document.header.type !== 'RA' || document.header.company !== 1) return document;
+      const [change] = await readReceiptSupplierChanges({ receiptIds: [id] });
+      return change?.historical && change.receiptNumber === document.header.document
+        ? { ...document, header: { ...document.header, supplierCode: change.supplier.code } } : document;
+    }
     return readTable<MovementDocument | null>(table, null, async (client) => {
+      const source = await inventoryMovementSource(client, table);
       const { rows: [row] } = await client.query<{ movement: MovementDocument }>(
-        `SELECT movement FROM tuvansa.${table} WHERE id = $1`, [id],
+        `SELECT movement FROM ${source} WHERE id = $1`, [id],
       );
       return row?.movement ?? null;
     });

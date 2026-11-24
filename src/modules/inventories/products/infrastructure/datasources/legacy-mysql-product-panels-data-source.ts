@@ -3,6 +3,8 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import { excludeRemovedPurchaseOrders, legacyPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import { purchaseOrderLineAssignments } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-confirmation.js';
 import { purchaseOrderSupplierChanges } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-suppliers.js';
+import { legacyReceiptSupplierSearch } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/legacy-receipt-supplier-search.js';
+import { readReceiptSupplierChanges } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-supplier-change-reads.js';
 import type { ProductPanelsDataSource } from '../../domain/datasources/product-panels-data-source.js';
 import type {
   ProductPanelCriteria,
@@ -59,6 +61,22 @@ const supplierOrderScope = `FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
   LEFT JOIN fpenc ON fplin.PESEQ = fpenc.PESEQ
   WHERE finv.ISEQ = ? AND fprv.PRVSEQ <> 0 AND fpenc.PEMULTICIA = 1 AND PESPEDIDO IN (2,3)
     AND (PESPEDIDO = 2 OR COALESCE((SELECT CIAOTROSDESC = 99 AND CIAKYT = 0 FROM fcia WHERE CIASEQ = 1), 0) = 0)`;
+
+const productSupplierSource = { document: 'fdoc', supplier: 'fprv', supplierId: 'fprv.PRVSEQ' };
+function supplierPurchasesSql(detail: boolean, supplier = legacyReceiptSupplierSearch([], productSupplierSource)) {
+  const scope = `FROM faxinv
+    LEFT JOIN fprv ON faxinv.PRVSEQ=fprv.PRVSEQ
+    LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
+    ${supplier.join}
+    WHERE faxinv.ISEQ=? AND ${supplier.id}<>0 AND DEST=0 AND DMULTICIA=1 AND AIMES=1 AND DESFACT=2`;
+  if (detail) return `SELECT AISEQ AS id, ${supplier.code} AS supplierCode, ${supplier.name} AS supplierName,
+    AICANTF AS quantity, AIPRECIO AS price, DNUM AS document, DFECHA AS date,
+    AIPZAS AS pieces, DMONEDA AS currency, DTIPOCINI AS documentType, (AICANTF * AIPRECIO) AS amount
+    ${scope} ORDER BY AISEQ`;
+  return `SELECT MIN(AISEQ) AS id, ${supplier.code} AS supplierCode, ${supplier.name} AS supplierName,
+    SUM(AICANTF) AS quantity, SUM(AICANTF * AIPRECIO) AS amount ${scope}
+    GROUP BY ${supplier.id}, supplierCode, supplierName ORDER BY supplierCode`;
+}
 const customerClassifierFields = [
   'fcli.CLIPAR1', 'fcli.CLIPAR2', 'fcli.CLIPAR3', 'fcli.CLIPAR4', 'fcli.CLIPAR5',
   'fcli.CLIPAR6', 'fcli.CLIPAR7', 'fcli.CLIPAR8', 'fcli.CLIPAR9',
@@ -450,14 +468,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'supplier-purchases': {
     section: 'queries', button: 'Compras por proveedor',
-    sql: `SELECT MIN(AISEQ) AS id, PRVCOD AS supplierCode,
-      PRVNOM AS supplierName, SUM(AICANTF) AS quantity,
-      SUM(AICANTF * AIPRECIO) AS amount FROM faxinv
-      LEFT JOIN fprv ON faxinv.PRVSEQ=fprv.PRVSEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ=? AND fprv.PRVSEQ<>0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 AND DESFACT=2
-      GROUP BY fprv.PRVSEQ, PRVCOD, PRVNOM ORDER BY PRVCOD`, parameterMode: 'id',
+    sql: supplierPurchasesSql(false), parameterMode: 'id',
   },
   'supplier-purchases-dt': {
     section: 'queries', button: 'Compras por proveedor DT',
@@ -472,14 +483,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
   },
   'supplier-purchases-detail': {
     section: 'queries', button: 'Compras desglosadas',
-    sql: `SELECT AISEQ AS id, PRVCOD AS supplierCode, PRVNOM AS supplierName,
-      AICANTF AS quantity, AIPRECIO AS price, DNUM AS document, DFECHA AS date,
-      AIPZAS AS pieces, DMONEDA AS currency, DTIPOCINI AS documentType,
-      (AICANTF * AIPRECIO) AS amount FROM faxinv
-      LEFT JOIN fprv ON faxinv.PRVSEQ=fprv.PRVSEQ
-      LEFT JOIN fdoc ON faxinv.DSEQ=fdoc.DSEQ
-      WHERE faxinv.ISEQ=? AND fprv.PRVSEQ<>0 AND DEST=0 AND DMULTICIA=1
-      AND AIMES=1 AND DESFACT=2 ORDER BY AISEQ`, parameterMode: 'id',
+    sql: supplierPurchasesSql(true), parameterMode: 'id',
   },
   'annual-purchases': {
     section: 'queries', button: 'Compras anuales',
@@ -602,6 +606,8 @@ const parametersFor = (
 };
 
 export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSource {
+  constructor(private readonly receiptSupplierChanges = () => readReceiptSupplierChanges({ historical: true })) {}
+
   protected async countLedgerItems(productId: number, filters?: ProductLedgerFilters): Promise<number> {
     const conditions = ledgerConditions(filters?.warehouse, filters?.movementType, filters?.lotId);
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { count: number | string }>>(
@@ -689,9 +695,13 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     const params = panel === 'customer-orders-ct' || panel === 'customer-sales-ct'
       ? await this.getProductRootRange(product)
       : parametersFor(definition.parameterMode, product);
+    const supplierPurchases = panel === 'supplier-purchases' || panel === 'supplier-purchases-detail'
+      ? legacyReceiptSupplierSearch(await this.receiptSupplierChanges(), productSupplierSource) : undefined;
+    const sql = supplierPurchases?.join ? supplierPurchasesSql(panel === 'supplier-purchases-detail', supplierPurchases) : definition.sql;
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
-      `${definition.sql}${conditions.sql}${fulfillmentFilter}${exclusions.sql}${order} LIMIT ? OFFSET ?`,
+      `${sql}${conditions.sql}${fulfillmentFilter}${exclusions.sql}${order} LIMIT ? OFFSET ?`,
       [
+        ...(supplierPurchases?.values ?? []),
         ...params,
         ...conditions.params,
         ...exclusions.parameters,

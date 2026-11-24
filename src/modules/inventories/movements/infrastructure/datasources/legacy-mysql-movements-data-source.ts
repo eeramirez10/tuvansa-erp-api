@@ -1,5 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { legacyReceiptSupplierSearch } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/legacy-receipt-supplier-search.js';
+import { readReceiptSupplierChanges, type ReceiptSupplierChange } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-supplier-change-reads.js';
 import type { MovementsDataSource } from '../../domain/datasources/movements-data-source.js';
 import type { MovementDocument, MovementHeader, MovementLine } from '../../domain/entities/inventory-movement.js';
 import type { MovementSearchCriteria, MovementSearchResult } from '../../domain/repositories/movements-repository.js';
@@ -8,14 +10,14 @@ interface HeaderRow extends RowDataPacket, MovementHeader {}
 interface LineRow extends RowDataPacket, Omit<MovementLine, 'pieces'> {}
 interface CountRow extends RowDataPacket { total: number }
 
-const headerFields = `
+const headerFields = (supplierCode = 'FPRV.PRVCOD') => `
   FDOC.DSEQ AS id,
   COALESCE(FDOC.DNUM, '') AS document,
   COALESCE(FDOC.DFECHA, '') AS date,
   COALESCE(FDOC.DREFER, '') AS reference,
   COALESCE(FDOC.DREFERELLOS, '') AS reference2,
   COALESCE(FDOC.DALMACEN, '') AS warehouse,
-  COALESCE(FPRV.PRVCOD, '') AS supplierCode,
+  COALESCE(${supplierCode}, '') AS supplierCode,
   COALESCE(FCLI.CLICOD, '') AS customerCode,
   COALESCE(FCLI.CLINOM, '') AS customerName,
   COALESCE(FDOC.DITIPMV, '') AS type,
@@ -50,15 +52,20 @@ const lineFields = `
 const prefix = (value: string): string => value.replace(/[!%_]/g, '!$&') + '%';
 
 export class LegacyMysqlMovementsDataSource implements MovementsDataSource {
+  constructor(private readonly supplierChanges = () => readReceiptSupplierChanges({ historical: true })) {}
+
   async search(criteria: MovementSearchCriteria): Promise<MovementSearchResult> {
     const conditions = ['FDOC.DESINV = 1'];
     const parameters: string[] = [];
+    if (![criteria.document, criteria.reference, criteria.reference2, criteria.warehouse, criteria.supplier, criteria.customer, criteria.date]
+      .some((value) => value !== undefined)) return { items: [], total: 0 };
+    const supplier = legacyReceiptSupplierSearch(await this.supplierChanges());
     const filters = [
       ['FDOC.DNUM', criteria.document],
       ['FDOC.DREFER', criteria.reference],
       ['FDOC.DREFERELLOS', criteria.reference2],
       ['FDOC.DALMACEN', criteria.warehouse],
-      ['FPRV.PRVCOD', criteria.supplier],
+      [supplier.code, criteria.supplier],
       ['FCLI.CLICOD', criteria.customer],
     ] as const;
     for (const [field, value] of filters) {
@@ -75,28 +82,29 @@ export class LegacyMysqlMovementsDataSource implements MovementsDataSource {
       ['FDOC.DFECHA', criteria.date],
       ['FDOC.DREFER', criteria.reference],
       ['FDOC.DREFERELLOS', criteria.reference2],
-      ['FPRV.PRVCOD', criteria.supplier],
+      [supplier.code, criteria.supplier],
       ['FCLI.CLICOD', criteria.customer],
     ] as const;
     const sort = sortFields.find(([, value]) => value !== undefined)?.[0] ?? 'FDOC.DNUM';
     const limit = Math.max(0, Math.min(criteria.limit, searchLimit - criteria.offset));
-    const scope = `${headers} WHERE ${conditions.join(' AND ')}`;
+    const scope = `${headers} ${supplier.join} WHERE ${conditions.join(' AND ')}`;
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
-      `SELECT ${headerFields} ${scope}
+      `SELECT ${headerFields(supplier.code)} ${scope}
        ORDER BY ${sort}, FDOC.DSEQ LIMIT ? OFFSET ?`,
-      [...parameters, limit, criteria.offset],
+      [...supplier.values, ...parameters, limit, criteria.offset],
     );
     const [count] = await legacyMysqlPool.execute<CountRow[]>(
       `SELECT COUNT(*) AS total FROM (SELECT 1 ${scope} LIMIT ?) AS matched`,
-      [...parameters, searchLimit],
+      [...supplier.values, ...parameters, searchLimit],
     );
     return { items: rows, total: Number(count[0]?.total ?? 0) };
   }
 
-  async findById(id: number): Promise<MovementDocument | null> {
+  async findById(id: number, changes: ReceiptSupplierChange[] = []): Promise<MovementDocument | null> {
+    const supplier = legacyReceiptSupplierSearch(changes);
     const [result] = await legacyMysqlPool.execute<HeaderRow[]>(
-      `SELECT ${headerFields} ${headers} WHERE FDOC.DSEQ = ? LIMIT 1`,
-      [id],
+      `SELECT ${headerFields(supplier.code)} ${headers} ${supplier.join} WHERE FDOC.DSEQ = ? LIMIT 1`,
+      [...supplier.values, id],
     );
     const header = result[0];
     if (!header) return null;

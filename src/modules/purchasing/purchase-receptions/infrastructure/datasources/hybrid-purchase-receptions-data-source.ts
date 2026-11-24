@@ -14,6 +14,7 @@ import { readLocalReceptionView, type LocalReceptionViewRecord } from './local-p
 import { readHistoricalReceptionCancellations } from './historical-purchase-reception-cancellation-reads.js';
 import { supplierPaymentReversalSql, type PurchasePostingReversalReference } from './purchase-posting-reversal-reads.js';
 import { supplierPaymentReversalsAvailable } from './purchase-posting-reversal-tables.js';
+import { withReceiptPieceLines, withReceiptPieces } from './purchase-reception-piece-reads.js';
 
 const reception = 'reception';
 const empty = { items: [], total: 0 };
@@ -39,13 +40,18 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     if (!isLocalDocument(id)) return this.withHistoricalCancellation(await this.legacy.findById(id));
     const local = await this.record('id', id);
     if (!local) return null;
-    return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
+    return this.localDetail(local.reception);
   }
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
     if (!local) return this.withHistoricalCancellation(await this.legacy.findByNumber(number));
-    return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
+    return this.localDetail(local.reception);
+  }
+
+  private async localDetail(receipt: PurchaseReceptionProps) {
+    const document = /^RW\d/.test(receipt.number) ? await withReceiptPieceLines(receipt) : receipt;
+    return (await this.withBalances([PurchaseReception.create(document)]))[0]!;
   }
 
   private async withHistoricalCancellations(items: PurchaseReception[]) {
@@ -67,7 +73,10 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
   }
 
   private async withHistoricalCancellation(receipt: PurchaseReception | null) {
-    return receipt ? (await this.withHistoricalCancellations([receipt]))[0]! : null;
+    if (!receipt) return null;
+    const [item] = await this.withHistoricalCancellations([receipt]);
+    const document = item!.toPrimitives();
+    return isHistoricalRA(document.number) ? PurchaseReception.create(await withReceiptPieceLines(document)) : item!;
   }
 
   private async withBalances(items: PurchaseReception[]) {
@@ -157,12 +166,13 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     if (!local) return this.withHistoricalCancellation(legacy);
     const compare = legacy ? local.number.localeCompare(legacy.toPrimitives().number, 'en') : 0;
     if (legacy && (previous ? compare < 0 : compare > 0)) return this.withHistoricalCancellation(legacy);
-    return (await this.withBalances([PurchaseReception.create(local)]))[0]!;
+    return this.localDetail(local);
   }
 
   async getPanel(id: number, key: PurchaseReceptionPanelKey): Promise<PurchaseReceptionPanelResult | null> {
     if (!isLocalDocument(id)) {
       const panel = await this.legacy.getPanel(id, key);
+      if (panel && key === 'pieces') return withReceiptPieces(panel);
       if (!panel || key !== 'auxiliary' || !isHistoricalRA(panel.purchaseReception.number)) return panel;
       const [cancellation] = await readHistoricalReceptionCancellations({ receiptIds: [id] });
       if (!cancellation) return panel;
@@ -180,6 +190,9 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const local = await this.record('id', id);
     if (!local) return null;
     const { number, dates, orderNumber, supplierReference, classifications, cancellation, pedimento } = local.reception;
+    if (key === 'pieces') {
+      return withReceiptPieces({ purchaseReception: { id, number }, key, section: 'actions', button: 'Piezas', source: 'postgres', items: [] });
+    }
     if (key === 'classifications') {
       return this.legacy.classificationPanel({ id, number }, classifications, 'postgres');
     }

@@ -7,14 +7,19 @@ export class ProductOtherDataRepositoryImpl implements ProductOtherDataRepositor
     private readonly catalogSource: ProductOtherDataCatalogSource,
     private readonly storage: ProductOtherDataStorageDataSource,
     private readonly edits?: Pick<ProductCatalogEditDataSource, 'get'>,
+    private readonly receivedWithPieces?: (productId: number) => Promise<boolean>,
   ) {}
 
   async catalog(productId: number) {
     const catalog = await this.catalogSource.get(productId);
     if (!catalog) return null;
-    const edits = await this.edits?.get(productId);
+    const [edits, received] = await Promise.all([this.edits?.get(productId), this.receivedWithPieces?.(productId)]);
     const description = edits?.changes.description;
-    return description === undefined ? catalog : { ...catalog, product: { ...catalog.product, description } };
+    return {
+      ...catalog,
+      product: description === undefined ? catalog.product : { ...catalog.product, description },
+      values: received ? { ...catalog.values, controlsPieces: true } : catalog.values,
+    };
   }
 
   writable(productId: number) {

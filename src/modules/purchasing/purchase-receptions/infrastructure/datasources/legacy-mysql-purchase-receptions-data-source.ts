@@ -9,6 +9,7 @@ import type {
   PurchaseReceptionSearchCriteria,
   PurchaseReceptionSearchResult,
 } from '../../domain/repositories/purchase-receptions-repository.js';
+import { readNativePurchaseReceptionPieces } from './mysql-purchase-reception-piece-native-source.js';
 
 interface HeaderRow extends RowDataPacket {
   id: number; number: string; orderNumber: string; supplierReference: string;
@@ -282,6 +283,7 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
     const identity = identities[0];
     if (identity === undefined) return null;
     if (key === 'pedimento') return this.customsPanel(identity);
+    if (key === 'pieces') return this.piecesPanel(identity);
 
     if (key === 'auxiliary') {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
@@ -305,6 +307,14 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
 
     const reception = await this.findById(id);
     return this.classificationPanel(identity, reception?.toPrimitives().classifications ?? [], 'mysql');
+  }
+
+  private async piecesPanel(identity: IdentityRow): Promise<PurchaseReceptionPanelResult> {
+    const rows = await readNativePurchaseReceptionPieces({ id: identity.id });
+    return {
+      purchaseReception: identity, key: 'pieces', section: 'actions', button: 'Piezas', source: 'mysql',
+      items: rows.map((row) => ({ ...row })),
+    };
   }
 
   private async customsPanel(identity: IdentityRow): Promise<PurchaseReceptionPanelResult> {

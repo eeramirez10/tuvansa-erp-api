@@ -16,6 +16,7 @@ import { historicalReceptionCancellationsOn } from './historical-purchase-recept
 import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.js';
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { verifyReceiptLayerStock } from './purchase-reception-peps.js';
+import { lockPurchaseReceptionPieces, retirePurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
 const firstId = purchaseReceptionCancellationIdStart;
@@ -160,6 +161,7 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
       return requestResult(client, companyId, input.requestKey, fingerprint);
     };
     const verify = async (client: PostgresClient) => {
+      await lockPurchaseReceptionPieces(client, companyId, source.id);
       const current = source.historical
         ? await this.readHistorical(client, companyId, source.id) : await original(client, companyId, source.id, true);
       if (!current) throw new NotFoundError('Recepción de compra');
@@ -238,6 +240,7 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
         await client.query('UPDATE tuvansa.inventory_adjustment_layers SET initial=0 WHERE id=ANY($1::bigint[])',
           [stock.layers.lines.map(({ lotId }) => lotId)]);
       }
+      await retirePurchaseReceptionPieces(client, companyId, source.id);
       return result;
     }, verify);
   }

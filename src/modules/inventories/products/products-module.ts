@@ -1,4 +1,5 @@
 import type { Router } from 'express';
+import { purchaseReceptionPieceProducts } from '../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-piece-reads.js';
 import { CreateProduct } from './application/use-cases/create-product.js';
 import { DeleteProduct } from './application/use-cases/delete-product.js';
 import { EditProductClassification } from './application/use-cases/edit-product-classification.js';
@@ -45,6 +46,7 @@ export const createProductsModule = (): Router => {
     new LegacyMysqlProductOtherDataSource(),
     new PostgresProductOtherDataSource(env.INVENTORY_OTHER_DATA_PILOT_PRODUCTS, undefined, undefined, editProducts, true),
     edits,
+    async (id) => (await purchaseReceptionPieceProducts([id])).has(id),
   );
   const repository = new ProductsRepositoryImpl(dataSource, classificationRepository, otherDataRepository, edits);
   const panelsRepository = new ProductPanelsRepositoryImpl(

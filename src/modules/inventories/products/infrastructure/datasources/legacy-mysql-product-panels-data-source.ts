@@ -533,7 +533,7 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
       CAJSERIE AS serialNumber, CAJINV AS inventoryDocument,
       CAJPEDIDO AS orderNumber, CAJFACTURA AS invoiceNumber,
       CAJALM AS warehouse, CAJREFER AS reference, CAJFECHA AS date,
-      CAJRECEPCION AS receivedAt, CAJMERMA AS waste, CAJLOTE AS lot
+      CAJRECEPCION AS receiptNumber, CAJRECEPCION AS receivedAt, CAJMERMA AS waste, CAJLOTE AS lot
       FROM fcajas WHERE ISEQ=? AND CAJFACTURA<>'' ORDER BY CAJSEQ`, parameterMode: 'id',
   },
   'work-in-progress': {

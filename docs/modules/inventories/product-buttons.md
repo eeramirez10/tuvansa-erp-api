@@ -180,7 +180,7 @@ y muestran los saldos ajustados y las capas creadas en PostgreSQL.
 | Compras anuales | `/:productId/queries/purchases/annual` | `faxinv`, `fdoc`, `fprv` | `EINV#8/19` → `EINV2#4` |
 | Compras anuales resumen | `/:productId/queries/purchases/annual-summary` | `faxinv`, `fdoc` | `EINV#8/27` → `EINV2#21` |
 | Piezas | `/:productId/queries/pieces` | No disponible: esta version no incluye PIEZAS | `EINV#8/20` → `EINV#28` |
-| Piezas surtidas | `/:productId/queries/pieces/fulfilled` | `fcajas` | `EINV#8/21` → `EINV#28A` |
+| Piezas surtidas | `/:productId/queries/pieces/fulfilled` | `FCAJAS` con factura vinculada. **Recepción** muestra el folio de `CAJRECEPCION` | `EINV#8/21` → `EINV#28A` |
 | W.I.P. | `/:productId/queries/work-in-progress` | `ftikets.TKTPROD` | `EINV#8/22` → `EINV#42` |
 | W.I.P. `CT` | `/:productId/queries/work-in-progress/ct` | `ftikets` por rango de producto | `EINV#8/23` → `EINV#42A` |
 | E.D.I. | `/:productId/queries/edi` | `fvsucursal`, `fedi`, `fcli` | `EINV#8/24` → `EINV#44` |

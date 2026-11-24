@@ -172,7 +172,9 @@ registro de origen. Los efectos requieren una orden vigente con partidas
 vinculadas, unidades base con factor uno y cantidades libres suficientes.
 La aplicación verifica otra vez la recepción y las existencias bajo los
 bloqueos de escritura. Los pagos históricos, costos estándar, impuestos
-especiales, capas, cajas, piezas físicas o lotes quedan fuera de este flujo.
+especiales, capas, piezas físicas nativas o lotes quedan fuera de este flujo.
+Si la recepción tiene piezas capturadas en la web, la cancelación las retira
+en la misma transacción al revertir la entrada. El historial de captura se conserva.
 Para la RA histórica, `FDOC.DPZAS` puede contar las unidades ordinarias.
 El control de piezas físicas usa `FCAJAS` y las partidas de `FAXINV`.
 
@@ -190,12 +192,34 @@ por pago PP y RA09280 el bloqueo por existencia insuficiente.
 |---|---|---|
 | Auxiliar | `GET /:id/actions/auxiliary` | `FAX LEFT JOIN FDOC`, por `DSEQ`, orden `ASEQ` |
 | Clasificar | `GET /:id/actions/classifications` | `DPAR1..DPAR9`; catalogos `FAG`, `AGT 1..9`, `AGTIPO IN (0,2)` |
+| Piezas | `GET /:id/actions/pieces` | Derivada de `EINV#28D/240`. Consulta `FCAJAS.CAJRECEPCION` por folio exacto y agrega las piezas y series guardadas en PostgreSQL |
 
 El modal **Auxiliar del documento** presenta Fecha, T.M., Referencia, Cargos y Abonos, mas el total inferior. **Clasificar** presenta nueve clasificadores y conserva `Guardar` deshabilitado en el frontend.
 
+## Piezas en una recepción
+
+En German de pruebas, **Piezas**, **Alta Piezas** y **Edita pzas** abren en
+la recepción `RA09214`. **Alta Piezas L.** muestra que el complemento
+está desactivado. La comprobación usa `ERECEPC#13/20,21,29,71`,
+`EINV#22A/401,411`, `EINV#28D/14,18,240` y `ECIA#11JC/600`.
+
+| Acción | Endpoint | Efecto |
+| --- | --- | --- |
+| Alta Piezas / Edita pzas | `GET /:id/actions/pieces/lines/:lineId` | Lee la partida seleccionada, su valor de piezas, la cantidad disponible y la serie propuesta por el consecutivo PZ |
+| Alta Piezas | `POST /:id/actions/pieces/lines/:lineId` | Registra una pieza, suma la cantidad a la partida y refleja el control de piezas en **Inventarios → Otros**. Valida el saldo, la serie única y la revisión de la partida |
+| Edita pzas | `PATCH /:id/actions/pieces/lines/:lineId` | Guarda el texto de la partida. Una captura libre puede impedir una alta posterior hasta que el valor vuelva a ser numérico |
+| Cambiar serie | `PATCH /:id/actions/pieces/:pieceId/serial` | Cambia la serie de la pieza seleccionada tras verificar el número anterior y la disponibilidad de la nueva serie |
+
+**Filtrar producto** conserva las filas con el código seleccionado y recalcula
+los totales visibles. Las altas y cambios de serie de la web quedan en
+PostgreSQL con referencia al documento de origen. La captura manual usa el
+almacén de la partida y el pedimento de la recepción. La entrada original
+ya registró la existencia, el pasivo y la póliza. Una pieza entra en
+**Inventarios → Piezas surtidas** cuando tiene una factura vinculada.
+
 ## Botones conservados sin mutacion
 
-La vista conserva Alta Piezas, Alta Piezas L., Cambia Prv, Comentarios, Etiquetas, Documenta, Imprimir, Piezas, Tiket > Factura, Traspaso, Reporte pedimento, Pedimento y Edita pzas.
+La vista conserva Cambia Prv, Comentarios, Etiquetas, Documenta, Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
 
 Estas acciones secundarias se muestran con un aviso de sólo lectura.
 

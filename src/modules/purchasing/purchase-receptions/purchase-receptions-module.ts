@@ -8,6 +8,7 @@ import { CreatePurchaseReception } from './application/use-cases/create-purchase
 import { GetPurchaseReceptionByNumber } from './application/use-cases/get-purchase-reception-by-number.js';
 import { GetPurchaseReceptionPanel } from './application/use-cases/get-purchase-reception-panel.js';
 import { GetPurchaseReception } from './application/use-cases/get-purchase-reception.js';
+import { ManagePurchaseReceptionPieces } from './application/use-cases/manage-purchase-reception-pieces.js';
 import { NavigatePurchaseReception } from './application/use-cases/navigate-purchase-reception.js';
 import { ReversePurchasePosting } from './application/use-cases/reverse-purchase-posting.js';
 import { SearchPurchaseReceptions } from './application/use-cases/search-purchase-receptions.js';
@@ -16,14 +17,17 @@ import { HybridPurchaseReceptionsDataSource } from './infrastructure/datasources
 import { MysqlHistoricalReceptionCancellationSource } from './infrastructure/datasources/mysql-historical-reception-cancellation-source.js';
 import { MysqlPostingReversalReferences } from './infrastructure/datasources/mysql-posting-reversal-references.js';
 import { MysqlPurchaseExpenseReferences } from './infrastructure/datasources/mysql-purchase-expense-references.js';
+import { MysqlPurchaseReceptionPieceNativeSource } from './infrastructure/datasources/mysql-purchase-reception-piece-native-source.js';
 import { MysqlPurchaseReceptionWriteReferences } from './infrastructure/datasources/mysql-purchase-reception-write-references.js';
 import { PostgresPurchaseReceptionWrites } from './infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { PostgresPurchaseReceptionCancellations } from './infrastructure/datasources/postgres-purchase-reception-cancellations.js';
+import { PostgresPurchaseReceptionPieces } from './infrastructure/datasources/postgres-purchase-reception-pieces.js';
 import { PostgresPurchaseExpenses } from './infrastructure/datasources/postgres-purchase-expenses.js';
 import { PostgresPurchasePostingReversals } from './infrastructure/datasources/postgres-purchase-posting-reversals.js';
 import { PurchaseReceptionsRepositoryImpl } from './infrastructure/repositories/purchase-receptions-repository-impl.js';
 import { PurchaseReceptionsController } from './presentation/http/purchase-receptions-controller.js';
 import { createPurchaseExpenseRouter } from './presentation/http/purchase-expense-routes.js';
+import { PurchaseReceptionPiecesController } from './presentation/http/purchase-reception-pieces-controller.js';
 import { createPurchaseReceptionsRouter } from './presentation/http/purchase-receptions-routes.js';
 
 export const createPurchaseReceptionsModule = (): Router => {
@@ -49,5 +53,8 @@ export const createPurchaseReceptionsModule = (): Router => {
   const receiptCancellations = new CancelPurchaseReception(
     new PostgresPurchaseReceptionCancellations(edits, undefined, undefined, historical), receptionReferences, fiscal,
   );
-  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations);
+  const pieces = new PurchaseReceptionPiecesController(
+    new ManagePurchaseReceptionPieces(new PostgresPurchaseReceptionPieces(new MysqlPurchaseReceptionPieceNativeSource())),
+  );
+  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces);
 };

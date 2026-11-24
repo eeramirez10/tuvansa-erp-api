@@ -6,6 +6,7 @@ import { localProductLedger } from './local-product-ledger.js';
 import { purchaseReceptionProductInventory } from './purchase-reception-product-inventory.js';
 import { localSalesProductStocks } from './local-sales-product-inventory.js';
 import { catalogProductsById, isNewCatalogProduct } from './product-catalog-references.js';
+import { receiptPieceSerialOverrides } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-piece-reads.js';
 import { adjustmentLotState, inactivePepsOrder, scaledLayerStock, type AdjustmentLayer } from '../../../movements/infrastructure/datasources/inventory-adjustment-layers.js';
 
 interface WarehouseRow extends RowDataPacket {
@@ -35,6 +36,13 @@ export class ProductPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlPr
     const localOnly = isNewCatalogProduct(productId) && (layers || panel === 'warehouses' || panel === 'ledger');
     const result = localOnly ? await this.localCatalogPanel(productId, panel, criteria) : await super.getPanel(productId, panel, criteria);
     if (!result) return result;
+    if (panel === 'fulfilled-pieces' && result.items.length) {
+      const serials = await receiptPieceSerialOverrides(result.items.map((row) => Number(row.id)));
+      if (serials.size) return { ...result, items: result.items.map((row) => {
+        const override = serials.get(Number(row.id));
+        return override && override.originalSerial === row.serialNumber ? { ...row, serialNumber: override.serialNumber } : row;
+      }) };
+    }
     if (layers) return this.mergeLayers(productId, panel, criteria, result, localOnly);
     if (panel === 'ledger') {
       const { limit, offset, ledger } = criteria;

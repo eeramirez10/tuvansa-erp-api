@@ -8,6 +8,7 @@ import { assertActivePurchaseOrder, lockPurchaseOrderWrite, readPurchaseOrderRem
 import { readPurchaseOrderSupplierChanges } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-suppliers.js';
 import { assertActiveCatalogProducts } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { assertActiveSupplierCatalog } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
+import { lockPurchasePieceSerials, receiptUsesPieceSerial } from '../../../purchase-receptions/infrastructure/datasources/purchase-reception-piece-reads.js';
 import type {
   PurchaseOrderEditSnapshot, PurchaseOrderEditStorage, PurchaseOrderStockChange,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
@@ -611,6 +612,7 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   async savePieces(snapshot: PurchaseOrderEditSnapshot, products: PurchaseOrderPieceGroup[]): Promise<void> {
     await this.transaction(async (client) => {
       await this.saveRevision(client, snapshot, 'pieces');
+      await lockPurchasePieceSerials(client);
       const count = products.reduce((total, { items }) => total + items.filter(({ id }) => id === 0).length, 0);
       const { rows } = count ? await client.query<{ id: string; serial: string }>(
         `SELECT number AS id, 'W' || LPAD((number - 6599999999999)::text, 8, '0') AS serial
@@ -626,6 +628,9 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
         const serials = saved.map(({ serial }) => serial);
         if (new Set(serials).size !== serials.length) {
           throw new ConflictError('La serie ya existe para el producto.', 'PURCHASE_ORDER_PIECE_SERIAL_CONFLICT');
+        }
+        if (await receiptUsesPieceSerial(client, serials)) {
+          throw new ConflictError('La serie ya está registrada en una recepción.', 'PURCHASE_ORDER_PIECE_SERIAL_CONFLICT');
         }
         await client.query(
           `INSERT INTO tuvansa.purchase_order_pieces(order_id,order_number,product_code,items) VALUES($1,$2,$3,$4::jsonb)

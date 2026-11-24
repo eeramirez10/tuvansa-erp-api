@@ -12,6 +12,12 @@
 @historicalReceptionId = 343646
 @cancellationKey = generar-uuid-por-cancelacion
 @cancellationDate = copiar-fecha-del-preview
+@piecesReceiptId = copiar-id-de-recepcion-de-prueba
+@piecesLineId = copiar-id-de-partida-de-recepcion-de-prueba
+@piecesRevision = copiar-revision-del-get-de-partida
+@piecesRequestKey = generar-uuid-para-alta-de-pieza
+@piecesSerial = copiar-serie-sugerida-del-get-de-partida
+@pieceId = copiar-id-de-pieza-de-prueba
 
 ### Ultimas recepciones
 GET {{baseUrl}}/purchasing/purchase-receptions?page=1&pageSize=25
@@ -45,6 +51,42 @@ GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/c
 
 ### Pedimento de una recepción existente y sus cargos vinculados
 GET {{baseUrl}}/purchasing/purchase-receptions/341534/actions/pedimento
+
+### Piezas registradas en una recepción existente
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/pieces
+
+### Consultar los datos de Pzas. de una partida de prueba
+GET {{baseUrl}}/purchasing/purchase-receptions/{{piecesReceiptId}}/actions/pieces/lines/{{piecesLineId}}
+
+### Dar de alta una pieza en una recepción de prueba
+POST {{baseUrl}}/purchasing/purchase-receptions/{{piecesReceiptId}}/actions/pieces/lines/{{piecesLineId}}
+Content-Type: application/json
+
+{
+  "requestKey": "{{piecesRequestKey}}",
+  "revision": "{{piecesRevision}}",
+  "serial": "{{piecesSerial}}",
+  "quantity": 1,
+  "reference": "PRUEBA-PIEZA"
+}
+
+### Cambiar el dato Pzas. con la revisión vigente de la partida de prueba
+PATCH {{baseUrl}}/purchasing/purchase-receptions/{{piecesReceiptId}}/actions/pieces/lines/{{piecesLineId}}
+Content-Type: application/json
+
+{
+  "revision": "{{piecesRevision}}",
+  "pieces": "1"
+}
+
+### Cambiar la serie de la pieza de prueba
+PATCH {{baseUrl}}/purchasing/purchase-receptions/{{piecesReceiptId}}/actions/pieces/{{pieceId}}/serial
+Content-Type: application/json
+
+{
+  "previousSerial": "{{piecesSerial}}",
+  "serial": "SERIE-PRUEBA-02"
+}
 
 ### Nueva recepción
 GET {{baseUrl}}/purchasing/purchase-receptions/create?orderNumber={{orderNumber}}

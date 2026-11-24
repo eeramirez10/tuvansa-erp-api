@@ -51,6 +51,8 @@ interface MovementRow extends RowDataPacket {
 }
 
 const money = (value: number): number => Math.round(value * 100) / 100;
+const activeMovement = (movement: string, document: string) =>
+  `${movement}.AMES = 1 AND IF(${document}.DEST IS NULL, 0, ${document}.DEST) = 0 AND ${document}.DMULTICIA = 1`;
 
 const toDocument = (row: MovementRow): ClientMovementDocument | null => {
   if (row.documentId === null) return null;
@@ -92,8 +94,7 @@ export class LegacyMysqlClientMovementsDataSource implements ClientMovementsData
       `SELECT cutoffs.cutoff, (
          SELECT COALESCE(SUM(a.ACANT), 0) FROM fax a
          LEFT JOIN fdoc d ON d.DSEQ = a.DSEQ
-         WHERE a.CLISEQ = ? AND a.AMES = 1 AND IF(d.DEST IS NULL, 0, d.DEST) = 0
-           AND d.DMULTICIA = 1 AND a.AFECHA <= cutoffs.cutoff
+         WHERE a.CLISEQ = ? AND ${activeMovement('a', 'd')} AND a.AFECHA <= cutoffs.cutoff
        ) AS balance FROM (${dates.map(() => 'SELECT CAST(? AS DATE) AS cutoff').join(' UNION ALL ')}) AS cutoffs`,
       [clientId, ...dates],
     );
@@ -117,12 +118,7 @@ export class LegacyMysqlClientMovementsDataSource implements ClientMovementsData
     const client = clientRows[0];
     if (client === undefined) return null;
 
-    const periodConditions = [
-      'a.CLISEQ = ?',
-      'a.AMES = 1',
-      'IF(d.DEST IS NULL, 0, d.DEST) = 0',
-      'd.DMULTICIA = 1',
-    ];
+    const periodConditions = ['a.CLISEQ = ?', activeMovement('a', 'd')];
     const periodParameters: Array<number | string> = [criteria.clientId];
 
     if (criteria.dateFrom !== undefined) {
@@ -152,68 +148,31 @@ export class LegacyMysqlClientMovementsDataSource implements ClientMovementsData
         SELECT COALESCE(SUM(ACANT), 0) AS balance
         FROM fax a
         LEFT JOIN fdoc d ON d.DSEQ = a.DSEQ
-        WHERE a.CLISEQ = ?
-          AND a.AMES = 1
-          AND IF(d.DEST IS NULL, 0, d.DEST) = 0
-          AND d.DMULTICIA = 1
-          AND a.AFECHA < ?
+        WHERE a.CLISEQ = ? AND ${activeMovement('a', 'd')} AND a.AFECHA < ?
       `, [criteria.clientId, criteria.dateFrom]);
       openingBalance = openingRows[0]?.balance ?? 0;
     }
 
-    const movementConditions: string[] = [];
-    const movementParameters: Array<number | string> = [criteria.clientId];
-
-    if (criteria.dateFrom !== undefined) {
-      movementConditions.push('ledger.movementDate >= ?');
-      movementParameters.push(criteria.dateFrom);
-    }
-
-    if (criteria.dateTo !== undefined) {
-      movementConditions.push('ledger.movementDate <= ?');
-      movementParameters.push(criteria.dateTo);
-    }
-
-    const outerWhere = movementConditions.length === 0
-      ? ''
-      : `WHERE ${movementConditions.join(' AND ')}`;
-
+    // Derivada. El saldo acumula todo el historial por fecha y ASEQ, incluso antes del periodo visible.
     const [movementRows] = await legacyMysqlPool.execute<MovementRow[]>(`
-      WITH ledger AS (
-        SELECT
-          a.ASEQ AS id,
-          a.AFECHA AS movementDate,
-          a.ATIPMV AS movementTypeCode,
-          a.ACANT AS amount,
-          a.AREFPAG AS paymentReference,
-          a.ATIPOC AS exchangeRate,
-          a.APOLIZA AS policy,
-          a.ARECIBO AS receiptNumber,
-          a.AUSEQ AS userId,
-          NULLIF(a.DSEQ, 0) AS documentId,
-          SUM(a.ACANT) OVER (
-            ORDER BY a.AFECHA, a.ASEQ
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          ) AS runningBalance
-        FROM fax a
-        LEFT JOIN fdoc d ON d.DSEQ = a.DSEQ
-        WHERE a.CLISEQ = ?
-          AND a.AMES = 1
-          AND IF(d.DEST IS NULL, 0, d.DEST) = 0
-          AND d.DMULTICIA = 1
-      ),
-      movement_types AS (
-        SELECT TICLA AS code, MAX(NULLIF(TIDESCR, '')) AS description
-        FROM ftipmv
-        GROUP BY TICLA
-      )
       SELECT
         ledger.id,
         ledger.movementDate,
         ledger.movementTypeCode,
         movement_types.description AS movementTypeDescription,
         ledger.amount,
-        ledger.runningBalance,
+        (
+          SELECT SUM(earlier.ACANT)
+          FROM fax earlier
+          LEFT JOIN fdoc earlier_doc ON earlier_doc.DSEQ = earlier.DSEQ
+          WHERE earlier.CLISEQ = ledger.clientId
+            AND ${activeMovement('earlier', 'earlier_doc')}
+            AND (
+              earlier.AFECHA < ledger.movementDate
+              OR (earlier.AFECHA <=> ledger.movementDate AND earlier.ASEQ <= ledger.id)
+              OR (earlier.AFECHA IS NULL AND ledger.movementDate IS NOT NULL)
+            )
+        ) AS runningBalance,
         ledger.paymentReference,
         ledger.exchangeRate,
         ledger.policy,
@@ -227,13 +186,33 @@ export class LegacyMysqlClientMovementsDataSource implements ClientMovementsData
         d.DCANT AS documentAmount,
         d.DMONEDA AS documentCurrencyId,
         d.DCANCELADA AS documentCanceled
-      FROM ledger
+      FROM (
+        SELECT
+          a.ASEQ AS id,
+          a.CLISEQ AS clientId,
+          a.AFECHA AS movementDate,
+          a.ATIPMV AS movementTypeCode,
+          a.ACANT AS amount,
+          a.AREFPAG AS paymentReference,
+          a.ATIPOC AS exchangeRate,
+          a.APOLIZA AS policy,
+          a.ARECIBO AS receiptNumber,
+          a.AUSEQ AS userId,
+          NULLIF(a.DSEQ, 0) AS documentId
+        FROM fax a
+        LEFT JOIN fdoc d ON d.DSEQ = a.DSEQ
+        WHERE ${periodConditions.join(' AND ')}
+        ORDER BY a.ASEQ
+        LIMIT ? OFFSET ?
+      ) ledger
       LEFT JOIN fdoc d ON d.DSEQ = ledger.documentId
-      LEFT JOIN movement_types ON movement_types.code = ledger.movementTypeCode
-      ${outerWhere}
+      LEFT JOIN (
+        SELECT TICLA AS code, MAX(NULLIF(TIDESCR, '')) AS description
+        FROM ftipmv
+        GROUP BY TICLA
+      ) movement_types ON movement_types.code = ledger.movementTypeCode
       ORDER BY ledger.id
-      LIMIT ? OFFSET ?
-    `, [...movementParameters, criteria.limit, criteria.offset]);
+    `, [...periodParameters, criteria.limit, criteria.offset]);
 
     const summary = summaryRows[0] ?? {
       movementCount: 0,

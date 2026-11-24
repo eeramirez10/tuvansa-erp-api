@@ -5,7 +5,18 @@ import type { ExpenseDocument } from '../src/modules/purchasing/purchase-recepti
 import type { PostingReversalInput } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-posting-reversal-data-source.js';
 import { PostgresPurchaseExpenses } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
 import { PostgresPurchasePostingReversals } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-posting-reversals.js';
+import { supplierPaymentReversalSql } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
+
+const paymentTables = `
+  CREATE TABLE tuvansa.supplier_payments (
+    id bigint PRIMARY KEY, company_id integer, supplier_id bigint, receipt_id bigint, expense_id bigint, number text,
+    policy_number text, date date, amount numeric, bank_account_id bigint, bank_code text, supplier_account text);
+  CREATE TABLE tuvansa.bank_reconciliations (
+    id bigint PRIMARY KEY, company_id integer, bank_account_id bigint, statement_date date, net_movement numeric);
+  CREATE TABLE tuvansa.bank_reconciliation_movements (
+    movement_id bigint PRIMARY KEY, reconciliation_id bigint REFERENCES tuvansa.bank_reconciliations(id));
+`;
 
 it('reverses a local PP and then cancels its whole GA batch, preserving original rows', async () => {
   const db = new PGlite();
@@ -35,12 +46,9 @@ it('reverses a local PP and then cancels its whole GA batch, preserving original
       input: { requestKey: '985cc0d9-d67f-4f72-b162-ba352557217b', date: gaDate, reference: '', beneficiary: '', description: '', lines: [] },
     });
     const [first, second] = batch.documents;
-    await db.exec(`CREATE TABLE tuvansa.supplier_payments (
-      id bigint PRIMARY KEY, company_id integer, supplier_id bigint, receipt_id bigint,
-      expense_id bigint, number text, policy_number text, date date, amount numeric, bank_account_id bigint);
-      CREATE TABLE tuvansa.bank_reconciliation_movements (movement_id bigint PRIMARY KEY);`);
+    await db.exec(paymentTables);
     const paymentId = 6900000000000;
-    await db.query('INSERT INTO tuvansa.supplier_payments VALUES ($1,1,11,null,$2,$3,$4,$5,27.56,3202)',
+    await db.query("INSERT INTO tuvansa.supplier_payments VALUES ($1,1,11,null,$2,$3,$4,$5,27.56,3202,'1102001','2005002001')",
       [paymentId, first!.id, 'TW00000001', '2PW00000001', ppDate]);
     const paid = { kind: 'payment' as const, supplierId: 11, paymentId };
     const secondExpense = { kind: 'expense' as const, documentId: second!.id };
@@ -61,8 +69,9 @@ it('reverses a local PP and then cancels its whole GA batch, preserving original
     await expect(reversal.save(actor, paid, { ...reversePayment, date: gaDate })).rejects.toMatchObject({ code: 'POSTING_REVERSAL_INVALID_DATE' });
     await expect(reversal.prepare(1, { ...paid, supplierId: 12 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
 
-    await db.query('INSERT INTO tuvansa.bank_reconciliation_movements(movement_id) VALUES ($1)', [paymentId]);
-    expect(await reversal.prepare(1, paid)).toMatchObject({ canWrite: false, reason: 'El pago ya está conciliado en Bancos.' });
+    await db.exec("INSERT INTO tuvansa.bank_reconciliations VALUES (701,1,9999,'2025-12-02',-27.56)");
+    await db.query('INSERT INTO tuvansa.bank_reconciliation_movements VALUES ($1,701)', [paymentId]);
+    expect(await reversal.prepare(1, paid)).toMatchObject({ canWrite: false, reason: 'El vínculo con la conciliación original es inconsistente.' });
     await expect(reversal.save(actor, paid, reversePayment)).rejects.toMatchObject({ code: 'POSTING_REVERSAL_BLOCKED' });
     await db.query('DELETE FROM tuvansa.bank_reconciliation_movements WHERE movement_id=$1', [paymentId]);
 
@@ -86,5 +95,75 @@ it('reverses a local PP and then cancels its whole GA batch, preserving original
     expect((await db.query('SELECT number FROM tuvansa.supplier_payment_reversals')).rows).toEqual([{ number: 'RPW00000001' }]);
     expect((await db.query('SELECT number,amount::float8 AS amount FROM tuvansa.purchase_expense_documents ORDER BY id')).rows)
       .toEqual([{ number: first!.number, amount: 100 }, { number: second!.number, amount: 100 }]);
+  } finally { await db.close(); }
+}, 15000);
+
+it('reopens just the reconciled PP and preserves its original cut and the remaining payment', async () => {
+  const db = new PGlite();
+  const connect: PostgresConnectionFactory = async () => ({
+    async query<T extends object>(sql: string, values?: unknown[]) {
+      if (values) return db.query<T>(sql, values);
+      const results = await db.exec(sql);
+      return { rows: (results.at(-1)?.rows ?? []) as T[] };
+    },
+    release() {},
+  });
+  const actor = { companyId: 1, userId: 2 };
+  const expenses = new PostgresPurchaseExpenses(connect, () => true);
+  const reversal = new ReversePurchasePosting(new PostgresPurchasePostingReversals(connect, () => true), {
+    fiscalWindow: async () => ({ fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' }),
+  });
+  const paid = { kind: 'payment' as const, supplierId: 11, paymentId: 6900000000000 };
+  const cut = { id: 7400000000000, date: '2025-12-04' };
+  const latestDate = '2025-12-05';
+  const input: PostingReversalInput = {
+    requestKey: 'ca83c214-6fc6-4477-bde7-28225bc87828', date: latestDate, reason: 'Pago duplicado conciliado', confirmed: true,
+    expectedReconciliationId: cut.id,
+  };
+
+  try {
+    const { documents: [expense] } = await expenses.commit({
+      actor, fingerprint: 'b'.repeat(64), accountingLines: [],
+      documents: [{
+        supplierId: 11, supplierCode: '000011', supplierName: 'Proveedor', reference: 'FACT-11',
+        total: 100, base: 100, vat: 0, vatWithholding: 0, incomeWithholding: 0, dueDate: '2025-12-01',
+        account: { id: 2, code: '2005002001', name: 'Proveedores' }, lines: [],
+      }],
+      input: { requestKey: '8b12c0d9-d67f-4f72-b162-ba352557217b', date: '2025-12-01',
+        reference: '', beneficiary: '', description: '', lines: [] },
+    });
+    await db.exec(paymentTables);
+    await db.query(`INSERT INTO tuvansa.supplier_payments VALUES
+      ($1,1,11,null,$2,'TW00000001','2PW00000001','2025-12-02',40,3202,'1102001','2005002001'),
+      ($3,1,11,null,$2,'TW00000002','2PW00000002','2025-12-02',15,3202,'1102001','2005002001')`,
+    [paid.paymentId, expense!.id, paid.paymentId + 1]);
+    await db.query(`INSERT INTO tuvansa.bank_reconciliations VALUES ($1,1,3202,$2,-40),($3,1,3202,$4,-15)`,
+      [cut.id, cut.date, cut.id + 1, latestDate]);
+    await db.query('INSERT INTO tuvansa.bank_reconciliation_movements VALUES ($1,$2),($3,$4)',
+      [paid.paymentId, cut.id, paid.paymentId + 1, cut.id + 1]);
+
+    expect(await reversal.prepare(1, paid)).toMatchObject({
+      canWrite: true, amount: 40, minimumDate: latestDate, originalReconciliation: cut,
+      notice: expect.stringContaining('pendiente de conciliación'),
+    });
+    await expect(reversal.save(actor, paid, { ...input, expectedReconciliationId: undefined }))
+      .rejects.toMatchObject({ code: 'POSTING_REVERSAL_RECONCILIATION_CHANGED' });
+    await expect(reversal.save(actor, paid, { ...input, expectedReconciliationId: cut.id + 1 }))
+      .rejects.toMatchObject({ code: 'POSTING_REVERSAL_RECONCILIATION_CHANGED' });
+    await expect(reversal.save(actor, paid, { ...input, date: cut.date }))
+      .rejects.toMatchObject({ code: 'POSTING_REVERSAL_INVALID_DATE' });
+
+    const result = await reversal.save(actor, paid, input);
+    expect(result).toMatchObject({ date: latestDate, originalReconciliation: cut });
+    expect(await reversal.save(actor, paid, { ...input, requestKey: input.requestKey.toUpperCase() })).toEqual(result);
+    expect(await reversal.prepare(1, paid)).toMatchObject({ canWrite: false, alreadyRecorded: result, originalReconciliation: cut });
+    const active = supplierPaymentReversalSql(true);
+    expect((await db.query(`SELECT (100-${active.paid})::float8 AS remaining
+      FROM tuvansa.supplier_payments payment ${active.join} WHERE payment.expense_id=$1`, [expense!.id])).rows)
+      .toEqual([{ remaining: 85 }]);
+    expect((await db.query(`SELECT movement_id::float8 AS id,reconciliation_id::float8 AS cut
+      FROM tuvansa.bank_reconciliation_movements ORDER BY movement_id`)).rows)
+      .toEqual([{ id: paid.paymentId, cut: cut.id }, { id: paid.paymentId + 1, cut: cut.id + 1 }]);
+    expect(await reversal.prepare(1, { kind: 'expense', documentId: expense!.id })).toMatchObject({ canWrite: false });
   } finally { await db.close(); }
 }, 15000);

@@ -1,3 +1,5 @@
+import type { PostingReversalReconciliation } from '../../domain/datasources/purchase-posting-reversal-data-source.js';
+
 export interface PurchasePostingReversalReference {
   id: number;
   policyNumber: string;
@@ -5,6 +7,7 @@ export interface PurchasePostingReversalReference {
   reason: string;
   userId: number;
   createdAt: string;
+  originalReconciliation?: PostingReversalReconciliation;
 }
 
 export const reversalReferenceSql = (alias: string) => `CASE WHEN ${alias}.id IS NOT NULL THEN
@@ -19,6 +22,7 @@ export function supplierPaymentReversalSql(available: boolean) {
     paid: available ? 'sum(payment.amount) FILTER (WHERE reversal.id IS NULL)' : 'sum(payment.amount)',
     revision: available ? '(count(*) + count(reversal.id) + 1)::integer' : '(count(*) + 1)::integer',
     latestDate: available ? 'max(reversal.date)::text' : 'null::text',
-    reference: available ? reversalReferenceSql('reversal') : 'null::jsonb',
+    reference: available ? `(${reversalReferenceSql('reversal')}) ||
+      jsonb_strip_nulls(jsonb_build_object('originalReconciliation',reversal.result->'originalReconciliation'))` : 'null::jsonb',
   };
 }

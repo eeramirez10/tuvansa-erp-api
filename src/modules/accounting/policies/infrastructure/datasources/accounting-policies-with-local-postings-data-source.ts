@@ -90,7 +90,7 @@ const paymentReversalFields = `
 const paymentReversalLines = `jsonb_build_array(
     jsonb_build_object('account', posting.bank_code, 'accountId', posting.bank_account_id,
       'accountName', posting.bank_name, 'department', '', 'debit', posting.amount, 'credit', 0,
-      'reference', posting.policy_number),
+      'reference', posting.policy_number, 'reconciled', correction_settlement.statement_date IS NOT NULL),
     jsonb_build_object('account', posting.supplier_account, 'accountName', posting.supplier_account_name,
       'department', '', 'debit', 0, 'credit', posting.amount, 'reference', receipt.number)
   )`;
@@ -168,8 +168,9 @@ async function readLocalPolicies<T>(
                 AND to_regclass('tuvansa.bank_transfer_movements') IS NOT NULL AS transfers`,
     );
     const withLines = (sql: string) => detail ? sql : "'[]'::jsonb";
-    const settlements = detail && (tables?.payments || tables?.collections || tables?.transfers)
-      ? joinBankReconciliation(await bankReconciliationsAvailable(client)) : '';
+    const settlementDetails = detail && (tables?.payments || tables?.collections || tables?.transfers);
+    const hasSettlements = settlementDetails ? await bankReconciliationsAvailable(client) : false;
+    const settlements = settlementDetails ? joinBankReconciliation(hasSettlements) : '';
     const views: string[] = [];
     if (tables?.receipts) views.push(
       `SELECT ${receiptFields}, ${withLines("accounting->'lines'")} AS lines
@@ -204,6 +205,7 @@ async function readLocalPolicies<T>(
        JOIN tuvansa.supplier_payments posting ON posting.id=reversal.payment_id AND posting.company_id=reversal.company_id
        JOIN (${payables}) receipt ON receipt.id=${paymentDocumentIdSql('posting')}
          AND receipt.company_id=posting.company_id AND receipt.supplier_id=posting.supplier_id
+       ${detail ? joinBankReconciliation(hasSettlements, 'reversal', 'correction_settlement', 'posting') : ''}
        WHERE reversal.company_id=1`,
     );
     if (tables?.collections) views.push(
@@ -216,7 +218,7 @@ async function readLocalPolicies<T>(
        FROM tuvansa.customer_collection_reversals reversal
        JOIN tuvansa.customer_collections posting ON posting.id=reversal.collection_id AND posting.company_id=reversal.company_id
        JOIN tuvansa.sales_remissions remission ON remission.id=posting.remission_id AND remission.company_id=posting.company_id
-       ${joinBankReconciliation(detail && await bankReconciliationsAvailable(client), 'reversal', 'correction_settlement', 'posting')}
+       ${joinBankReconciliation(hasSettlements, 'reversal', 'correction_settlement', 'posting')}
        WHERE reversal.company_id=1`,
     );
     if (tables?.transfers) views.push(

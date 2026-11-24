@@ -1,10 +1,13 @@
 export type PostingReversalTarget = { kind: 'payment'; paymentId: number; supplierId: number } | { kind: 'expense'; documentId: number };
 
+export interface PostingReversalReconciliation { id: number; date: string }
+
 export interface PostingReversalResult {
   id: number;
   policyNumber: string;
   date: string;
   reason: string;
+  originalReconciliation?: PostingReversalReconciliation;
 }
 
 export interface PostingReversalInput {
@@ -12,6 +15,7 @@ export interface PostingReversalInput {
   date: string;
   reason: string;
   confirmed: true;
+  expectedReconciliationId?: number | null | undefined;
 }
 
 export interface PostingReversalDocument {
@@ -29,6 +33,7 @@ export interface PostingReversalSnapshot {
   amount: number;
   documents: PostingReversalDocument[];
   blocked: string | null;
+  originalReconciliation?: PostingReversalReconciliation | null;
   alreadyRecorded: PostingReversalResult | null;
 }
 

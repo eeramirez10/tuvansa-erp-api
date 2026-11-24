@@ -1,9 +1,11 @@
-import type { PostingReversalInput, PostingReversalResult } from '../../../../purchasing/purchase-receptions/domain/datasources/purchase-posting-reversal-data-source.js';
+import type {
+  PostingReversalInput, PostingReversalReconciliation, PostingReversalResult,
+} from '../../../../purchasing/purchase-receptions/domain/datasources/purchase-posting-reversal-data-source.js';
 
 export interface CustomerCollectionReversalIdentity { companyId: number; clientId: number; collectionId: number }
-export interface CollectionBankReconciliation { id: number; date: string }
-export interface CustomerCollectionReversalInput extends PostingReversalInput { expectedReconciliationId?: number | null | undefined }
-export interface CustomerCollectionReversalResult extends PostingReversalResult { originalReconciliation?: CollectionBankReconciliation }
+export type CollectionBankReconciliation = PostingReversalReconciliation;
+export type CustomerCollectionReversalInput = PostingReversalInput;
+export type CustomerCollectionReversalResult = PostingReversalResult;
 
 export interface CustomerCollectionReversalSource {
   number: string;

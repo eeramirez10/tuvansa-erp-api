@@ -6,8 +6,9 @@ import {
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { isLocalSupplierPaymentId, supplierPaymentsAvailable } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
+import { bankReconciliationsAvailable, bankReconciliationState } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import type {
-  PostingReversalCommand, PostingReversalDataSource, PostingReversalDocument, PostingReversalResult,
+  PostingReversalCommand, PostingReversalDataSource, PostingReversalDocument, PostingReversalReconciliation, PostingReversalResult,
   PostingReversalSnapshot, PostingReversalTarget,
 } from '../../domain/datasources/purchase-posting-reversal-data-source.js';
 import { isLocalPurchaseExpenseDocumentId, purchaseExpensesAvailable } from './postgres-purchase-expenses.js';
@@ -57,7 +58,7 @@ const unavailable = () => new ApplicationError(
 );
 
 type Header = Pick<PostingReversalSnapshot, 'targetId' | 'number' | 'policyNumber' | 'originalDate'>;
-interface PaymentHeader extends Header { amount: number; bankAccountId: number; documentId: number }
+interface PaymentHeader extends Header { amount: number; bankAccountId: number; documentId: number; separateAccounts: boolean }
 
 async function priorRequest(client: PostgresClient, kind: Kind, companyId: number, key: string, fingerprint: string) {
   const { rows: [saved] } = await client.query<{ fingerprint: string; result: PostingReversalResult }>(
@@ -76,13 +77,16 @@ async function alreadyRecorded(client: PostgresClient, kind: Kind, companyId: nu
   return row?.result ?? null;
 }
 
-async function paymentReconciled(client: PostgresClient, paymentId: number) {
-  const { rows: [table] } = await client.query<{ available: boolean }>(
-    "SELECT to_regclass('tuvansa.bank_reconciliation_movements') IS NOT NULL AS available",
+async function paymentBankCut(client: PostgresClient, companyId: number, bankAccountId: number, paymentId: number) {
+  if (!await bankReconciliationsAvailable(client)) return null;
+  const { rows: [row] } = await client.query<{ id: number | null; date: string | null }>(
+    `SELECT cut.id::float8 AS id,cut.statement_date::text AS date
+     FROM tuvansa.bank_reconciliation_movements member
+     LEFT JOIN tuvansa.bank_reconciliations cut ON cut.id=member.reconciliation_id
+       AND cut.company_id=$1 AND cut.bank_account_id=$2
+     WHERE member.movement_id=$3`, [companyId, bankAccountId, paymentId],
   );
-  if (!table?.available) return false;
-  const { rows } = await client.query('SELECT 1 FROM tuvansa.bank_reconciliation_movements WHERE movement_id=$1', [paymentId]);
-  return rows.length !== 0;
+  return row ?? null;
 }
 
 async function paymentSnapshot(client: PostgresClient, companyId: number,
@@ -90,11 +94,12 @@ async function paymentSnapshot(client: PostgresClient, companyId: number,
   if (!isLocalSupplierPaymentId(paymentId) || !await supplierPaymentsAvailable(client)) return null;
   const { rows: [payment] } = await client.query<PaymentHeader>(
     `SELECT p.id::float8 AS "targetId",p.number,p.policy_number AS "policyNumber",p.date::text AS "originalDate",
-       p.amount::float8 AS amount,p.bank_account_id::float8 AS "bankAccountId",${paymentDocumentIdSql('p')}::float8 AS "documentId"
+       p.amount::float8 AS amount,p.bank_account_id::float8 AS "bankAccountId",${paymentDocumentIdSql('p')}::float8 AS "documentId",
+       (p.bank_code<>p.supplier_account) AS "separateAccounts"
      FROM tuvansa.supplier_payments p WHERE p.id=$1 AND p.company_id=$2 AND p.supplier_id=$3`, [paymentId, companyId, supplierId],
   );
   if (!payment) return null;
-  const { documentId, bankAccountId, ...header } = payment;
+  const { documentId, bankAccountId, separateAccounts, ...header } = payment;
   if (lock) {
     const table = isLocalPurchaseExpenseDocumentId(documentId) ? 'purchase_expense_documents' : 'purchase_receptions';
     await client.query(`SELECT id FROM tuvansa.${table} WHERE id=$1 AND company_id=$2 FOR UPDATE`, [documentId, companyId]);
@@ -108,11 +113,20 @@ async function paymentSnapshot(client: PostgresClient, companyId: number,
   );
   if (!document) return null;
   const { supportsPayment, ...affected } = document;
+  const cut = await paymentBankCut(client, companyId, bankAccountId, paymentId);
+  const originalReconciliation: PostingReversalReconciliation | null = cut?.id && cut.date && cut.date >= header.originalDate
+    ? { id: cut.id, date: cut.date } : null;
+  const lastStatementDate = originalReconciliation
+    ? (await bankReconciliationState(client, companyId, bankAccountId)).lastStatementDate : null;
+  const minimumDate = lastStatementDate ?? originalReconciliation?.date ?? header.originalDate;
   let blocked: string | null = null;
-  if (!supportsPayment || payment.amount <= 0 || !/^2PW\d{8}$/.test(payment.policyNumber)) blocked = 'El pago original requiere una reversión contable distinta.';
-  else if (await paymentReconciled(client, paymentId)) blocked = 'El pago ya está conciliado en Bancos.';
+  if (!supportsPayment || !separateAccounts || payment.amount <= 0 || !/^2PW\d{8}$/.test(payment.policyNumber)) {
+    blocked = 'El pago original requiere una reversión contable distinta.';
+  } else if (cut && !originalReconciliation) {
+    blocked = 'El vínculo con la conciliación original es inconsistente.';
+  }
   return {
-    ...header, minimumDate: header.originalDate, documents: [affected], blocked,
+    ...header, minimumDate, originalReconciliation, documents: [affected], blocked,
     alreadyRecorded: await alreadyRecorded(client, 'payment', companyId, paymentId),
   };
 }
@@ -201,7 +215,8 @@ export class PostgresPurchasePostingReversals implements PostingReversalDataSour
     return this.withConnection(async (client) => {
       await client.query('BEGIN');
       try {
-        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1||':'||$2::text||':'||$3::text,0))", [table, companyId, input.requestKey]);
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1||':'||$2::text||':'||$3::text,0))",
+          [table, companyId, input.requestKey.toLowerCase()]);
         const replay = await priorRequest(client, kind, companyId, input.requestKey, fingerprint);
         if (replay) {
           await client.query('COMMIT');
@@ -214,7 +229,10 @@ export class PostgresPurchasePostingReversals implements PostingReversalDataSour
         const { rows: [allocation] } = await client.query<{ id: string }>(`SELECT nextval('tuvansa.${table}_ids') AS id`);
         const id = Number(allocation!.id);
         const suffix = String(id - firstId + 1).padStart(8, '0');
-        const result = { id, policyNumber: `${policyPrefix}${suffix}`, date: input.date, reason: input.reason };
+        const result: PostingReversalResult = {
+          id, policyNumber: `${policyPrefix}${suffix}`, date: input.date, reason: input.reason,
+          ...(snapshot.originalReconciliation ? { originalReconciliation: snapshot.originalReconciliation } : {}),
+        };
         const paymentNumber = kind === 'payment' ? [`RPW${suffix}`] : [];
         await client.query(
           `INSERT INTO tuvansa.${table} (id,${key},company_id,user_id,request_key,fingerprint,date,reason,policy_number,result${paymentNumber.length ? ',number' : ''})

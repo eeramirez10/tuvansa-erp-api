@@ -4,7 +4,7 @@ import { customerCollectionReversalSql, customerCollectionReversalsAvailable, is
 import { activeManualPolicyLines, isManualPolicyLineId, manualPoliciesAvailable } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { supplierPaymentReversalSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
-import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
+import { isLocalSupplierPaymentReversalId, supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import {
@@ -15,7 +15,7 @@ import type {
   BankReconciliationCommand, BankReconciliationDataSource, BankReconciliationMovement, BankReconciliationResult,
 } from '../../domain/datasources/bank-reconciliation-data-source.js';
 import { bankCents, reconcileMovements } from '../../domain/entities/bank-reconciliation.js';
-import { bankReconciliationsAvailable, bankReconciliationState } from './bank-reconciliation-reads.js';
+import { bankReconciliationsAvailable, bankReconciliationState, joinBankReconciliation } from './bank-reconciliation-reads.js';
 import { bankTransfersAvailable, isLocalBankTransferMovementId } from './postgres-bank-transfers.js';
 import type { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 
@@ -114,11 +114,12 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
 
   private async pendingMovements(client: PostgresClient, companyId: number, accountId: number, ids: number[]) {
     const payments = ids.filter(isLocalSupplierPaymentId);
+    const paymentCorrections = ids.filter(isLocalSupplierPaymentReversalId);
     const deposits = ids.filter(isLocalCustomerCollectionId);
     const depositCorrections = ids.filter(isLocalCustomerCollectionReversalId);
     const manual = ids.filter(isManualPolicyLineId);
     const transfers = ids.filter(isLocalBankTransferMovementId);
-    if (payments.length + deposits.length + depositCorrections.length + transfers.length + manual.length !== ids.length) return [];
+    if (payments.length + paymentCorrections.length + deposits.length + depositCorrections.length + transfers.length + manual.length !== ids.length) return [];
     const movements: BankReconciliationMovement[] = [];
     if (payments.length && await supplierPaymentsAvailable(client)) {
       const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
@@ -129,6 +130,20 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
            AND ${reversal.active}
            AND NOT EXISTS (SELECT 1 FROM tuvansa.bank_reconciliation_movements m WHERE m.movement_id=payment.id)
          FOR KEY SHARE OF payment`, [companyId, accountId, payments],
+      );
+      movements.push(...rows);
+    }
+    if (paymentCorrections.length && await supplierPaymentsAvailable(client) && await supplierPaymentReversalsAvailable(client)) {
+      const { rows } = await client.query<BankReconciliationMovement>(
+        `SELECT correction.id::float8 AS id,correction.date::text,payment.amount::float8 AS amount
+         FROM tuvansa.supplier_payment_reversals correction
+         JOIN tuvansa.supplier_payments payment ON payment.id=correction.payment_id AND payment.company_id=correction.company_id
+         ${joinBankReconciliation(true, 'payment')}
+         WHERE correction.company_id=$1 AND payment.bank_account_id=$2 AND correction.id=ANY($3::bigint[])
+           AND correction.result #>> '{originalReconciliation,id}'=settlement.id::text
+           AND correction.result #>> '{originalReconciliation,date}'=settlement.statement_date::text
+           AND NOT EXISTS (SELECT 1 FROM tuvansa.bank_reconciliation_movements m WHERE m.movement_id=correction.id)
+         FOR KEY SHARE OF correction`, [companyId, accountId, paymentCorrections],
       );
       movements.push(...rows);
     }

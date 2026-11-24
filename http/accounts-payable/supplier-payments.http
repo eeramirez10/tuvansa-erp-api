@@ -7,6 +7,8 @@
 @paymentDate = 2026-11-23
 @paymentId = copiar-id-del-pago-web
 @reversalKey = generar-uuid-por-reversion
+@cutId = copiar-id-del-corte-original
+@reversalDate = copiar-fecha-del-preview
 
 ### Previsualizar el saldo y las cuentas autorizadas
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{receiptId}}
@@ -28,10 +30,10 @@ Content-Type: application/json
 ### Consultar el abono en Bancos
 GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/payments
 
-### Consultar si el pago sigue pendiente de conciliación
+### Consultar si el PP puede revertirse y obtener su corte original
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{paymentId}}/reversal
 
-### Revertir el pago y reabrir el saldo del documento
+### Revertir un PP pendiente y reabrir el saldo del documento
 POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{paymentId}}/reversal
 Content-Type: application/json
 
@@ -41,3 +43,18 @@ Content-Type: application/json
   "reason": "Reversión de prueba",
   "confirmed": true
 }
+
+### Revertir un PP conciliado en la base de pruebas. Usar una clave propia y el corte del preview.
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/payments/{{paymentId}}/reversal
+Content-Type: application/json
+
+{
+  "requestKey": "{{reversalKey}}",
+  "date": "{{reversalDate}}",
+  "reason": "Reversión de PP conciliado en pruebas",
+  "expectedReconciliationId": {{cutId}},
+  "confirmed": true
+}
+
+### Consultar el cargo RP pendiente del nuevo corte
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation

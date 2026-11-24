@@ -104,6 +104,7 @@ interface BankPaymentRow extends LocalBankRow {
   mode: 'check' | 'transfer';
   offset: boolean;
   supplierId: number;
+  reconciliationId: number | null;
   reversal: PurchasePostingReversalReference | null;
 }
 interface BankCollectionRow extends LocalBankRow { reference: string; offset: boolean; clientId: number; reversal: PurchasePostingReversalReference | null }
@@ -121,6 +122,7 @@ const bankRow = ({ id, number, policyNumber, date, beneficiary, description, use
 const paymentRow = (row: BankPaymentRow) => ({
   ...bankRow(row), bankNumber: row.number, movementType: row.offset ? 'RP' : 'PP',
   charge: row.offset ? Number(row.amount) : 0, credit: row.offset ? 0 : Number(row.amount), mode: row.mode,
+  ...(row.reconciliationId === null ? {} : { reconciliationId: row.reconciliationId }),
   ...(row.offset ? {} : { supplierId: row.supplierId, paymentId: Number(row.id), canReverse: true }),
   ...(row.reversal ? { reversal: row.reversal } : {}),
 });
@@ -191,10 +193,12 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     return readSupplierPayments<ReturnType<typeof paymentRow>[]>([], async (client) => {
       const payables = await localPurchasePayablesSql(client);
       if (!payables) return [];
-      const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
+      const hasSettlements = await bankReconciliationsAvailable(client);
+      const join = joinBankReconciliation(hasSettlements);
       const withReversals = await supplierPaymentReversalsAvailable(client);
       const pending = pendingReconciliation(key);
       const includeReversed = !pending && key !== 'authorization-review';
+      const correctionJoin = joinBankReconciliation(hasSettlements, 'reversal', 'correction_settlement', 'posting');
       const reversalJoin = withReversals ? `LEFT JOIN tuvansa.supplier_payment_reversals reversal
         ON reversal.payment_id=posting.id AND reversal.company_id=posting.company_id` : '';
       const scope = `FROM tuvansa.supplier_payments AS posting
@@ -206,21 +210,25 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
           SELECT posting.id, posting.number, posting.policy_number AS "policyNumber",
                 posting.date::text, posting.amount::text, posting.description, posting.user_id AS "userId",
                 posting.mode, receipt.supplier_name AS beneficiary,
-                settlement.statement_date::text AS "statementDate", false AS "offset",
+                settlement.statement_date::text AS "statementDate", settlement.id::float8 AS "reconciliationId", false AS "offset",
                 posting.supplier_id::float8 AS "supplierId",
                 ${withReversals ? reversalReferenceSql('reversal') : 'null::jsonb'} AS reversal
           ${scope} ${join}
           WHERE posting.bank_account_id=$1 AND posting.company_id=1
             ${pending ? 'AND settlement.statement_date IS NULL' : ''}
             ${!includeReversed && withReversals ? 'AND reversal.id IS NULL' : ''}
-          ${withReversals && includeReversed ? `UNION ALL
+          ${withReversals && (includeReversed || (pending && hasSettlements)) ? `UNION ALL
           SELECT reversal.id,reversal.number,reversal.policy_number,reversal.date::text,posting.amount::text,
-                 reversal.reason,reversal.user_id,posting.mode,receipt.supplier_name,NULL::text,true,
+                 reversal.reason,reversal.user_id,posting.mode,receipt.supplier_name,
+                 correction_settlement.statement_date::text,correction_settlement.id::float8,true,
                  posting.supplier_id::float8,NULL::jsonb
-          ${scope}
-          WHERE posting.bank_account_id=$1 AND posting.company_id=1 AND reversal.id IS NOT NULL` : ''}
+          ${scope} ${join} ${correctionJoin}
+          WHERE posting.bank_account_id=$1 AND posting.company_id=1 AND reversal.id IS NOT NULL
+            ${pending ? `AND reversal.result #>> '{originalReconciliation,id}'=settlement.id::text
+              AND reversal.result #>> '{originalReconciliation,date}'=settlement.statement_date::text
+              AND correction_settlement_movement.movement_id IS NULL` : ''}` : ''}
          )
-         SELECT id::text,number,"policyNumber",date,amount,description,"userId",mode,beneficiary,"statementDate","offset","supplierId",reversal
+         SELECT id::text,number,"policyNumber",date,amount,description,"userId",mode,beneficiary,"statementDate","reconciliationId","offset","supplierId",reversal
          FROM entries
          WHERE ($2::date IS NULL OR date::date >= $2) AND ($3::date IS NULL OR date::date <= $3)
          ORDER BY date,id LIMIT 32767`,

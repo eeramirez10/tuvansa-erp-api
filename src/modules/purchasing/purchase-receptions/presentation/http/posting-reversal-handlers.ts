@@ -10,6 +10,7 @@ const expenseParams = z.object({ purchaseReceptionId: id });
 const capture = z.strictObject({
   requestKey: z.uuid(), date: z.iso.date(), reason: z.string().trim().min(1).max(90), confirmed: z.literal(true),
 });
+const paymentCapture = capture.extend({ expectedReconciliationId: z.int().positive().nullable().optional() });
 
 export function postingReversalHandlers(service: ReversePurchasePosting, kind: PostingReversalTarget['kind']) {
   const actor = { companyId: 1, userId: 0 };
@@ -22,7 +23,8 @@ export function postingReversalHandlers(service: ReversePurchasePosting, kind: P
   };
   const save: RequestHandler = async (request, response, next) => {
     try {
-      const data = await service.save(actor, target(request.params), capture.parse(request.body));
+      const input = (kind === 'payment' ? paymentCapture : capture).parse(request.body);
+      const data = await service.save(actor, target(request.params), input);
       response.status(201).json({ data });
     } catch (error) { next(error); }
   };

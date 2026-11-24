@@ -1,4 +1,5 @@
 import type { MovementHeader, MovementLine } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import type { InventoryPepsCostBasis } from '../../../../inventories/movements/domain/entities/inventory-peps-cost.js';
 import type { PurchaseOrderProps } from '../../../purchase-orders/domain/entities/purchase-order.js';
 import type { PurchaseReceptionLine, PurchaseReceptionProps } from '../entities/purchase-reception.js';
 import type {
@@ -36,6 +37,7 @@ export interface PurchaseReceptionPosting {
     orderLineId: number;
     reception: Omit<PurchaseReceptionLine, 'id'>;
     movement: Omit<MovementLine, 'id' | 'userId'>;
+    pepsLayer?: { date: string | null; customsEntry: string; customsOffice: string; costBasis: InventoryPepsCostBasis };
   }[];
   payable: { amount: number; currencyId: number; exchangeRate: number; dueAt: string } | null;
   accounting: { type: string; lines: { account: string; department: string; debit: number; credit: number }[] } | null;

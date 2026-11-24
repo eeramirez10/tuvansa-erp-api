@@ -12,9 +12,10 @@ import type { InventoryAdjustmentInput, InventoryAdjustmentsRepository } from '.
 import {
   createAdjustmentLayer, currentAdjustmentLayers, inactivePepsOrder, insufficientLayer, inventoryAdjustmentDbUnavailable as dbUnavailable,
   inventoryLayerMigration, lockPepsProducts, nextPepsOrder, readLocalInventoryAdjustments, scaledLayerStock,
-  writeAdjustmentLayerStock, type AdjustmentLayer,
+  writeLayerStock, type AdjustmentLayer,
 } from './inventory-adjustment-layers.js';
 import { MysqlInventoryAdjustmentReferences, type AdjustmentProduct } from './mysql-inventory-adjustment-references.js';
+import { effectivePepsCost, inventoryPepsCostsOn } from './postgres-inventory-peps-cost.js';
 
 const idStart = 7950000000000;
 const idEnd = idStart + 99999999;
@@ -44,6 +45,8 @@ const migrations = [{ id: 'inventory_adjustment_capture', sql: `
   );
   CREATE INDEX inventory_adjustment_stock_product ON tuvansa.inventory_adjustment_stock(product_id,warehouse);
 ` }, inventoryLayerMigration];
+
+export const ensureInventoryAdjustmentSchema = (client: PostgresClient) => migratePostgres(client, migrations);
 
 export { readLocalInventoryAdjustments };
 const unsupported = (message: string) => new ApplicationError(message, 'INVENTORY_ADJUSTMENT_UNSUPPORTED', 422);
@@ -176,7 +179,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
 
   private async migrate() {
     const client = await connectPostgres();
-    try { await migratePostgres(client, migrations); } finally { client.release(); }
+    try { await ensureInventoryAdjustmentSchema(client); } finally { client.release(); }
   }
 
   private async transaction<T>(operation: (client: PostgresClient) => Promise<T>): Promise<T> {
@@ -240,6 +243,17 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       const products = await loadCatalogProducts(client, productIds, await this.references.products(warehouse, productIds));
       const layered = new Set(productIds.filter((id) => capture.automaticPeps && type !== 'TR' && products.get(id)?.peps));
       await lockPepsProducts(client, [...layered]);
+      for (const [productId, snapshot] of await inventoryPepsCostsOn(client, [...layered])) {
+        const product = products.get(productId)!;
+        const valuation = effectivePepsCost({
+          average: Number((Number(product.transferCost) - Number(product.adValorem)).toFixed(4)),
+          last: Number(product.layerCost), adValorem: Number(product.adValorem),
+        }, snapshot);
+        product.cost = valuation.last + valuation.adValorem;
+        product.transferCost = valuation.average + valuation.adValorem;
+        product.layerCost = valuation.last;
+        product.adValorem = valuation.adValorem;
+      }
       const sourceLines = lines.map(({ productId, quantity, cost }) => {
         const product = products.get(productId);
         if (!product) throw new NotFoundError('Producto de inventario');
@@ -303,7 +317,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
          VALUES($1,$2,$3,$4,$5::jsonb,$5::jsonb)`, [id, number, requestKey, fingerprint, JSON.stringify(saved)],
       );
       await writeDeltas(client, saved, false);
-      await writeAdjustmentLayerStock(client, saved, false, queueChanges);
+      await writeLayerStock(client, 'adjustment_id', saved.header.id, saved.lines, false, queueChanges);
       return saved;
     });
   }
@@ -416,7 +430,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       await this.checkCancellationStock(client, original, true);
       const queueChanges = await this.pepsCancellationOrder(client, original);
       await writeDeltas(client, original, true);
-      await writeAdjustmentLayerStock(client, original, true, queueChanges);
+      await writeLayerStock(client, 'adjustment_id', original.header.id, original.lines, true, queueChanges);
       const canceled: MovementDocument = {
         ...original,
         lines: original.lines.map((line) => ({ ...line, type: 'K', quantity: 0, cost: 0, pieces: 0, piecesText: '' })),

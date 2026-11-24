@@ -59,7 +59,7 @@ export async function localOrderAssignmentRows(client: PostgresClient, products:
   return rows.map(({ productId, warehouse: code, assigned }) => ({ productId: Number(productId), warehouse: code, assigned: Number(assigned) }));
 }
 
-async function warehouseDeltas(client: PostgresClient, products: number[], warehouse: string, tables: Awaited<ReturnType<typeof hasLocalSalesStock>>) {
+async function physicalStockDeltas(client: PostgresClient, products: number[], warehouse: string | null, tables: Awaited<ReturnType<typeof hasLocalSalesStock>>) {
   const names = [
     ...(tables.receipts ? ['purchase_reception_inventory'] : []),
     ...(tables.remissions ? ['sales_remission_inventory'] : []),
@@ -70,11 +70,15 @@ async function warehouseDeltas(client: PostgresClient, products: number[], wareh
   if (!names.length) return new Map<number, number>();
   const { rows } = await client.query<{ productId: string; quantity: string }>(
     `SELECT product_id AS "productId",sum(quantity) AS quantity FROM (
-       ${names.map((table) => `SELECT product_id,quantity FROM tuvansa.${table} WHERE product_id=ANY($1::bigint[]) AND warehouse=$2`).join(' UNION ALL ')}
+       ${names.map((table) => `SELECT product_id,quantity FROM tuvansa.${table} WHERE product_id=ANY($1::bigint[]) AND ($2::varchar IS NULL OR warehouse=$2)`).join(' UNION ALL ')}
      ) AS stock GROUP BY product_id`,
     [products, warehouse],
   );
   return new Map(rows.map(({ productId, quantity }) => [Number(productId), Number(quantity)]));
+}
+
+export async function localPhysicalStock(client: PostgresClient, products: number[]) {
+  return physicalStockDeltas(client, products, null, await hasLocalSalesStock(client));
 }
 
 export async function readLocalWarehouseStock(warehouse: string, products: number[]) {
@@ -83,7 +87,7 @@ export async function readLocalWarehouseStock(warehouse: string, products: numbe
   const client = await connectPostgres();
   try {
     const tables = await hasLocalSalesStock(client);
-    const physical = await warehouseDeltas(client, products, warehouse, tables);
+    const physical = await physicalStockDeltas(client, products, warehouse, tables);
     const assigned = tables.orders ? await localOrderAssignmentRows(client, products, warehouse) : [];
     for (const [id, quantity] of physical) result.set(id, { quantity, assigned: 0 });
     for (const { productId, assigned: quantity } of assigned) {
@@ -121,7 +125,7 @@ export async function assertWarehouseStock(
   const tables = await hasLocalSalesStock(client);
   const assigned = new Map((tables.orders ? await localOrderAssignmentRows(client, productIds, warehouse, excludeOrderId) : [])
     .map(({ productId, assigned }) => [productId, assigned]));
-  const physical = await warehouseDeltas(client, productIds, warehouse, tables);
+  const physical = await physicalStockDeltas(client, productIds, warehouse, tables);
   for (const { productId, quantity, legacyOnHand, legacyAssigned } of requests) {
     const pending = Math.max(legacyAssigned + (assigned.get(productId) ?? 0), 0);
     const available = scaledStock(legacyOnHand + (physical.get(productId) ?? 0) - pending);

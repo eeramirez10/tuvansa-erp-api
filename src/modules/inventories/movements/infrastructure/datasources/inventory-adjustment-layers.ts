@@ -1,7 +1,7 @@
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
-import type { MovementDocument, MovementLine } from '../../domain/entities/inventory-movement.js';
+import type { MovementLine } from '../../domain/entities/inventory-movement.js';
 
 export const inventoryAdjustmentDbUnavailable = () => new ApplicationError(
   'No fue posible acceder a los movimientos locales en PostgreSQL.', 'INVENTORY_ADJUSTMENT_POSTGRES_UNAVAILABLE', 503,
@@ -162,11 +162,12 @@ export async function currentAdjustmentLayers(
   ].map((layer) => ({ ...layer, layerOrder: orders.get(layer.id) ?? layer.layerOrder }));
 }
 
-export async function writeAdjustmentLayerStock(
-  client: PostgresClient, movement: MovementDocument, reversal: boolean, queueChanges: Map<number, number>,
+export async function writeLayerStock(
+  client: PostgresClient, origin: 'adjustment_id' | 'receipt_id', id: number, lines: LayerLine[], reversal: boolean,
+  queueChanges?: ReadonlyMap<number, number>,
 ) {
   const byLayer = new Map<number, LayerLine>();
-  for (const line of movement.lines) {
+  for (const line of lines) {
     if (!line.lotId) continue;
     const previous = byLayer.get(line.lotId);
     byLayer.set(line.lotId, { ...line, quantity: scaledLayerStock((previous?.quantity ?? 0) + line.quantity) });
@@ -174,13 +175,13 @@ export async function writeAdjustmentLayerStock(
   const layers = [...byLayer.values()].filter(({ quantity }) => quantity !== 0);
   if (!layers.length) return;
   await client.query(
-    `INSERT INTO tuvansa.inventory_adjustment_layer_stock (adjustment_id,layer_id,product_id,warehouse,quantity,reversal,layer_order)
+    `INSERT INTO tuvansa.inventory_adjustment_layer_stock (${origin},layer_id,product_id,warehouse,quantity,reversal,layer_order)
      SELECT $1,layer,product,warehouse,quantity,$2,layer_order
      FROM unnest($3::bigint[],$4::bigint[],$5::varchar[],$6::numeric[],$7::integer[])
        AS stock(layer,product,warehouse,quantity,layer_order)`,
-    [movement.header.id, reversal, layers.map(({ lotId }) => lotId), layers.map(({ productId }) => productId),
+    [id, reversal, layers.map(({ lotId }) => lotId), layers.map(({ productId }) => productId),
       layers.map(({ lotWarehouse, warehouse }) => lotWarehouse ?? warehouse),
-      layers.map(({ quantity }) => reversal ? -quantity : quantity), layers.map(({ lotId }) => queueChanges.get(lotId) ?? null)],
+      layers.map(({ quantity }) => reversal ? -quantity : quantity), layers.map(({ lotId }) => queueChanges?.get(lotId) ?? null)],
   );
 }
 

@@ -27,9 +27,20 @@ function blockedSource(source: ReceiptCancellationSource) {
     || source.accounting?.type !== '3' || !source.accounting.lines.length) {
     return 'La cancelación requiere una recepción en pesos con cargo y póliza registrados.';
   }
-  if ((!source.historical && source.receipt.totals.pieces !== 0) || source.receipt.lines.some((line) => line.lotId !== 0 || nonzeroPieces(line.pieces))
-    || lines.some((line) => line.lotId !== 0 || line.pieces !== 0 || nonzeroPieces(line.piecesText))) {
-    return 'La recepción contiene lotes o piezas que requieren su propia cancelación.';
+  if ((!source.historical && source.receipt.totals.pieces !== 0) || source.receipt.lines.some((line) => nonzeroPieces(line.pieces))
+    || lines.some((line) => line.pieces !== 0 || nonzeroPieces(line.piecesText))) {
+    return 'La recepción contiene piezas que requieren su propia cancelación.';
+  }
+  const receiptLots = new Map(source.receipt.lines.filter(({ lotId }) => lotId !== 0).map((line) => [line.id, line]));
+  const movementLots = lines.filter(({ lotId }) => lotId !== 0);
+  if ((receiptLots.size > 0 || movementLots.length > 0) && (source.historical || receiptLots.size !== movementLots.length
+    || new Set(movementLots.map(({ lotId }) => lotId)).size !== movementLots.length
+    || movementLots.some(({ id, lotId, productId, quantity, lotWarehouse, warehouse }) => {
+      const receipt = receiptLots.get(id);
+      return !Number.isSafeInteger(lotId) || lotId <= 0 || receipt?.lotId !== lotId
+        || receipt.productId !== productId || receipt.quantity !== quantity || (lotWarehouse ?? warehouse) !== warehouse;
+    }))) {
+    return 'Las capas de la recepción requieren un origen PEPS conciliado.';
   }
   if (source.paymentActive) return 'La recepción tiene un pago PP activo. Revierte primero ese pago.';
   return null;
@@ -89,10 +100,13 @@ export class CancelPurchaseReception {
       return { productId, quantity: units, legacyOnHand: data.onHand, legacyAssigned: data.assigned };
     });
     const { id, number, lines, totals, status, received } = effect.order;
+    const layers = source.movement.lines.filter(({ lotId }) => lotId !== 0).map(({ lotId, productId, quantity }) => ({ lotId, productId, quantity }));
     return {
       order: { id, number, lines, totals, receiving: { status, received }, revision: order.revision,
         legacyVersion: order.legacyVersion, amountInWords: order.amountInWords },
-      pending: effect.stock, supplierRevision: order.supplierRevision, stock: { warehouse, requests },
+      pending: effect.stock, supplierRevision: order.supplierRevision, stock: {
+        warehouse, requests, ...(layers.length ? { layers: { receiptId: source.id, lines: layers } } : {}),
+      },
     };
   }
 

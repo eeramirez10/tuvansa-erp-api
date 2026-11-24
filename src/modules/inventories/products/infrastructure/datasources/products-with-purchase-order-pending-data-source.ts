@@ -1,5 +1,6 @@
 import { purchaseOrderInventoryAdjustment } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-pending.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import { effectivePepsCost, inventoryPepsCosts } from '../../../movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
 import { Product, type ProductProps } from '../../domain/entities/product.js';
 import type {
   ProductCreateValues, ProductNavigationDirection, ProductRemovalConfirmation, ProductSearchCriteria, ProductWriteValues,
@@ -7,9 +8,21 @@ import type {
 import { LegacyMysqlProductsDataSource } from './legacy-mysql-products-data-source.js';
 import type { PostgresProductsDataSource } from './postgres-products-data-source.js';
 import { localSalesProductStocks, type LocalSalesStock } from './local-sales-product-inventory.js';
+import { catalogOtherData } from './product-catalog-references.js';
 import {
   purchaseReceptionProductInventories, purchaseReceptionProductInventory, type ReceiptWarehouseTotals,
 } from './purchase-reception-product-inventory.js';
+
+async function receiptPepsPrices(product: ProductProps): Promise<ProductProps['prices'] | undefined> {
+  const snapshot = (await inventoryPepsCosts([product.id])).get(product.id);
+  if (!snapshot) return undefined;
+  const current = product.prices.costs;
+  const other = (await catalogOtherData([product.id])).get(product.id);
+  const costs = effectivePepsCost({
+    average: Number(other?.list4 ?? current.average), last: Number(other?.list5 ?? current.last), adValorem: current.adValorem,
+  }, snapshot);
+  return { ...product.prices, costs: { ...current, ...costs } };
+}
 
 function addReceiptInventory(
   accumulated: ProductProps['accumulated'], inventory: ReceiptWarehouseTotals[],
@@ -87,13 +100,15 @@ export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProdu
     const product = await request;
     if (!product) return null;
     const details = product.toPrimitives();
-    const [{ pending, confirmed, quotes }, inventory, sales] = await Promise.all([
+    const [{ pending, confirmed, quotes }, inventory, sales, prices] = await Promise.all([
       purchaseOrderInventoryAdjustment(details.id), purchaseReceptionProductInventory(details.id), localSalesProductStocks([details.id]),
+      receiptPepsPrices(details),
     ]);
-    if (pending === 0 && confirmed === 0 && quotes === 0 && inventory.length === 0 && sales.size === 0) return product;
+    if (pending === 0 && confirmed === 0 && quotes === 0 && inventory.length === 0 && sales.size === 0 && !prices) return product;
     const accumulated = addSalesInventory(addReceiptInventory(details.accumulated, inventory), sales.get(details.id));
     return Product.create({
       ...details,
+      prices: prices ?? details.prices,
       accumulated: {
         ...accumulated,
         supplierOrders: Number((details.accumulated.supplierOrders + pending).toFixed(2)),

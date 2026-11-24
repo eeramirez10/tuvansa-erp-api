@@ -133,7 +133,8 @@ de `FCIA.CIACOMPORTA` activas y las posiciones 46, 67, 75 y 94 inactivas.
   cola del producto y separan la partida por `LOSEQ` al consumir varias.
   TUVANSA tiene la posición 94 desactivada, por lo que la cola es común entre
   almacenes. La salida descuenta el almacén elegido y se registra a
-  `ILISTA4 + IADVALOREM`.
+  `ILISTA4 + IADVALOREM`, incluyendo la valoración generada por las
+  recepciones con PEPS.
 - **Anulación.** `MFACT/112` y `MCPAR03/35` restituyen las cantidades por
   `LOSEQ`, conservan la cantidad inicial y asignan una nueva clave al
   reactivar una capa agotada. La API exige el saldo completo de la capa

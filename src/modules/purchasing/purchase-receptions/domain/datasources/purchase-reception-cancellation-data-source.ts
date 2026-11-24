@@ -39,6 +39,7 @@ export interface ReceiptCancellationOrder {
 export interface ReceiptCancellationStock {
   warehouse: string;
   requests: { productId: number; quantity: number; legacyOnHand: number; legacyAssigned: number }[];
+  layers?: { receiptId: number; lines: { lotId: number; productId: number; quantity: number }[] };
 }
 export interface ReceiptCancellationReferences {
   cancellationOrder(orderId: number): Promise<ReceiptCancellationOrder | null>;

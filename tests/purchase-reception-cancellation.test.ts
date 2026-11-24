@@ -1,5 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { currentAdjustmentLayers, inactivePepsOrder } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
+import { PostgresInventoryAdjustmentsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-adjustments.js';
+import { inventoryPepsCostsOn } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
 import { PurchaseOrder, type PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 import { PostgresPurchaseOrderEdits } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import { CancelPurchaseReception } from '../src/modules/purchasing/purchase-receptions/application/use-cases/cancel-purchase-reception.js';
@@ -10,11 +13,11 @@ import { historicalReceptionCancellationsOn } from '../src/modules/purchasing/pu
 import { localPurchasePayablesSql } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { PostgresPurchaseReceptionCancellations } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionWrites } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import * as postgres from '../src/shared/infrastructure/database/postgres-pool.js';
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
 
-it('reopens an older RW without changing the other receipt or restoring purchase allocations', async () => {
-  const db = new PGlite();
-  const connect: PostgresConnectionFactory = async () => ({
+function connectionTo(db: PGlite): PostgresConnectionFactory {
+  return async () => ({
     async query<T extends object>(sql: string, values?: unknown[]) {
       if (values) return db.query<T>(sql, values);
       const results = await db.exec(sql);
@@ -22,6 +25,9 @@ it('reopens an older RW without changing the other receipt or restoring purchase
     },
     release() {},
   });
+}
+
+function localReceipts(connect: PostgresConnectionFactory) {
   const actor = { companyId: 1, userId: 3 };
   const fiscal = { fiscalWindow: async () => ({ fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' }) };
   const legacyVersion = '1'.repeat(64);
@@ -39,7 +45,7 @@ it('reopens an older RW without changing the other receipt or restoring purchase
       observations: '', piecesAssignment: '', supplierProductCode: '' }],
   };
   const edits = new PostgresPurchaseOrderEdits(connect, () => true);
-  const receipts = new PostgresPurchaseReceptionWrites(edits, connect);
+  const receipts = new PostgresPurchaseReceptionWrites(edits, connect, { layers: async () => [] });
   const cancel = new CancelPurchaseReception(new PostgresPurchaseReceptionCancellations(edits, connect, () => true), {
     cancellationOrder: async () => {
       const [snapshot] = await edits.find([order.id]);
@@ -52,33 +58,48 @@ it('reopens an older RW without changing the other receipt or restoring purchase
   }, fiscal);
   const policy = { receiveAssigned: true, supplierTolerancePercent: 10, canRetireCompletedOrder: false };
   const requestedLines = [{ orderLineId: 101, quantity: 2 }];
-  const receive = (current: PurchaseOrderProps, revision: number, receivedAt: string, requestKey: string) => {
+  const receive = (
+    current: PurchaseOrderProps, revision: number, receivedAt: string, requestKey: string,
+    pepsLayer?: PurchaseReceptionPosting['lines'][number]['pepsLayer'],
+  ) => {
+    const { id: orderLineId, price } = current.lines[0]!;
+    const lines = [{ orderLineId, quantity: 2 }];
+    const subtotal = 2 * price;
+    const tax = Number((subtotal * 0.16).toFixed(2));
+    const total = subtotal + tax;
     const posting: PurchaseReceptionPosting = {
-      document: { orderNumber: order.number, supplierReference: 'FACT-1', supplier: order.supplier, department: '', warehouse: '01',
-        branch: 0, status: '', cancelled: false, dates: { receivedAt, dueAt: receivedAt, orderedAt: order.dates.orderedAt },
+      document: { orderNumber: current.number, supplierReference: 'FACT-1', supplier: current.supplier, department: '', warehouse: '01',
+        branch: 0, status: '', cancelled: false, dates: { receivedAt, dueAt: receivedAt, orderedAt: current.dates.orderedAt },
         delayDays: 0, classifications: [], discountPercentages: [],
-        totals: { units: 2, pieces: 0, subtotal: 100, discount: 0, freight: 0, insurance: 0, other: 0,
-          otherLabel: '', exciseTax: 0, taxPercentage: 16, tax: 16, withholdingTax: 0, total: 116, balance: 116 } },
-      movement: { date: receivedAt, reference: order.number, reference2: 'FACT-1', warehouse: '01', supplierCode: order.supplier.code,
+        totals: { units: 2, pieces: 0, subtotal, discount: 0, freight: 0, insurance: 0, other: 0,
+          otherLabel: '', exciseTax: 0, taxPercentage: 16, tax, withholdingTax: 0, total, balance: total } },
+      movement: { date: receivedAt, reference: current.number, reference2: 'FACT-1', warehouse: '01', supplierCode: current.supplier.code,
         customerCode: '', customerName: '', type: 'RA', status: 0, company: 1, inventoryFlag: 1, billingFlag: 2 },
-      lines: [{ orderLineId: 101, reception: { productId: 7, productCode: 'A', description: 'Producto A', quantity: 2,
-        invoicedQuantity: 2, unit: 'PZ', price: 50, grossPrice: 50, discount: 0, amount: 100,
+      lines: [{ orderLineId, ...(pepsLayer ? { pepsLayer } : {}), reception: { productId: 7, productCode: 'A', description: 'Producto A', quantity: 2,
+        invoicedQuantity: 2, unit: 'PZ', price, grossPrice: price, discount: 0, amount: subtotal,
         pieces: '', costCenter: 0, branch: 0, lotId: 0, inventoryCreatedAt: null },
-      movement: { productId: 7, productCode: 'A', description: 'Producto A', quantity: 2, unit: 'PZ', cost: 50,
+      movement: { productId: 7, productCode: 'A', description: 'Producto A', quantity: 2, unit: 'PZ', cost: price,
         pieces: 0, piecesText: '', warehouse: '01', type: 'RA', lotId: 0 } }],
-      payable: { amount: 116, currencyId: 1, exchangeRate: 1, dueAt: receivedAt },
+      payable: { amount: total, currencyId: 1, exchangeRate: 1, dueAt: receivedAt },
       accounting: { type: '3', lines: [
-        { account: '1150', department: '', debit: 100, credit: 0 },
-        { account: '1119', department: '', debit: 16, credit: 0 },
-        { account: '2005', department: '', debit: 0, credit: 116 },
+        { account: '1150', department: '', debit: subtotal, credit: 0 },
+        { account: '1119', department: '', debit: tax, credit: 0 },
+        { account: '2005', department: '', debit: 0, credit: total },
       ] },
     };
     return receipts.commit({ actor, posting, fingerprint: '2'.repeat(64),
       context: { order: current, revision, legacyVersion, policy, defaults: { receivedAt, warehouse: '01' }, warehouses: [], reason: null },
-      effect: applyPurchaseOrderReceipt(current, requestedLines, policy),
-      input: { requestKey, revision, legacyVersion, receivedAt, warehouse: '01', supplierReference: 'FACT-1', lines: requestedLines },
+      effect: applyPurchaseOrderReceipt(current, lines, policy),
+      input: { requestKey, revision, legacyVersion, receivedAt, warehouse: '01', supplierReference: 'FACT-1', lines },
     });
   };
+  return { actor, order, edits, cancel, receive, policy, requestedLines };
+}
+
+it('reopens an older RW without changing the other receipt or restoring purchase allocations', async () => {
+  const db = new PGlite();
+  const connect = connectionTo(db);
+  const { actor, order, edits, cancel, receive, policy, requestedLines } = localReceipts(connect);
   try {
     const first = await receive(order, 0, '2025-12-02', '302385d4-1e07-4673-ba18-b5d5053455e0');
     const afterFirst = applyPurchaseOrderReceipt(order, requestedLines, policy).order;
@@ -112,16 +133,103 @@ it('reopens an older RW without changing the other receipt or restoring purchase
   } finally { await db.close(); }
 }, 15000);
 
+it('cancels a layered RW only after its exact PEPS lot is fully restored', async () => {
+  const db = new PGlite();
+  const connect = connectionTo(db);
+  const inventoryConnection = vi.spyOn(postgres, 'connectPostgres').mockImplementation(connect);
+  const inventoryConfiguration = vi.spyOn(postgres, 'postgresConfigured').mockReturnValue(true);
+  const { actor, order, edits, cancel, receive } = localReceipts(connect);
+  const productId = 7;
+  const costBasis = { openingStock: 0, average: 0, last: 0, adValorem: 0 };
+  const secondOrder = { ...order, id: 56, number: 'OC12346',
+    lines: [{ ...order.lines[0]!, id: 102, price: 80 }],
+    totals: { ...order.totals, subtotal: 320, tax: 51.2, total: 371.2 },
+  };
+  const inventory = new PostgresInventoryAdjustmentsDataSource({
+    capture: async () => ({ reason: null, defaultDate: '2025-12-04', defaultWarehouse: '01', automaticPeps: true,
+      types: [{ code: 'SI', name: 'Salida', sign: -1 }], warehouses: [{ code: '01', name: 'México' }] }),
+    products: async () => new Map([[productId, {
+      id: productId, code: 'A', description: 'Producto A', unit: 'PZ', cost: 0, transferCost: 0, layerCost: 0, adValorem: 0,
+      active: true, simple: false, peps: true, legacyOnHand: 0, legacyAssigned: 0,
+    }]]),
+    layers: async () => [],
+    documentExists: async () => false,
+  });
+  const originalLayer = { date: '2025-11-25', customsEntry: '123456789', customsOffice: '240' };
+  const nextLayer = { date: '2025-11-26', customsEntry: '', customsOffice: '' };
+  const firstPosting = { ...originalLayer, costBasis };
+  const readLayers = async () => currentAdjustmentLayers(await connect(), [productId], []);
+  const readCost = async () => (await inventoryPepsCostsOn(await connect(), [productId])).get(productId)?.effective;
+  const originalRequest = crypto.randomUUID();
+  const cancellation = { requestKey: crypto.randomUUID(), date: '2025-12-05', reason: 'Error de captura PEPS', confirmed: true as const };
+
+  try {
+    const first = await receive(order, 0, '2025-12-02', originalRequest, firstPosting);
+    expect(await receive(order, 0, '2025-12-02', originalRequest, firstPosting)).toEqual(first);
+    expect(await readCost()).toEqual({ average: 50, last: 50, adValorem: 0 });
+    const second = await receive(secondOrder, 0, '2025-12-03', crypto.randomUUID(), { ...nextLayer, costBasis });
+    expect(await readCost()).toEqual({ average: 65, last: 80, adValorem: 0 });
+    const lotId = first.reception.lines[0]!.lotId;
+    const otherLotId = second.reception.lines[0]!.lotId;
+    expect(lotId).toBeGreaterThan(0);
+    expect(otherLotId).toBeGreaterThan(0);
+    expect(otherLotId).not.toBe(lotId);
+    expect(await readLayers()).toMatchObject([
+      { ...originalLayer, id: lotId, document: first.reception.number, initial: 2, available: 2, layerOrder: 1, cost: 50, adValorem: 0 },
+      { ...nextLayer, id: otherLotId, document: second.reception.number, initial: 2, available: 2, layerOrder: 2, cost: 80, adValorem: 0 },
+    ]);
+    expect(await cancel.prepare(1, first.reception.id)).toMatchObject({ canWrite: true, amount: 116 });
+    const exit = await inventory.create({ requestKey: crypto.randomUUID(), type: 'SI', date: '2025-12-04', warehouse: '01',
+      lines: [{ productId, quantity: 2 }] });
+    expect(exit.lines).toMatchObject([{ lotId, quantity: -2, cost: 65 }]);
+    expect(await readLayers()).toMatchObject([
+      { id: lotId, initial: 2, available: 0, layerOrder: inactivePepsOrder },
+      { id: otherLotId, initial: 2, available: 2, layerOrder: 2 },
+    ]);
+    expect(await cancel.prepare(1, first.reception.id)).toMatchObject({ canWrite: false, reason: expect.stringContaining('ya se utilizó') });
+    await expect(cancel.save(actor, first.reception.id, cancellation))
+      .rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_CANCELLATION_LAYER_INSUFFICIENT' });
+    expect((await edits.find([order.id]))[0]).toMatchObject({ revision: 1, totals: { fulfilled: 2, remaining: 2, assigned: 2 } });
+    expect((await db.query('SELECT id FROM tuvansa.purchase_reception_cancellations')).rows).toEqual([]);
+
+    await inventory.cancel(exit.header.id);
+    await inventory.cancel(exit.header.id);
+    expect(await readLayers()).toMatchObject([
+      { id: lotId, initial: 2, available: 2, layerOrder: 3 },
+      { id: otherLotId, initial: 2, available: 2, layerOrder: 2 },
+    ]);
+    expect(await cancel.prepare(1, first.reception.id)).toMatchObject({ canWrite: true });
+    const cancelled = await cancel.save(actor, first.reception.id, cancellation);
+    expect(await cancel.save(actor, first.reception.id, cancellation)).toEqual(cancelled);
+    expect(await cancel.prepare(1, first.reception.id)).toMatchObject({ canWrite: false, alreadyRecorded: cancelled });
+    expect(await readCost()).toEqual({ average: 65, last: 80, adValorem: 0 });
+    expect(await readLayers()).toMatchObject([
+      { ...originalLayer, id: lotId, initial: 0, available: 0, layerOrder: 3 },
+      { ...nextLayer, id: otherLotId, initial: 2, available: 2, layerOrder: 2 },
+    ]);
+    expect((await edits.find([order.id]))[0]).toMatchObject({ revision: 2,
+      totals: { fulfilled: 0, remaining: 4, assigned: 2 }, receiving: { received: { quantity: 0, pieces: 0 } } });
+    expect((await db.query('SELECT movement,accounting FROM tuvansa.purchase_reception_cancellations')).rows).toMatchObject([
+      { movement: { header: { type: 'K', reference: first.reception.number }, lines: [{ lotId, quantity: -2, cost: 50 }] },
+        accounting: { lines: [{ debit: 0, credit: 100 }, { debit: 0, credit: 16 }, { debit: 116, credit: 0 }] } },
+    ]);
+    const payables = await localPurchasePayablesSql(await connect());
+    expect((await db.query(`SELECT id::float8,cancelled FROM (${payables}) t ORDER BY id`)).rows).toEqual([
+      { id: first.reception.id, cancelled: true }, { id: second.reception.id, cancelled: false },
+    ]);
+    const nextExit = await inventory.create({ requestKey: crypto.randomUUID(), type: 'SI', date: '2025-12-06', warehouse: '01',
+      lines: [{ productId, quantity: 1 }] });
+    expect(nextExit.lines).toMatchObject([{ lotId: otherLotId, quantity: -1, cost: 65 }]);
+  } finally {
+    inventoryConnection.mockRestore();
+    inventoryConfiguration.mockRestore();
+    await db.close();
+  }
+}, 20000);
+
 it('records a historical RA without a receipt copy and rejects a native change before committing', async () => {
   const db = new PGlite();
-  const connect: PostgresConnectionFactory = async () => ({
-    async query<T extends object>(sql: string, values?: unknown[]) {
-      if (values) return db.query<T>(sql, values);
-      const results = await db.exec(sql);
-      return { rows: (results.at(-1)?.rows ?? []) as T[] };
-    },
-    release() {},
-  });
+  const connect = connectionTo(db);
   const date = '2025-02-08';
   const supplier = { id: 3523, code: '003523', name: 'Proveedor' };
   const orderNumber = 'OA05036';

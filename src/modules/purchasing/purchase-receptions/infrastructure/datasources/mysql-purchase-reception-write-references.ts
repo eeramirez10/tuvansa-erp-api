@@ -20,7 +20,7 @@ import { purchaseOrderReceiptLines, type PurchaseOrderReceiptEffect } from '../.
 
 interface ReceiptRules extends RowDataPacket {
   fiscalStart: string | null; fiscalEnd: string | null;
-  flags: string; plugs: string; defaultWarehouse: string; movement: string;
+  flags: string; plugs: string; defaultWarehouse: string; movement: string; noCosts: number;
   stockSign: number; payableSign: number; invoiceSign: number; policyType: string;
   accountMode: number; movementAccount: string; vatRate: number; vatAccount: string; alternateVatAccount: string;
   tolerance: number; terms: number; supplierAccount: string; betweenCompanies: number; withheldVat: number; withheldIsr: number;
@@ -30,6 +30,9 @@ interface ProductRules extends RowDataPacket {
   id: number; unit: string; receivedAt: string | null; noLayers: number;
   vatCode: number; withheldVat: number; exciseRate: number; exciseUnit: number; tariff: number;
   account: string; returnAccount: string;
+  layerProduct: boolean; controlsPieces: number;
+  openingStock: number; average: number; last: number; adValorem: number;
+  customsEntry: string; customsOffice: string; importDate: string | null;
 }
 
 const date = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
@@ -38,6 +41,10 @@ const amount = (value: number, decimals: number) => Number(value.toFixed(decimal
 const unsupported = (message: string) => new ApplicationError(message, 'PURCHASE_RECEPTION_POSTING_UNSUPPORTED', 422);
 const flag = (rules: ReceiptRules, position: number) => rules.flags.charAt(position - 1) === '1';
 const validAccount = (account: string | undefined) => Boolean(account?.trim());
+const supportsPeps = (rules: ReceiptRules) => rules.noCosts === 0
+  && [22, 24, 37, 45, 51].every((position) => flag(rules, position))
+  && [4, 8, 46, 50, 67, 75, 94].every((position) => !flag(rules, position));
+const hasPhysicalPieces = (value: string) => !/^(?:0+(?:\.0+)?)?$/.test(value.trim());
 
 export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionWriteReferences, ReceiptCancellationReferences {
   constructor(
@@ -52,7 +59,7 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
     const supplierFields = supplier ? '' : `,S.PRVTOLERANCIA AS tolerance,S.PRVPLAZO AS terms,S.PRVCTA AS supplierAccount,
       S.PRVINTERCIA AS betweenCompanies,S.PRVRETIVA AS withheldVat,S.PRVRETISR AS withheldIsr`;
     const [rows] = await legacyMysqlPool.execute<ReceiptRules[]>(
-      `SELECT C.CIACOMPORTA AS flags,C.CIAPLUGS AS plugs,ROOT.CATMCIAALM AS defaultWarehouse,
+      `SELECT C.CIACOMPORTA AS flags,C.CIAPLUGS AS plugs,C.CIANOCOSTOS AS noCosts,ROOT.CATMCIAALM AS defaultWarehouse,
          NULLIF(C.CIAFI,'1900-12-31') AS fiscalStart,NULLIF(C.CIAFF,'1900-12-31') AS fiscalEnd,
          M.TICLA AS movement, M.TIAFINV AS stockSign, M.TIAFCXC AS payableSign, M.TIAFVTS AS invoiceSign,
          C.CIAPOLIZACONT AS policyType, M.TICONTA AS accountMode, M.TICUENTA AS movementAccount,
@@ -77,7 +84,11 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
     const [rows] = await legacyMysqlPool.execute<ProductRules[]>(
       `SELECT ISEQ AS id, IUM AS unit, NULLIF(IALTA,'1900-12-31') AS receivedAt, INOCAPAS AS noLayers,
         IPORCIVA AS vatCode, IRETIVA AS withheldVat, IPORCIEPES AS exciseRate, IFIJOIEPS AS exciseUnit,
-        IPORCARANC AS tariff, ICTA AS account, ICTADEV AS returnAccount
+        IPORCARANC AS tariff, ICTA AS account, ICTADEV AS returnAccount,
+        (INOCAPAS<>1 AND ITIPO IN (0,1,3)) AS layerProduct, ICONTROLPZAS AS controlsPieces,
+        ISTKACT AS openingStock, ILISTA4 AS average, ILISTA5 AS last, IADVALOREM AS adValorem,
+        TRIM(IPEDIMENTO) AS customsEntry, TRIM(IADUANA) AS customsOffice,
+        CASE WHEN IFECHAIMPORT>='1901-01-01' THEN DATE_FORMAT(IFECHAIMPORT,'%Y-%m-%d') END AS importDate
        FROM FINV WHERE ISEQ IN (${ids.map(() => '?').join(',')})`, ids,
     );
     const result = new Map(rows.map((item) => [item.id, item]));
@@ -88,8 +99,8 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
         continue;
       }
       const legacy = result.get(id);
-      if (!revision && !isNewCatalogProduct(id)) continue;
       const other = otherData.get(id);
+      if (!revision && !isNewCatalogProduct(id) && !other) continue;
       result.set(id, {
         id, unit: document.classification.unit.code, receivedAt: document.createdAt,
         account: document.warehouse.accounts.primary, returnAccount: document.warehouse.accounts.secondary,
@@ -98,6 +109,15 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
         withheldVat: Number(other?.vatWithholdingType ?? legacy?.withheldVat ?? 0),
         exciseRate: Number(other?.iepsPercentage ?? legacy?.exciseRate ?? 0),
         exciseUnit: legacy?.exciseUnit ?? 0, tariff: Number(other?.tariffPercentage ?? legacy?.tariff ?? 0),
+        layerProduct: Boolean(legacy?.layerProduct && !document.classification.usesColorAndSize),
+        controlsPieces: Number(Boolean(other?.controlsPieces || legacy?.controlsPieces)),
+        openingStock: Number(legacy?.openingStock ?? 0),
+        average: Number(other?.list4 ?? document.prices.costs.average),
+        last: Number(other?.list5 ?? document.prices.costs.last),
+        adValorem: Number(document.prices.costs.adValorem),
+        customsEntry: String(other?.customsEntry ?? legacy?.customsEntry ?? ''),
+        customsOffice: String(other?.customsOffice ?? legacy?.customsOffice ?? ''),
+        importDate: typeof other?.importDate === 'string' || other?.importDate === null ? other.importDate : legacy?.importDate ?? null,
       } as ProductRules);
     }
     return result;
@@ -174,6 +194,8 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
           break;
         }
       }
+      if (!reason && eligibleLines.some((line) => products.get(line.productId)?.noLayers !== 1
+        && hasPhysicalPieces(line.piecesAssignment))) reason = 'La recepción PEPS contiene partidas con piezas físicas.';
       if (this.postsAccounting(rules) && !validAccount(rules.supplierAccount)) reason = 'El proveedor no tiene cuenta contable.';
     }
     return {
@@ -189,8 +211,11 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
   }
 
   private checkProduct(rules: ReceiptRules, product?: ProductRules) {
-    if (!product || product.noLayers !== 1 || product.exciseRate || product.exciseUnit || product.withheldVat || product.tariff) {
-      throw unsupported('La recepción contiene un producto con capas de costo, pedimento, IEPS o retenciones.');
+    if (!product || product.exciseRate || product.exciseUnit || product.withheldVat || product.tariff) {
+      throw unsupported('La recepción contiene un producto con arancel, IEPS, retenciones o sin datos de inventario.');
+    }
+    if (product.noLayers !== 1 && (!supportsPeps(rules) || !product.layerProduct || product.controlsPieces)) {
+      throw unsupported('La recepción contiene un producto que requiere otro manejo de capas o piezas.');
     }
     const account = this.inventoryAccount(rules, product);
     if (this.postsAccounting(rules) && !validAccount(account)) throw unsupported('Un producto no tiene cuenta contable de inventario.');
@@ -220,6 +245,8 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       const gross = line.baseQuantity * source.price * (1 - source.discount / 100);
       const netLine = amount(gross * discountFactor, 4);
       const price = amount(source.price * (1 - source.discount / 100) * discountFactor, 5);
+      const peps = product.noLayers !== 1;
+      if (peps && hasPhysicalPieces(source.piecesAssignment)) throw unsupported('La recepción PEPS contiene partidas con piezas físicas.');
       subtotal += gross;
       net += netLine;
       units += line.baseQuantity;
@@ -227,6 +254,10 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       gl.set(account, (gl.get(account) ?? 0) + netLine);
       return {
         orderLineId: line.orderLineId,
+        ...(peps ? { pepsLayer: {
+          date: product.importDate, customsEntry: product.customsEntry, customsOffice: product.customsOffice,
+          costBasis: { openingStock: Number(product.openingStock), average: Number(product.average), last: Number(product.last), adValorem: Number(product.adValorem) },
+        } } : {}),
         reception: {
           productId: line.productId, productCode: source.productCode, description: source.description,
           quantity: line.baseQuantity, invoicedQuantity: line.baseQuantity, unit: product.unit,

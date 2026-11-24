@@ -37,7 +37,34 @@ El alta conserva el vínculo de cada partida con la orden, equivalente a `FAXINV
 
 En Neon se probó en Chrome una orden confirmada con dos unidades. Cancelar mantuvo las dos unidades pendientes. Dos recepciones de una unidad dejaron surtidos 1 y 2, pendientes 1 y 0 y asignados 1 y 0. La prueba verificó ambos movimientos y los cargos, y retiró sus datos temporales.
 
-El alta cubre recepciones ordinarias en pesos, con productos sin capas de costo, sin pedimento con importes, sin cargos de importación, sin IEPS, sin retenciones y sin proveedor intercompañía. Los casos de importación y capas requieren la migración de `MRECEP/65,104,105` y de los costos asociados. El folio y la numeración de la póliza se asignan en PostgreSQL.
+El alta cubre recepciones ordinarias en pesos, incluidos los productos con
+PEPS automático de TUVANSA. Aplica a partidas de inventario en unidad base
+sin piezas físicas, arancel, cargos de importación, IEPS, retenciones,
+operación intercompañía o pedimento capturado. El folio y la numeración de la
+póliza se asignan en PostgreSQL.
+
+### Recepción con PEPS
+
+| Vista / acción | Procedencia | Tablas y efecto |
+| --- | --- | --- |
+| Nueva recepción / OK | Derivada de German de pruebas `MRECEP/38,32`, `MBASE/41` y `MCPAR03/21,28,51` | Lee apertura de `FINV` y cola de `FLOTES`. Guarda una capa por partida en `inventory_adjustment_layers`, el vínculo RA y las unidades en `inventory_adjustment_layer_stock` y la valoración en `inventory_peps_costs` |
+| Inventarios / Lotes y UEPS / PEPS | Derivada de la consulta por `FLOTES.LOSEQ` | Muestra el identificador de la capa, el folio, los saldos y los movimientos web asociados |
+| Cancelar recepción / Confirmar | Derivada de `MRECEP/25–26,111,136–138` | Resta la cantidad en la capa de origen, deja su cantidad inicial en cero y conserva su clave PEPS. Registra el movimiento K, el regreso al pendiente de la orden y la póliza inversa |
+
+`MBASE/41` actualiza Lista 5 al costo neto de la partida y Lista 4 al
+promedio ponderado por la existencia global anterior. También promedia el
+advalorem. Con el pedimento de la recepción vacío, `MCPAR03/28` toma
+estos valores ya actualizados y los datos de importación del producto.
+Cada partida obtiene su capa aun si el producto se repite. La cola es
+común entre almacenes con la posición 94 desactivada.
+
+La salida SI consume las capas en orden PEPS y registra el movimiento al
+costo promedio vigente más advalorem. La anulación de la RW comprueba la
+existencia libre del almacén y la cantidad completa de cada capa
+original. Conserva la valoración registrada al recibir. Los pagos PP
+activos y el periodo contable siguen aplicando como condiciones para
+anular. La escritura de capas, existencias, orden, proveedor y póliza
+pertenece a la misma transacción.
 
 ## Gastos múltiples (GA)
 

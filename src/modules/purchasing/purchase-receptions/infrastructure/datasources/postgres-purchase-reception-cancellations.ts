@@ -4,6 +4,7 @@ import { NotFoundError } from '../../../../../shared/domain/errors/not-found-err
 import { connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import { lockPepsProducts, writeLayerStock } from '../../../../inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
 import { assertWarehouseStock, lockWarehouseStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { PostgresPurchaseOrderEdits } from '../../../purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import type { PostingReversalResult } from '../../domain/datasources/purchase-posting-reversal-data-source.js';
@@ -14,6 +15,7 @@ import type {
 import { historicalReceptionCancellationsOn } from './historical-purchase-reception-cancellation-reads.js';
 import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.js';
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
+import { verifyReceiptLayerStock } from './purchase-reception-peps.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
 const firstId = purchaseReceptionCancellationIdStart;
@@ -136,7 +138,12 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
       ? requestResult(client, companyId, requestKey, fingerprint) : null);
   }
 
-  checkStock(stock: ReceiptCancellationStock) { return this.withConnection((client) => verifyWarehouse(client, stock, false)); }
+  checkStock(stock: ReceiptCancellationStock) {
+    return this.withConnection(async (client) => {
+      await verifyWarehouse(client, stock, false);
+      await verifyReceiptLayerStock(client, stock);
+    });
+  }
 
   async commit({ actor, input, fingerprint, source, order, pending, supplierRevision, stock, validate }: ReceiptCancellationCommand) {
     this.migration ??= this.withConnection(async (client) => {
@@ -182,6 +189,10 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
         throw new ConflictError('Las cantidades del movimiento original cambiaron.', 'PURCHASE_RECEPTION_CANCELLATION_STOCK_CHANGED');
       }
       await verifyWarehouse(client, stock, true);
+      if (stock.layers) {
+        await lockPepsProducts(client, stock.layers.lines.map(({ productId }) => productId));
+        await verifyReceiptLayerStock(client, stock);
+      }
     };
     return this.orders.postReceipt(order, pending, [], undefined, supplierRevision, replay, async (client) => {
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.purchase_reception_cancellation_ids') AS id");
@@ -221,6 +232,12 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
          SELECT $1,product,$2,-quantity FROM unnest($3::bigint[],$4::numeric[]) AS lines(product,quantity)`,
         [id, stock.warehouse, stock.requests.map(({ productId }) => productId), stock.requests.map(({ quantity }) => quantity)],
       );
+      if (stock.layers) {
+        // MRECEP/25. Mantiene la llave PEPS y vuelve a cero la cantidad inicial.
+        await writeLayerStock(client, 'receipt_id', source.id, source.movement.lines, true);
+        await client.query('UPDATE tuvansa.inventory_adjustment_layers SET initial=0 WHERE id=ANY($1::bigint[])',
+          [stock.layers.lines.map(({ lotId }) => lotId)]);
+      }
       return result;
     }, verify);
   }

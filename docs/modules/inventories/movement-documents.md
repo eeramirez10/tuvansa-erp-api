@@ -185,15 +185,35 @@ mismo orden y se aplican en una sola transacción de PostgreSQL.
 
 La cancelación web invierte los asientos por almacén del TR original y
 conserva la cola PEPS. En German, `MFACT/112` llama a `MCPAR03/21` con
-las capas habilitadas al invertir las partidas. El procedimiento puede
-crear o consumir capas durante la cancelación genérica. El historial
-local contiene TR con productos sin capas y el perfil de prueba de Omnis
-bloqueó el movimiento EI necesario para preparar un producto aislado.
-En un nuevo intento con la biblioteca German, la compañía México y el
-producto PEPS `01511263` preparado en el almacén 01, el perfil también
-bloqueó el tipo `TR` al pasar del selector al folio con el mensaje
-«El T.M. no está permitido para el usuario». No se registró un traspaso
-nativo en esa sesión. Evidencia `20261124-native-transfer-tr-user-blocked.png`.
+las capas habilitadas al invertir las partidas.
+
+### Prueba nativa de un traspaso PEPS global
+
+El 24 de noviembre de 2026, el usuario de pruebas **SISTEMAS** en México
+registró en German el folio `TR0005` (`FDOC.DSEQ=346526`, fecha 31/12/2025)
+por una unidad del producto `01511263` del almacén 01 al 12. Después
+canceló ese folio desde **Inventarios → Documentos → Cancelar**.
+
+| Momento | Existencias 01 | Existencias 12 | Capas PEPS globales |
+| --- | ---: | ---: | --- |
+| Antes | 5 | 0 | 17836: 5 unidades |
+| Alta | 4 | 1 | 17836: 5 unidades |
+| Cancelación | 5 | 0 | 17836: 4 unidades, 18118: 1 unidad |
+
+La entrada de la reversión creó la capa `18118` con `LODOC='TR0005'`,
+`LOALM='12'` y costo unitario de 159.4801. La salida consumió una unidad
+de la capa anterior `17836` de `RA09139`. Los dos renglones de
+`FAXINV` quedaron con tipo `K`, cantidad y costo cero, y referencias a
+las capas `18118` (almacén de la partida 01) y `17836` (partida 12).
+El total del producto y el saldo global de las capas quedaron en cinco
+unidades. El encabezado conservó `DCANCELADA=0`. El efecto de la
+cancelación sobre las capas queda pendiente en la web.
+
+Evidencia local: `tr-sistemas-antes.json`, `tr-sistemas-registrado.json`,
+`tr-sistemas-cancelado.json`, `20261124-tr-sistemas-registrado.png` y
+`20261124-tr-sistemas-baja-confirmada.png`. La captura previa
+`20261124-native-transfer-tr-user-blocked.png` registra el rechazo de
+`TR` al probar con el perfil anterior.
 
 La prueba web en PostgreSQL movió dos unidades del almacén 01 al 12
 mediante `TRW00000017`. Una salida de una unidad desde el 12 usó la capa

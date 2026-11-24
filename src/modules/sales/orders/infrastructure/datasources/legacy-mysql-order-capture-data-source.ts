@@ -37,15 +37,23 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     return rows[0];
   }
 
-  async options(): Promise<CaptureOptions> {
-    // Derivada de 03-NEW: almacén 01 México hasta integrar identidad/permisos del usuario OMNIS.
-    const [warehouses] = await legacyMysqlPool.execute<Row<{ code: string; description: string }>[]>(
-      "SELECT CATALM AS code,CATDESCR AS description FROM FALMCAT WHERE CATALM=? AND CATTIPO='' AND CATMULTICIA IN (0,1) ORDER BY CATTIPO,CATSEQ",
-      [supportedWarehouse]);
+  async options(warehouseCodes: readonly string[] = [supportedWarehouse]): Promise<CaptureOptions> {
+    // Adaptada del selector de Nuevo. El alcance configurado sustituye el filtro de usuario de Omnis.
+    const codes = [...new Set(warehouseCodes.map(normalizeOrderWarehouse))];
+    const [rows] = codes.length ? await legacyMysqlPool.execute<Row<CaptureOptions['warehouses'][number]>[]>(
+      `SELECT TRIM(CATALM) AS code,CATDESCR AS description FROM FALMCAT
+       WHERE CATTIPO='' AND CATMULTICIA=1 AND CATCIA IN (0,1)
+         AND CATALM IN (${codes.map(() => '?').join(',')})
+       ORDER BY CATALM,CATSEQ`, codes,
+    ) : [[]];
+    const warehouses = new Map<string, CaptureOptions['warehouses'][number]>();
+    for (const row of rows) {
+      if (!warehouses.has(row.code)) warehouses.set(row.code, { code: row.code, description: row.description });
+    }
     const movement = await this.movement(legacyMysqlPool, 'P');
     const [agents] = await legacyMysqlPool.execute<Row<{code: string; displayCode: string; name: string}>[]>(
       "SELECT AGTNUM AS code,AGNUM AS displayCode,AGDESCR AS name FROM FAG WHERE AGT='1' AND AGTIPO IN (0,1) ORDER BY AGTNUM");
-    return { warehouses, agents, types: [{ code: movement.code, description: movement.description, nextNumber: nextNumber(movement), taxPercentage: Number(movement.tax0) }] };
+    return { warehouses: [...warehouses.values()], agents, types: [{ code: movement.code, description: movement.description, nextNumber: nextNumber(movement), taxPercentage: Number(movement.tax0) }] };
   }
 
   private async readCustomer(db: Db, code: string, unblocked = false): Promise<CaptureCustomer> {

@@ -201,7 +201,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         const other = roundAmount(convertCaptureAmount(doc.totals.other,sourceCurrencyId,targetCurrencyId,exchangeRate));
         const documentCurrencyId = collectionCurrency === 'DOLARES' ? 1 : 0;
         doc.lines=prepared.map(({input:l,product:p},i)=>({id:i+1,productId:p.id,productCode:p.code,description:p.description,ordered:l.quantity,
-          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,
+          fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:values.lines ? 0 : (doc.lines[i]?.branch ?? 0),
           price:roundCapturePrice(convertCaptureAmount(l.price,l.currencyId ?? sourceCurrencyId,targetCurrencyId,exchangeRate)),
           sourcePrice:l.price,sourceCurrencyId:l.currencyId ?? sourceCurrencyId,classCode:'',currencyId:documentCurrencyId,piecesAssignment:'',
           discount:l.discount,publicPrice:roundCapturePrice(convertCaptureAmount(p.price,p.currencyId,targetCurrencyId,exchangeRate)),sku:'',color:'',size:''}));

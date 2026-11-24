@@ -10,6 +10,7 @@ import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js
 const pool = vi.hoisted(() => ({ getConnection: vi.fn(), execute: vi.fn() }));
 vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({ legacyMysqlPool: pool }));
 import { LegacyMysqlOrderCaptureDataSource } from '../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-order-capture-data-source.js';
+import { LegacyMysqlOrderReferenceDataSource } from '../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-order-reference-data-source.js';
 import { LegacyMysqlOrdersDataSource } from '../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-orders-data-source.js';
 import { Order } from '../src/modules/sales/orders/domain/entities/order.js';
 
@@ -35,6 +36,25 @@ const app = (repo: OrderCaptureRepository) => express().use(express.json()).use(
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe('Alta de pedidos capturada', () => {
+  it('consulta sólo los almacenes configurados del catálogo de México', async () => {
+    pool.execute
+      .mockResolvedValueOnce([[{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }]])
+      .mockResolvedValueOnce([[{ code: 'P', counter: 21063, width: 7, tax0: 16, description: 'PEDIDO MEX' }]])
+      .mockResolvedValueOnce([[]]);
+
+    const source = new LegacyMysqlOrderReferenceDataSource(['1', '12', '01', '02', '99']);
+    await expect(source.options()).resolves.toMatchObject({
+      warehouses: [{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }],
+      types: [{ code: 'P', nextNumber: 'P021064', taxPercentage: 16 }],
+    });
+    const [sql, params] = pool.execute.mock.calls[0]!;
+    expect(sql).toContain("WHERE CATTIPO='' AND CATMULTICIA=1 AND CATCIA IN (0,1)");
+    expect(sql).toContain('AND CATALM IN (?,?,?,?)');
+    expect(sql).toContain('ORDER BY CATALM,CATSEQ');
+    expect(params).toEqual(['01', '12', '02', '99']);
+    expect(pool.getConnection).not.toHaveBeenCalled();
+  });
+
   it('reproduce los importes de 01300958 y admite múltiples partidas con descuento', () => {
     expect(captureTotals([{ input: input.lines[0]!, product }])).toMatchObject({ subtotal: 59.05, tax: 9.45, total: 68.5, quantity: 1 });
     const totals = captureTotals([

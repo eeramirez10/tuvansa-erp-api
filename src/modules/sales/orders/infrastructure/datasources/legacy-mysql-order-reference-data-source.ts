@@ -1,4 +1,5 @@
 import type { RowDataPacket } from 'mysql2';
+import { env } from '../../../../../config/env.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { clientCatalogRecord } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
@@ -10,7 +11,8 @@ import { LegacyMysqlOrderCaptureDataSource } from './legacy-mysql-order-capture-
 // Read-only reference port. No capture/create/update/delete method is exposed here.
 export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSource {
   private readonly source = new LegacyMysqlOrderCaptureDataSource();
-  options() { return this.source.options(); }
+  constructor(private readonly warehouseCodes: readonly string[] = env.SALES_ORDER_WAREHOUSES) {}
+  options() { return this.source.options(this.warehouseCodes); }
   customer(code: string) { return this.source.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.source.searchCustomers(criteria, limit); }
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }

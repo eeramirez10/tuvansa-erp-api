@@ -127,6 +127,32 @@ actualizar `FPENC`, `FPLIN`, `FINV`, `FALM` ni otros acumulados legacy.
 Los requests reproducibles están en `http/sales/orders.http`. La evidencia SQL
 y la prueba controlada de alta/edición/baja están en `orders-capture.md`.
 
+### Almacenes de captura en México
+
+`SALES_ORDER_WAREHOUSES` habilita los códigos para **Nuevo** y para cambiar
+el almacén de un pedido que se puede editar. El alcance predeterminado es
+`01`. Por ejemplo, `SALES_ORDER_WAREHOUSES=01,12` permite elegir el almacén
+principal y el resguardo 12. `GET /api/sales/orders/capture/options` devuelve
+los códigos habilitados que existen como almacenes de la compañía 1 en
+`FALMCAT` (`CATTIPO=''`, `CATMULTICIA=1`, `CATCIA IN (0,1)`).
+El alta y la edición validan el mismo catálogo en el servidor. El POST
+clásico propone 01 cuando se omite el almacén.
+
+En el ejercicio de Nuevo se observaron 01, 11, 12, 13 y 99. La consulta local
+identificó 01, 11, 12 y 13 en la compañía 1 y la cotización histórica
+`XA16542` (`PESEQ=115788`) en el almacén 12. El tránsito 99 pertenece al catálogo global.
+El selector `EALM#1/240` cruza `CATCIA` con `CIACIAUSR`, permite códigos
+compartidos mediante `CATMULTICIA=0` y comprueba `CIAUSER` en `CATUSUARIOS`.
+Los registros observados tienen `CATUSUARIOS` configurado. El alcance web
+pertenece al servidor. La sesión web todavía carece de identidad del operador
+de Omnis.
+[Ejercicio de Nuevo](orders-create-new-version.md#flujo-observado)
+
+El pedido conserva un solo almacén para buscar productos, registrar pendientes
+y asignar existencias. El cambio de almacén de un pedido editable mueve el
+pendiente al almacén elegido. La sucursal de entrega del cliente en
+`FSUCURSALES` y la sucursal de partida `PLSUC` son campos independientes.
+
 ## Surtido desde Facturación
 
 Facturación → Facturar toma un pedido web autorizado y asignado para emitir

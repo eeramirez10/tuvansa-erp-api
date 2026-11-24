@@ -69,6 +69,53 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect((await store.get(created.id))?.document.warehouse).toBe('01');
     expect(forbidden).not.toHaveBeenCalled();
   });
+  it('keeps pending quantities and assignment in the configured order warehouse', async () => {
+    const stock = vi.fn(async (warehouse: string) => new Map([
+      [13288, { productId: 13288, unit: 'M', onHand: warehouse === '12' ? 2 : 50, assigned: 0 }],
+    ]));
+    const readProduct = vi.fn(references.product);
+    const local = new PostgresOrderOverlayDataSource(connect, () => true, stock);
+    const api = new HybridOrdersDataSource(legacy, local, {
+      ...references, product: readProduct,
+      options: async () => ({
+        ...await references.options(),
+        warehouses: [{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }],
+      }),
+    }, { getPanel: async () => null });
+    const values = { ...input, documentKind: 'order' as const, lines: [{ ...input.lines[0]!, quantity: 5 }] };
+    await expect(api.create({ ...values, warehouse: '02' })).rejects.toMatchObject({ code: 'ORDER_REFERENCE_INVALID' });
+    const order = (await api.create(values)).toPrimitives();
+    const moved = (await api.update(order.id, { warehouse: '12' }))!.toPrimitives();
+    expect(moved).toMatchObject({ warehouse: '12', branch: 4, lines: [{ branch: 0 }] });
+    expect(readProduct).toHaveBeenLastCalledWith('01300958', '12', 'P', '000001');
+    const { rows } = await db.query('SELECT warehouse,ordered::float8 FROM tuvansa.order_stock_deltas WHERE order_id=$1', [order.id]);
+    expect(rows).toEqual([{ warehouse: '12', ordered: 5 }]);
+
+    await api.setAuthorization(order.id, true);
+    await expect(api.setAssignment(order.id, [{ lineId: 1, assigned: 3 }])).rejects.toMatchObject({ code: 'SALE_STOCK_INSUFFICIENT' });
+    expect((await api.setAssignment(order.id, [{ lineId: 1, assigned: 2 }])).toPrimitives()).toMatchObject({
+      warehouse: '12', lines: [{ assigned: 2 }],
+    });
+    expect(stock.mock.calls.map(([warehouse]) => warehouse)).toEqual(['12', '12']);
+    await expect(api.update(order.id, { warehouse: '01' })).rejects.toMatchObject({ code: 'ORDER_IN_USE' });
+
+    const original = { ...base(10), branch: 4, lines: [{ ...base(10).lines[0]!, branch: 6 }] };
+    const legacyOrder = new HybridOrdersDataSource({ ...legacy, findById: async () => Order.create(original) }, local,
+      { ...references, options: api.options.bind(api) }, { getPanel: async () => null });
+    expect((await legacyOrder.update(original.id, { warehouse: '12' }))?.toPrimitives()).toMatchObject({
+      warehouse: '12', branch: 4, lines: [{ branch: 6 }],
+    });
+    expect((await db.query('SELECT warehouse,ordered::float8 FROM tuvansa.order_stock_deltas WHERE order_id=$1 ORDER BY warehouse',
+      [original.id])).rows).toEqual([{ warehouse: '01', ordered: -1 }, { warehouse: '12', ordered: 1 }]);
+
+    const app = express().use(express.json()).use(createOrdersModule(api)).use(errorHandler);
+    const options = await request(app).get('/capture/options').expect(200);
+    expect(options.body.data.warehouses.map(({ code }: { code: string }) => code)).toEqual(['01', '12']);
+    await request(app).post('/capture').send({ ...values, warehouse: '02' }).expect(409);
+    const captured = await request(app).post('/capture').send({ ...values, warehouse: '12' }).expect(201);
+    expect(captured.body.data).toMatchObject({ warehouse: '12', branch: 4, lines: [{ assigned: 0, branch: 0 }] });
+    expect(forbidden).not.toHaveBeenCalled();
+  });
   it('edits legacy Mexico detail without treating 1 and 01 as separate stock warehouses',async()=>{
     const historical={...base(),warehouse:'1'};
     const readProduct=vi.fn(references.product);

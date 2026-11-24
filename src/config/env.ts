@@ -5,6 +5,9 @@ const productPilots = z.string().default('')
   .transform((value) => value.trim() === '' ? [] : value.split(',').map((id) => id.trim()))
   .pipe(z.array(z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.int().positive())));
 
+const warehouseCodes = z.string().trim().transform((value) => value.split(',').map((code) => code.trim().toUpperCase()))
+  .pipe(z.array(z.string().regex(/^[A-Z0-9]{1,10}$/)));
+
 const purchaseOrderApprovers = z.string().default('[]').transform((value, ctx): unknown => {
   try { return JSON.parse(value); }
   catch {
@@ -46,8 +49,9 @@ const envSchema = z.object({
   NEON_DATABASE_URL: z.string().trim().default(''),
   PURCHASE_ORDER_EDIT_COMPANY_ID: z.coerce.number().int().min(1).max(255).default(1),
   PURCHASE_ORDER_APPROVER_KEYS: purchaseOrderApprovers,
-  PURCHASE_ORDER_WAREHOUSES: z.string().trim().transform((value) => value.split(',').map((code) => code.trim().toUpperCase()))
-    .pipe(z.array(z.string().regex(/^[A-Z0-9]{1,10}$/))).optional(),
+  PURCHASE_ORDER_WAREHOUSES: warehouseCodes.optional(),
+  SALES_ORDER_WAREHOUSES: warehouseCodes.refine((codes) => codes.every((code) => code.length <= 6),
+    'Los códigos de almacén de pedidos no pueden exceder seis caracteres.').default(['01']),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
   INVENTORY_CLASSIFICATION_PILOT_PRODUCTS: productPilots,
   INVENTORY_OTHER_DATA_PILOT_PRODUCTS: productPilots,

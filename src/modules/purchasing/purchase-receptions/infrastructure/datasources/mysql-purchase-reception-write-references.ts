@@ -17,6 +17,7 @@ import type {
 } from '../../domain/datasources/purchase-reception-write-data-source.js';
 import type { ReceiptCancellationReferences } from '../../domain/datasources/purchase-reception-cancellation-data-source.js';
 import { purchaseOrderReceiptLines, type PurchaseOrderReceiptEffect } from '../../domain/entities/purchase-reception-order-effect.js';
+import { pedimentoTariff } from '../../domain/entities/purchase-pedimento.js';
 
 interface ReceiptRules extends RowDataPacket {
   fiscalStart: string | null; fiscalEnd: string | null;
@@ -172,6 +173,7 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       : rules?.fiscalStart && today < rules.fiscalStart ? rules.fiscalStart : today;
     const defaults = { receivedAt, warehouse: defaultWarehouse ?? warehouses[0]?.code ?? '' };
     let reason: string | null = null;
+    let pedimentoAvailable = false;
     if (companyId !== 1 || orderRules.companyId !== companyId) reason = 'La orden pertenece a otra compañía.';
     else if (stored && stored.legacyVersion !== version) reason = 'La orden cambió en PROSCAI.';
     else if (!rules || rules.movement !== 'RA' || rules.stockSign !== 1 || rules.payableSign !== 1 || rules.invoiceSign !== 1) {
@@ -186,6 +188,7 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       if (eligibleLines.some(({ currencyId }) => currencyId > 1)) reason = 'Hay partidas de la orden en moneda extranjera.';
       const productIds = [...new Set(eligibleLines.map(({ productId }) => productId))];
       const products = await this.products(productIds);
+      pedimentoAvailable = supportsPeps(rules) && [...products.values()].some((product) => product.noLayers !== 1 && product.layerProduct);
       for (const id of productIds) {
         try { this.checkProduct(rules, products.get(id)); }
         catch (error) {
@@ -203,6 +206,7 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       legacyVersion: change ? createHash('sha256').update(`${version}/supplier/${change.revision}`).digest('hex') : version,
       supplierRevision: change?.revision ?? 0, amountInWords: stored?.amountInWords ?? null,
       warehouses: warehouses.map(({ code, description }) => ({ code, name: description })),
+      pedimentoAvailable: !reason && pedimentoAvailable,
     };
   }
 
@@ -211,11 +215,14 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
   }
 
   private checkProduct(rules: ReceiptRules, product?: ProductRules) {
-    if (!product || product.exciseRate || product.exciseUnit || product.withheldVat || product.tariff) {
-      throw unsupported('La recepción contiene un producto con arancel, IEPS, retenciones o sin datos de inventario.');
+    if (!product || product.exciseRate || product.exciseUnit || product.withheldVat) {
+      throw unsupported('La recepción contiene un producto con IEPS, retenciones o sin datos de inventario.');
     }
     if (product.noLayers !== 1 && (!supportsPeps(rules) || !product.layerProduct || product.controlsPieces)) {
       throw unsupported('La recepción contiene un producto que requiere otro manejo de capas o piezas.');
+    }
+    if (product.tariff && (product.noLayers === 1 || product.tariff < 0)) {
+      throw unsupported('El arancel de un producto requiere una capa PEPS compatible.');
     }
     const account = this.inventoryAccount(rules, product);
     if (this.postsAccounting(rules) && !validAccount(account)) throw unsupported('Un producto no tiene cuenta contable de inventario.');
@@ -226,7 +233,8 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
     const { order } = context;
     const rules = await this.rules(order.supplier.id);
     if (!rules) throw unsupported('No está disponible la configuración de recepción de TUVANSA.');
-    const { receivedAt, warehouse, supplierReference } = input;
+    const { receivedAt, warehouse, supplierReference, pedimento } = input;
+    if (pedimento && !supportsPeps(rules)) throw unsupported('La compañía no tiene habilitada la recepción con pedimento y PEPS.');
     if (!rules.fiscalStart || !rules.fiscalEnd || receivedAt < rules.fiscalStart || receivedAt > rules.fiscalEnd) {
       throw unsupported('La fecha de recepción debe estar en el periodo contable abierto.');
     }
@@ -234,11 +242,7 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
     const orderLines = new Map(order.lines.map((line) => [line.id, line]));
     const gl = new Map<string, number>();
     const discountFactor = order.discountPercentages.reduce((factor, discount) => factor * (1 - discount / 100), 1);
-    let subtotal = 0;
-    let net = 0;
-    let baseVat = 0;
-    let units = 0;
-    const lines = effect.lines.map((line) => {
+    const priced = effect.lines.map((line) => {
       const source = orderLines.get(line.orderLineId)!;
       const product = this.checkProduct(rules, products.get(line.productId));
       const account = this.inventoryAccount(rules, product);
@@ -247,16 +251,34 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       const price = amount(source.price * (1 - source.discount / 100) * discountFactor, 5);
       const peps = product.noLayers !== 1;
       if (peps && hasPhysicalPieces(source.piecesAssignment)) throw unsupported('La recepción PEPS contiene partidas con piezas físicas.');
-      subtotal += gross;
-      net += netLine;
-      units += line.baseQuantity;
-      if (product.vatCode === 0) baseVat += netLine;
+      if (pedimento && !peps) throw unsupported('La recepción con pedimento requiere partidas con capas PEPS.');
+      if (product.tariff && !pedimento) throw unsupported(`Captura el pedimento de ${source.productCode} para aplicar su arancel.`);
       gl.set(account, (gl.get(account) ?? 0) + netLine);
+      return { line, source, product, gross, netLine, price, peps };
+    });
+    const subtotal = priced.reduce((total, { gross }) => total + gross, 0);
+    const net = priced.reduce((total, { netLine }) => total + netLine, 0);
+    const baseVat = priced.reduce((total, { product, netLine }) => total + (product.vatCode === 0 ? netLine : 0), 0);
+    const units = priced.reduce((total, { line }) => total + line.baseQuantity, 0);
+    const netGoods = money(money(subtotal) - money(subtotal - net));
+    const lines = priced.map(({ line, source, product, gross, netLine, price, peps }) => {
+      let tariff = 0;
+      if (pedimento && product.tariff) {
+        if (netGoods <= 0 && pedimento.incrementables > 0) throw unsupported('Se requiere un importe neto para prorratear los incrementables.');
+        tariff = pedimentoTariff({
+          unitPrice: price, quantity: line.baseQuantity, lineAfterDiscount: gross, netGoods,
+          incrementables: pedimento.incrementables, tariffPercent: product.tariff,
+        });
+        if (!Number.isFinite(tariff) || tariff < 0 || tariff > 999999999.9999) {
+          throw unsupported(`El arancel de ${source.productCode} excede el rango de costeo.`);
+        }
+      }
       return {
         orderLineId: line.orderLineId,
         ...(peps ? { pepsLayer: {
           date: product.importDate, customsEntry: product.customsEntry, customsOffice: product.customsOffice,
           costBasis: { openingStock: Number(product.openingStock), average: Number(product.average), last: Number(product.last), adValorem: Number(product.adValorem) },
+          ...(pedimento ? { tariff: { goodsCost: price, amount: tariff } } : {}),
         } } : {}),
         reception: {
           productId: line.productId, productCode: source.productCode, description: source.description,
@@ -267,8 +289,9 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
         },
         movement: {
           productId: line.productId, productCode: source.productCode, description: source.description,
-          quantity: line.baseQuantity, unit: product.unit, cost: price, pieces: 0, piecesText: '',
+          quantity: line.baseQuantity, unit: product.unit, cost: amount(price + tariff, 5), pieces: 0, piecesText: '',
           warehouse, type: rules.movement, lotId: 0,
+          ...(pedimento ? { customsEntry: pedimento.number } : {}),
         },
       };
     });
@@ -302,6 +325,7 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       document: {
         orderNumber: order.number, supplierReference, supplier: order.supplier, department: order.department, warehouse,
         branch: order.branch, status: '', cancelled: false, dates: { receivedAt, dueAt, orderedAt: order.dates.orderedAt },
+        ...(pedimento ? { pedimento } : {}),
         delayDays: 0, classifications: order.classifications, discountPercentages: order.discountPercentages,
         totals: {
           units: amount(units, 3), pieces: 0, subtotal: money(subtotal), discount, freight: 0, insurance: 0,

@@ -15,6 +15,7 @@ interface HistoricalHeaderRow extends RowDataPacket {
   exchangeRate: number;
   payableFlag: number;
   receivedFlag: number;
+  importExpense: number;
   boxes: number;
   hasPayments: number;
   hasCancellation: number;
@@ -83,6 +84,7 @@ export class MysqlHistoricalReceptionCancellationSource implements HistoricalRec
       // Adaptada de MRECEP/25–26, /111 y /136–138. Comprueba la configuración actual del flujo.
       legacyMysqlPool.execute<HistoricalHeaderRow[]>(
         `SELECT d.DMONEDA AS currency,d.DTIPOC AS exchangeRate,d.DESCXC AS payableFlag,d.DESFACT AS receivedFlag,
+           d.DOTROSTXT='IMPORT' AS importExpense,
            EXISTS(SELECT 1 FROM FCAJAS WHERE CAJRECEPCION=d.DNUM) AS boxes,
            EXISTS(SELECT 1 FROM FAX WHERE DSEQ=d.DSEQ AND ATIPMV='PP') AS hasPayments,
            EXISTS(SELECT 1 FROM FAX WHERE DSEQ=d.DSEQ AND ATIPMV='K') AS hasCancellation,
@@ -113,7 +115,9 @@ export class MysqlHistoricalReceptionCancellationSource implements HistoricalRec
     const receipt = legacy.toPrimitives();
     const order = lineEffects(lines, movement, receipt.orderNumber, receipt.supplier.id);
     let reason: string | null = null;
-    if (header.hasCancellation) {
+    if (header.importExpense) {
+      reason = 'El procedimiento de Recepciones bloquea la cancelación de gastos IMPORT.';
+    } else if (header.hasCancellation) {
       reason = 'La recepción ya tiene una cancelación en Omnis.';
     } else if (header.hasPayments) {
       reason = 'La recepción tiene pagos PP registrados en Omnis.';

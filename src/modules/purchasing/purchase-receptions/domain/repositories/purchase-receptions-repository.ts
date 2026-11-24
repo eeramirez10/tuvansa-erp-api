@@ -21,7 +21,7 @@ export interface PurchaseReceptionSearchResult {
   total: number;
 }
 
-export type PurchaseReceptionPanelKey = 'auxiliary' | 'classifications';
+export type PurchaseReceptionPanelKey = 'auxiliary' | 'classifications' | 'pedimento';
 
 export interface PurchaseReceptionPanelResult {
   purchaseReception: { id: number; number: string };

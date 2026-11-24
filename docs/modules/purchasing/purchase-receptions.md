@@ -37,11 +37,10 @@ El alta conserva el vínculo de cada partida con la orden, equivalente a `FAXINV
 
 En Neon se probó en Chrome una orden confirmada con dos unidades. Cancelar mantuvo las dos unidades pendientes. Dos recepciones de una unidad dejaron surtidos 1 y 2, pendientes 1 y 0 y asignados 1 y 0. La prueba verificó ambos movimientos y los cargos, y retiró sus datos temporales.
 
-El alta cubre recepciones ordinarias en pesos, incluidos los productos con
-PEPS automático de TUVANSA. Aplica a partidas de inventario en unidad base
-sin piezas físicas, arancel, cargos de importación, IEPS, retenciones,
-operación intercompañía o pedimento capturado. El folio y la numeración de la
-póliza se asignan en PostgreSQL.
+El alta cubre recepciones en pesos, incluidas las partidas con PEPS
+automático de TUVANSA y pedimento capturado. La captura aplica a inventario
+en unidad base, proveedores ordinarios e impuestos de la recepción
+compatibles. El folio y la numeración de la póliza se asignan en PostgreSQL.
 
 ### Recepción con PEPS
 
@@ -65,6 +64,35 @@ original. Conserva la valoración registrada al recibir. Los pagos PP
 activos y el periodo contable siguen aplicando como condiciones para
 anular. La escritura de capas, existencias, orden, proveedor y póliza
 pertenece a la misma transacción.
+
+### Pedimento
+
+| Control | Ruta | Procedencia |
+| --- | --- | --- |
+| Nueva recepción / Capturar datos de importación | `GET /create` anuncia `pedimentoAvailable`. `POST /` recibe `pedimento` con número, fecha, aduana e incrementables | Derivada de `ERECEPC#8` y `MRECEP/38,324,65`. El pedimento queda registrado en el folio web y las capas se ligan por partida |
+| Pedimento | `GET /:id/actions/pedimento` | Para RA, lee `FPEDIMENTO.PMTODOC` por folio y los pasivos `FDOC/DREFER` marcados IMPORT con su auxiliar `FAX`. Para RW, lee el pedimento del folio guardado |
+| Cancelar recepción | `GET` y `POST /:id/actions/cancel-reception` | Derivada de `MRECEP/24–26`. La RW devuelve el pendiente de la orden, revierte mercancía, pasivo y póliza, y conserva el pedimento para consulta |
+
+El campo `PMTNUM` permite hasta 15 caracteres en TUVANSA y el mismo
+pedimento puede aparecer en más de un folio. La fecha y la aduana pueden
+quedar vacías. `CIACOMPORTA[22]=1` selecciona el cálculo por precio.
+Para las recepciones de este alcance, `MRECEP/32` aplica el porcentaje de
+arancel del producto al precio neto unitario más los incrementables por
+unidad. Distribuye los incrementables con `#4 / (DBRUTO-DDESC)`: el
+numerador incluye el descuento de partida y el denominador también los
+descuentos de la recepción. La capa de `MCPAR03/28` registra por separado
+costo de mercancía y advalorem. `MBASE/41` actualiza el promedio de
+advalorem del artículo con las existencias previas.
+
+El cargo y la póliza de mercancía usan los importes de la factura del
+proveedor. La generación automática de los gastos de pedimento de
+`MRECEP/104–105` requiere las cuentas de importación configuradas. En
+TUVANSA las cuentas de gastos, IVA de flete y agente, e IEPS de
+importación están vacías. Los pasivos históricos se consultan en su
+moneda original. Por ejemplo, RA09154 contiene el cargo IMPORT RA09154A
+por 735 MXN y su pago PP, sin póliza de origen acreditada. `MRECEP/24`
+bloquea la cancelación genérica del documento IMPORT. La anulación web de
+la mercancía aplica a sus folios RW.
 
 ## Gastos múltiples (GA)
 

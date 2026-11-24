@@ -42,6 +42,10 @@ GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/a
 
 ### Accion: Clasificar
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/classifications
+
+### Pedimento de una recepción existente y sus cargos vinculados
+GET {{baseUrl}}/purchasing/purchase-receptions/341534/actions/pedimento
+
 ### Nueva recepción
 GET {{baseUrl}}/purchasing/purchase-receptions/create?orderNumber={{orderNumber}}
 
@@ -62,6 +66,22 @@ Content-Type: application/json
 
 ### Cargo al proveedor
 GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/auxiliary
+
+### Guardar recepción PEPS con pedimento en PostgreSQL de pruebas
+POST {{baseUrl}}/purchasing/purchase-receptions
+Content-Type: application/json
+
+{
+  "requestKey": "{{requestKey}}",
+  "revision": {{revision}},
+  "legacyVersion": "{{version}}",
+  "orderNumber": "{{orderNumber}}",
+  "receivedAt": "{{receivedAt}}",
+  "warehouse": "{{warehouse}}",
+  "supplierReference": "PRUEBA-PEDIMENTO",
+  "pedimento": { "number": "250143012345678", "date": "2025-01-14", "customsOffice": "430", "incrementables": 25 },
+  "lines": [{ "orderLineId": {{orderLineId}}, "quantity": 1 }]
+}
 
 ### Entrada de Inventarios
 GET {{baseUrl}}/inventories/movements/{{receptionId}}

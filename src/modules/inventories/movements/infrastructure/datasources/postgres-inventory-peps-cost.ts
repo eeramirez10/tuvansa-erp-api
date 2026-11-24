@@ -1,9 +1,20 @@
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
-import type { InventoryPepsCost } from '../../domain/entities/inventory-peps-cost.js';
+import type { InventoryPepsCost, InventoryPepsCustoms } from '../../domain/entities/inventory-peps-cost.js';
 
 export interface InventoryPepsCostSnapshot {
-  basis: InventoryPepsCost;
-  effective: InventoryPepsCost;
+  basis: InventoryPepsCost & { customs?: InventoryPepsCustoms };
+  effective: InventoryPepsCost & { customs?: InventoryPepsCustoms };
+}
+
+export function effectivePepsCustoms(basis: InventoryPepsCustoms, previous?: InventoryPepsCostSnapshot): InventoryPepsCustoms {
+  const source = previous?.basis.customs;
+  const saved = previous?.effective.customs;
+  if (!source || !saved) return basis;
+  return {
+    customsEntry: source.customsEntry === basis.customsEntry ? saved.customsEntry : basis.customsEntry,
+    customsOffice: source.customsOffice === basis.customsOffice ? saved.customsOffice : basis.customsOffice,
+    date: source.date === basis.date ? saved.date : basis.date,
+  };
 }
 
 export function effectivePepsCost(basis: InventoryPepsCost, previous?: InventoryPepsCostSnapshot): InventoryPepsCost {

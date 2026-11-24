@@ -33,8 +33,25 @@ interface LineRow extends RowDataPacket {
 
 interface CountRow extends RowDataPacket { total: number }
 interface IdentityRow extends RowDataPacket { id: number; number: string }
+interface CustomsRow extends RowDataPacket {
+  number: string; date: string; customsOffice: string; incrementables: number;
+}
+interface ImportPayableRow extends RowDataPacket {
+  id: number; number: string; supplierCode: string | null; supplierName: string | null;
+  currencyId: number; charge: number; balance: number; paid: number | null; policyNumber: string | null;
+}
 
 const documentFilter = '(FDOC.DESFACT IN (2, 3) OR FDOC.DESCXC = 2) AND FDOC.DEST = 0 AND FDOC.DMULTICIA = 1';
+const customsReception = `receipt.DSEQ = ? AND receipt.DMULTICIA = 1 AND receipt.DEST = 0 AND receipt.DESFACT = 2
+  AND receipt.DITIPMV = 'RA' AND receipt.DOTROSTXT <> 'IMPORT'`;
+
+function uniqueCustomsReceiptNumber(companyOnly: boolean) {
+  return `NOT EXISTS (
+    SELECT 1 FROM FDOC other WHERE other.DNUM = receipt.DNUM AND other.DSEQ <> receipt.DSEQ
+      AND other.DEST = 0 AND other.DESFACT = 2 AND other.DITIPMV = 'RA' AND other.DOTROSTXT <> 'IMPORT'
+      ${companyOnly ? 'AND other.DMULTICIA = receipt.DMULTICIA' : ''}
+  )`;
+}
 
 const selectHeader = `
   FDOC.DSEQ AS id,
@@ -264,6 +281,7 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
     );
     const identity = identities[0];
     if (identity === undefined) return null;
+    if (key === 'pedimento') return this.customsPanel(identity);
 
     if (key === 'auxiliary') {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
@@ -287,6 +305,51 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
 
     const reception = await this.findById(id);
     return this.classificationPanel(identity, reception?.toPrimitives().classifications ?? [], 'mysql');
+  }
+
+  private async customsPanel(identity: IdentityRow): Promise<PurchaseReceptionPanelResult> {
+    const [[[customs]], [payables]] = await Promise.all([
+      // Derivada de MRECEP/65. FPEDIMENTO vincula el folio y carece de compañía.
+      legacyMysqlPool.execute<CustomsRow[]>(
+        `SELECT p.PMTNUM AS number, p.PMTFECHA AS date, p.PMTADUANA AS customsOffice, p.PMTINCREMENTABLES AS incrementables
+         FROM FDOC receipt JOIN FPEDIMENTO p ON p.PMTODOC = receipt.DNUM
+         WHERE ${customsReception} AND ${uniqueCustomsReceiptNumber(false)}
+         ORDER BY p.PMTOSEQ DESC LIMIT 1`, [identity.id],
+      ),
+      // Derivada de MRECEP/105 y de los pasivos IMPORT relacionados por DREFER.
+      legacyMysqlPool.execute<ImportPayableRow[]>(
+        `SELECT expense.DSEQ AS id, expense.DNUM AS number, supplier.PRVCOD AS supplierCode, supplier.PRVNOM AS supplierName,
+           expense.DMONEDA AS currencyId, expense.DCANT AS balance,
+           COALESCE(SUM(CASE WHEN ledger.ATIPMV = expense.DITIPMV THEN ledger.ACANT END), expense.DCANTF) AS charge,
+           -SUM(CASE WHEN ledger.ATIPMV = 'PP' THEN ledger.ACANT END) AS paid,
+           CASE WHEN COUNT(DISTINCT CASE WHEN ledger.ATIPMV = expense.DITIPMV THEN NULLIF(TRIM(ledger.APOLIZA), '') END) = 1
+             THEN MAX(CASE WHEN ledger.ATIPMV = expense.DITIPMV THEN NULLIF(TRIM(ledger.APOLIZA), '') END) END AS policyNumber
+         FROM FDOC receipt
+         JOIN FDOC expense ON expense.DREFER = receipt.DNUM AND expense.DMULTICIA = receipt.DMULTICIA
+           AND expense.DEST = 0 AND expense.DOTROSTXT = 'IMPORT'
+         LEFT JOIN FPRV supplier ON supplier.PRVSEQ = expense.PRVSEQ
+         LEFT JOIN FAX ledger ON ledger.DSEQ = expense.DSEQ AND ledger.ATIPMV IN (expense.DITIPMV, 'PP')
+         WHERE ${customsReception} AND ${uniqueCustomsReceiptNumber(true)}
+         GROUP BY expense.DSEQ, expense.DNUM, expense.DMONEDA, supplier.PRVCOD, supplier.PRVNOM, expense.DCANTF, expense.DCANT
+         ORDER BY expense.DSEQ`, [identity.id],
+      ),
+    ]);
+    const summary = customs ? {
+      number: (customs.number ?? '').trim(),
+      date: nullableDate(customs.date),
+      customsOffice: (customs.customsOffice ?? '').trim(),
+      incrementables: numeric(customs.incrementables),
+    } : undefined;
+    return {
+      purchaseReception: identity, key: 'pedimento', section: 'actions', button: 'Pedimento', source: 'mysql',
+      items: payables.map(({ id, number, supplierCode, supplierName, currencyId, charge, balance, paid, policyNumber }) => ({
+        id, number, supplierCode: supplierCode ?? '', supplierName: supplierName ?? '', currencyId: numeric(currencyId),
+        charge: numeric(charge), balance: numeric(balance),
+        ...(paid === null ? {} : { paid: numeric(paid) }),
+        ...(policyNumber ? { policyNumber } : {}),
+      })),
+      ...(summary && (summary.number || summary.date || summary.customsOffice || summary.incrementables) ? { summary } : {}),
+    };
   }
 
   async classificationPanel(identity: { id: number; number: string }, current: string[], source: PurchaseReceptionPanelResult['source']): Promise<PurchaseReceptionPanelResult> {

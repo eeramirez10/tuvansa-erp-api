@@ -29,6 +29,7 @@ export interface MovementLine {
   warehouse: string;
   type: string;
   lotId: number;
+  customsEntry?: string;
   lotWarehouse?: string;
   userId: number;
 }

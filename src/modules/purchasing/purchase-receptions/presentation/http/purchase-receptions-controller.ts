@@ -21,6 +21,12 @@ const receiveSchema = z.strictObject({
   receivedAt: z.iso.date(),
   warehouse: z.string().trim().min(1).max(10).toUpperCase(),
   supplierReference: z.string().trim().max(30).toUpperCase(),
+  pedimento: z.strictObject({
+    number: z.string().trim().min(1).max(15),
+    date: z.iso.date().nullable(),
+    customsOffice: z.string().trim().max(25),
+    incrementables: z.number().nonnegative().max(999999999999.99).multipleOf(0.01),
+  }).optional(),
   lines: z.array(z.strictObject({
     orderLineId: z.int().positive(),
     quantity: z.number().positive(),
@@ -66,8 +72,10 @@ export class PurchaseReceptionsController {
 
   create: RequestHandler = async (request, response, next) => {
     try {
-      const { orderNumber, ...fields } = receiveSchema.parse(request.body);
-      const result = await this.createReception.save({ companyId: 1, userId: 0 }, await this.orderId(orderNumber), fields);
+      const { orderNumber, pedimento, ...fields } = receiveSchema.parse(request.body);
+      const result = await this.createReception.save({ companyId: 1, userId: 0 }, await this.orderId(orderNumber), {
+        ...fields, ...(pedimento === undefined ? {} : { pedimento }),
+      });
       response.status(201).json({ data: result });
     } catch (error) { next(error); }
   };

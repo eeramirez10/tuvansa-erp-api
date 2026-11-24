@@ -22,10 +22,14 @@ function validatePosting(
   posting: PurchaseReceptionPosting,
 ): void {
   const { document, movement, lines } = posting;
+  const filed = document.pedimento;
+  const requested = input.pedimento;
   const expected = new Map(effect.lines.map((line) => [line.orderLineId, line.productId]));
   if (document.orderNumber !== effect.order.number || document.supplier.id !== effect.order.supplier.id
     || document.warehouse !== input.warehouse || document.dates.receivedAt !== input.receivedAt
     || document.supplierReference !== input.supplierReference
+    || filed?.number !== requested?.number || filed?.customsOffice !== requested?.customsOffice
+    || filed?.date !== requested?.date || filed?.incrementables !== requested?.incrementables
     || movement.company !== actor.companyId || movement.reference !== effect.order.number
     || movement.warehouse !== input.warehouse || movement.date !== input.receivedAt
     || lines.length !== expected.size
@@ -62,6 +66,7 @@ export class CreatePurchaseReception {
     return {
       id: order.id, number: order.number, supplier: order.supplier, revision, legacyVersion,
       canWrite: reason === null, reason, warehouses, defaults, lines,
+      pedimentoAvailable: context.pedimentoAvailable ?? false,
       canRetireCompletedOrder: policy.canRetireCompletedOrder,
     };
   }
@@ -82,6 +87,10 @@ export class CreatePurchaseReception {
       receivedAt: input.receivedAt,
       warehouse: input.warehouse.trim(),
       supplierReference: input.supplierReference.trim(),
+      ...(input.pedimento ? { pedimento: {
+        number: input.pedimento.number.trim(), date: input.pedimento.date, customsOffice: input.pedimento.customsOffice.trim(),
+        incrementables: input.pedimento.incrementables,
+      } } : {}),
       retireCompletedOrder: input.retireCompletedOrder ?? false,
       lines: input.lines.map(({ orderLineId, quantity }) => ({ orderLineId, quantity }))
         .sort((left, right) => left.orderLineId - right.orderLineId),
@@ -98,6 +107,7 @@ export class CreatePurchaseReception {
       throw new ApplicationError('La orden de compra cambió. Vuelve a abrir la recepción.', 'PURCHASE_RECEPTION_ORDER_CHANGED', 409);
     }
     if (context.reason) throw new ApplicationError(context.reason, 'PURCHASE_RECEPTION_UNAVAILABLE', 409);
+    if (request.pedimento && !context.pedimentoAvailable) throw invalid('El pedimento no está habilitado para esta recepción.');
     if (!context.warehouses.some(({ code }) => code === request.warehouse)) {
       throw invalid('El almacén no está habilitado para recibir en esta empresa.');
     }

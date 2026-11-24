@@ -32,14 +32,14 @@ export async function ensurePurchaseReceptionPepsSchema(client: PostgresClient) 
 }
 
 export async function receivedPepsCost(
-  client: PostgresClient, previous: InventoryPepsCost, opening: number, quantity: number, price: number,
+  client: PostgresClient, previous: InventoryPepsCost, opening: number, quantity: number, price: number, tariff = 0,
 ) {
-  // MBASE/41, arancel y gastos de pedimento en cero. FINV usa 4 decimales en listas y 2 en advalorem.
+  // MBASE/41. FINV usa 4 decimales en listas y 2 en advalorem.
   const { rows: [cost] } = await client.query<InventoryPepsCost>(
     `SELECT round($5::numeric,4)::float8 AS last,
        round(CASE WHEN $3::numeric+$4::numeric>0 THEN ($1::numeric*$3+$5*$4)/($3+$4) ELSE $5 END,4)::float8 AS average,
-       round(CASE WHEN $3+$4>0 THEN ($2::numeric*$3)/($3+$4) ELSE 0 END,2)::float8 AS "adValorem"`,
-    [previous.average, previous.adValorem, opening, quantity, price],
+       round(CASE WHEN $3+$4>0 THEN ($2::numeric*$3+$6::numeric*$4)/($3+$4) ELSE $6 END,2)::float8 AS "adValorem"`,
+    [previous.average, previous.adValorem, opening, quantity, price, tariff],
   );
   return cost!;
 }

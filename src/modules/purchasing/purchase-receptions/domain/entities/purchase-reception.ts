@@ -1,3 +1,5 @@
+import type { PurchasePedimento } from './purchase-pedimento.js';
+
 export interface PurchaseReceptionLine {
   id: number;
   productId: number;
@@ -30,6 +32,7 @@ export interface PurchaseReceptionProps {
   status: string;
   cancelled: boolean;
   cancellationAvailable?: boolean;
+  pedimento?: PurchasePedimento;
   cancellation?: { id: number; policyNumber: string; date: string; reason: string } | null;
   dates: { receivedAt: string | null; dueAt: string | null; orderedAt: string | null };
   delayDays: number;

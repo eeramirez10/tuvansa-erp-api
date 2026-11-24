@@ -87,7 +87,7 @@ export async function localProductLedger(
       items: rows.map(({ header, line }) => ({
         id: line.id, date: header.date, document: header.document, quantity: line.quantity, cost: line.cost,
         movementType: line.type, warehouse: line.warehouse, lotId: line.lotId, route: 0, userId: line.userId,
-        revaluation: 0, documentUserId: header.userId, documentId: header.id, customsEntry: '', reference: header.reference,
+        revaluation: 0, documentUserId: header.userId, documentId: header.id, customsEntry: line.customsEntry ?? '', reference: header.reference,
         pieces: line.piecesText, sku: '', ellosReference: header.reference2,
       })),
       openingDelta: opening?.delta ?? 0,

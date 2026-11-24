@@ -15,7 +15,7 @@ import {
   writeLayerStock, type AdjustmentLayer,
 } from './inventory-adjustment-layers.js';
 import { MysqlInventoryAdjustmentReferences, type AdjustmentProduct } from './mysql-inventory-adjustment-references.js';
-import { effectivePepsCost, inventoryPepsCostsOn } from './postgres-inventory-peps-cost.js';
+import { effectivePepsCost, effectivePepsCustoms, inventoryPepsCostsOn } from './postgres-inventory-peps-cost.js';
 
 const idStart = 7950000000000;
 const idEnd = idStart + 99999999;
@@ -136,7 +136,8 @@ function allocatePepsExit(
     if (scaledStock(quantity) !== quantity) throw unsupported(
       `La capa ${layer.id} de ${product.code} requiere una conciliación de unidades antes de registrar la salida.`,
     );
-    allocated.push({ ...line, quantity: -quantity, lotId: layer.id, lotWarehouse: layer.warehouse });
+    allocated.push({ ...line, quantity: -quantity, lotId: layer.id, lotWarehouse: layer.warehouse,
+      ...(layer.customsEntry ? { customsEntry: layer.customsEntry } : {}) });
     layer.available = scaledLayerStock(layer.available - quantity);
     if (layer.available === 0) queueChanges.set(layer.id, inactivePepsOrder);
     remaining = scaledStock(remaining - quantity);
@@ -253,6 +254,12 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         product.transferCost = valuation.average + valuation.adValorem;
         product.layerCost = valuation.last;
         product.adValorem = valuation.adValorem;
+        const customs = effectivePepsCustoms({
+          customsEntry: product.customsEntry ?? '', customsOffice: product.customsOffice ?? '', date: product.importDate ?? null,
+        }, snapshot);
+        product.customsEntry = customs.customsEntry;
+        product.customsOffice = customs.customsOffice;
+        product.importDate = customs.date;
       }
       const sourceLines = lines.map(({ productId, quantity, cost }) => {
         const product = products.get(productId);

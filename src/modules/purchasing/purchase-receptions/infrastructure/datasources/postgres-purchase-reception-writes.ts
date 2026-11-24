@@ -6,7 +6,7 @@ import { assertActiveSupplierCatalog } from '../../../../accounts-payable/suppli
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
 import { createAdjustmentLayer, currentAdjustmentLayers, inactivePepsOrder, lockPepsProducts, nextPepsOrder, writeLayerStock } from '../../../../inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
 import { MysqlInventoryAdjustmentReferences } from '../../../../inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js';
-import { effectivePepsCost, inventoryPepsCostsOn, type InventoryPepsCostSnapshot } from '../../../../inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
+import { effectivePepsCost, effectivePepsCustoms, inventoryPepsCostsOn, type InventoryPepsCostSnapshot } from '../../../../inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
 import { localPhysicalStock, lockWarehouseStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { PostgresPurchaseOrderEdits } from '../../../purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import type {
@@ -115,6 +115,7 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
   }
 
   private async createLayers(client: PostgresClient, posting: PurchaseReceptionWriteCommand['posting'], document: string) {
+    const { pedimento } = posting.document;
     const lines = posting.lines.flatMap(({ orderLineId, movement, pepsLayer }) => pepsLayer ? [{ orderLineId, movement, pepsLayer }] : []);
     const lotIds = new Map<number, number>();
     const costs = new Map<number, InventoryPepsCostSnapshot>();
@@ -134,15 +135,27 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
     for (const { orderLineId, movement, pepsLayer } of lines) {
       const { productId, warehouse, quantity } = movement;
       const layerOrder = nextPepsOrder([{ layerOrder: orders.get(productId) ?? 0 }]);
-      const { costBasis: { openingStock, ...basis }, ...attributes } = pepsLayer;
+      const { costBasis: { openingStock, ...basis }, tariff, ...customsBasis } = pepsLayer;
       const local = localOnHand.get(productId) ?? 0;
-      const previous = costs.get(productId)?.effective ?? effectivePepsCost(basis, existingCosts.get(productId));
-      const effective = await receivedPepsCost(client, previous, openingStock + local, quantity, movement.cost);
-      costs.set(productId, { basis, effective });
+      const opening = existingCosts.get(productId);
+      const previous = costs.get(productId)?.effective ?? effectivePepsCost(basis, opening);
+      const currentCustoms = effectivePepsCustoms(customsBasis, opening);
+      const stamped = pedimento ? { customsEntry: pedimento.number, customsOffice: pedimento.customsOffice, date: pedimento.date }
+        : currentCustoms;
+      const effective = await receivedPepsCost(client, previous, openingStock + local, quantity, tariff?.goodsCost ?? movement.cost, tariff?.amount);
+      if (pedimento || opening?.effective.customs) {
+        // MRECEP/32 actualiza cada campo de FINV sólo cuando trae un valor.
+        const customs = { customsEntry: stamped.customsEntry,
+          customsOffice: stamped.customsOffice || currentCustoms.customsOffice, date: stamped.date ?? currentCustoms.date };
+        costs.set(productId, { basis: { ...basis, customs: customsBasis }, effective: { ...effective, customs } });
+      } else {
+        costs.set(productId, { basis, effective });
+      }
       localOnHand.set(productId, local + quantity);
       const lotId = await createAdjustmentLayer(client, {
-        ...attributes, productId, warehouse, initial: quantity, document, layerOrder,
-        cost: effective.last, adValorem: effective.adValorem,
+        ...stamped, productId, warehouse, initial: quantity, document, layerOrder,
+        // MCPAR03/28. La capa de pedimento toma su propio arancel. FINV conserva el ponderado global.
+        cost: effective.last, adValorem: tariff?.amount ?? effective.adValorem,
       });
       orders.set(productId, layerOrder);
       lotIds.set(orderLineId, lotId);

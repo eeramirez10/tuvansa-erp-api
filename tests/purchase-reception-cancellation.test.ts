@@ -4,16 +4,21 @@ import { currentAdjustmentLayers, inactivePepsOrder } from '../src/modules/inven
 import { PostgresInventoryAdjustmentsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-adjustments.js';
 import { inventoryPepsCostsOn } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
 import { PurchaseOrder, type PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
+import { LegacyMysqlPurchaseOrderEditDataSource } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
+import { LegacyMysqlPurchaseOrdersDataSource } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/legacy-mysql-purchase-orders-data-source.js';
 import { PostgresPurchaseOrderEdits } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import { CancelPurchaseReception } from '../src/modules/purchasing/purchase-receptions/application/use-cases/cancel-purchase-reception.js';
+import { CreatePurchaseReception } from '../src/modules/purchasing/purchase-receptions/application/use-cases/create-purchase-reception.js';
 import type { ReceiptCancellationSource } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-cancellation-data-source.js';
-import type { PurchaseReceptionPosting } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-write-data-source.js';
+import type { PurchaseReceptionPosting, PurchaseReceptionWriteContext } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-write-data-source.js';
 import { applyPurchaseOrderReceipt } from '../src/modules/purchasing/purchase-receptions/domain/entities/purchase-reception-order-effect.js';
 import { historicalReceptionCancellationsOn } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
 import { localPurchasePayablesSql } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import { MysqlPurchaseReceptionWriteReferences } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/mysql-purchase-reception-write-references.js';
 import { PostgresPurchaseReceptionCancellations } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionWrites } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import * as salesStock from '../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
+import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 import * as postgres from '../src/shared/infrastructure/database/postgres-pool.js';
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
 
@@ -94,7 +99,7 @@ function localReceipts(connect: PostgresConnectionFactory) {
       input: { requestKey, revision, legacyVersion, receivedAt, warehouse: '01', supplierReference: 'FACT-1', lines },
     });
   };
-  return { actor, order, edits, cancel, receive, policy, requestedLines };
+  return { actor, order, edits, cancel, receive, receipts, policy, requestedLines };
 }
 
 it('reopens an older RW without changing the other receipt or restoring purchase allocations', async () => {
@@ -239,6 +244,79 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
     inventoryConnection.mockRestore();
     inventoryConfiguration.mockRestore();
     openingStock.mockRestore();
+    await db.close();
+  }
+}, 20000);
+
+it('registra el pedimento, aplica incrementables al arancel y conserva la trazabilidad al anular', async () => {
+  const db = new PGlite();
+  const connect = connectionTo(db);
+  const inventoryConnection = vi.spyOn(postgres, 'connectPostgres').mockImplementation(connect);
+  const inventoryConfiguration = vi.spyOn(postgres, 'postgresConfigured').mockReturnValue(true);
+  const bits = new Set([22, 24, 37, 45, 51, 68, 78]);
+  const flags = Array.from({ length: 94 }, (_, index) => bits.has(index + 1) ? '1' : '0').join('');
+  const native = vi.spyOn(legacyMysqlPool, 'execute').mockImplementation(async (query) => {
+    const sql = String(query);
+    const row = sql.includes('FROM FCIA C') ? {
+      flags, plugs: '---X', noCosts: 0, fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31',
+      movement: 'RA', accountMode: 0, policyType: '3', vatRate: 16, vatAccount: '1119',
+      terms: 0, supplierAccount: '2005',
+    } : sql.includes('FROM FINV') ? {
+      id: 7, unit: 'PZ', noLayers: 0, layerProduct: true, controlsPieces: 0, vatCode: 0, tariff: 10,
+      openingStock: 0, average: 0, last: 0, adValorem: 0,
+      customsEntry: '', customsOffice: '', importDate: null, account: '1150',
+    } : undefined;
+    if (!row) throw new Error(`Consulta inesperada: ${sql}`);
+    return [[row], []] as unknown as Awaited<ReturnType<typeof legacyMysqlPool.execute>>;
+  });
+  const { actor, order, edits, cancel, receipts, policy, requestedLines } = localReceipts(connect);
+  order.discountPercentages = [10, 0, 0];
+  const context: PurchaseReceptionWriteContext = {
+    order, revision: 0, legacyVersion: '1'.repeat(64), policy, reason: null, pedimentoAvailable: true,
+    defaults: { receivedAt: '2025-12-03', warehouse: '01' }, warehouses: [{ code: '01', name: 'México' }],
+  };
+  const references = new MysqlPurchaseReceptionWriteReferences(
+    new LegacyMysqlPurchaseOrderEditDataSource(new LegacyMysqlPurchaseOrdersDataSource()), edits,
+  );
+  const create = new CreatePurchaseReception({ context: async () => context, posting: references.posting.bind(references) }, receipts);
+  const baseInput = {
+    requestKey: crypto.randomUUID(), revision: 0, legacyVersion: context.legacyVersion,
+    receivedAt: context.defaults.receivedAt, warehouse: '01', supplierReference: 'PEDIMENTO-TEST', lines: requestedLines,
+  };
+  const pedimento = { number: '250143012345678', date: '2025-01-14', customsOffice: '430', incrementables: 9 };
+  try {
+    expect(await create.get(1, order.id)).toMatchObject({ canWrite: true, pedimentoAvailable: true });
+    await expect(create.save(actor, order.id, baseInput)).rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_POSTING_UNSUPPORTED' });
+    const saved = await create.save(actor, order.id, { ...baseInput, pedimento });
+    const id = saved.reception.id;
+    const lotId = saved.reception.lines[0]!.lotId;
+    expect(await create.save(actor, order.id, { ...baseInput, pedimento: { ...pedimento, number: ' ' + pedimento.number } }))
+      .toEqual(saved);
+    await expect(create.save(actor, order.id, { ...baseInput, pedimento: { ...pedimento, incrementables: 10 } }))
+      .rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_REQUEST_CONFLICT' });
+    expect(saved.reception).toMatchObject({ pedimento, totals: { subtotal: 100, discount: 10, tax: 14.4, total: 104.4 } });
+    const readLayers = async () => currentAdjustmentLayers(await connect(), [7], []);
+    const layer = { id: lotId, customsEntry: pedimento.number, customsOffice: '430', date: '2025-01-14', cost: 45, adValorem: 5 };
+    expect(await readLayers()).toMatchObject([{ ...layer, initial: 2, available: 2 }]);
+    expect((await db.query('SELECT movement,accounting,payable FROM tuvansa.purchase_receptions WHERE id=$1', [id])).rows)
+      .toMatchObject([{
+        movement: { lines: [{ lotId, customsEntry: pedimento.number, quantity: 2, cost: 50 }], totals: { cost: 100 } },
+        payable: { amount: 104.4 }, accounting: { lines: [
+          { account: '2005', credit: 104.4 }, { account: '1150', debit: 90 }, { account: '1119', debit: 14.4 },
+        ] },
+      }]);
+    const before = (await inventoryPepsCostsOn(await connect(), [7])).get(7);
+    expect(before?.effective).toMatchObject({ average: 45, last: 45, adValorem: 5,
+      customs: { customsEntry: pedimento.number, date: pedimento.date, customsOffice: '430' } });
+    await cancel.save(actor, id, { requestKey: crypto.randomUUID(), date: '2025-12-04', reason: 'Prueba pedimento', confirmed: true });
+    expect(await readLayers()).toMatchObject([{ ...layer, initial: 0, available: 0 }]);
+    expect((await inventoryPepsCostsOn(await connect(), [7])).get(7)).toEqual(before);
+    expect((await db.query("SELECT result #> '{reception,pedimento}' AS pedimento FROM tuvansa.purchase_receptions WHERE id=$1", [id])).rows)
+      .toEqual([{ pedimento }]);
+  } finally {
+    native.mockRestore();
+    inventoryConnection.mockRestore();
+    inventoryConfiguration.mockRestore();
     await db.close();
   }
 }, 20000);

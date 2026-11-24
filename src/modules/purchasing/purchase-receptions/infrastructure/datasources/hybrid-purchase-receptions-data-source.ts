@@ -179,9 +179,16 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     }
     const local = await this.record('id', id);
     if (!local) return null;
-    const { number, dates, orderNumber, supplierReference, classifications, cancellation } = local.reception;
+    const { number, dates, orderNumber, supplierReference, classifications, cancellation, pedimento } = local.reception;
     if (key === 'classifications') {
       return this.legacy.classificationPanel({ id, number }, classifications, 'postgres');
+    }
+    if (key === 'pedimento') {
+      return {
+        purchaseReception: { id, number }, key, section: 'actions', button: 'Pedimento', source: 'postgres', items: [],
+        ...(pedimento ? { summary: { number: pedimento.number, date: pedimento.date, customsOffice: pedimento.customsOffice,
+          incrementables: pedimento.incrementables } } : {}),
+      };
     }
     const amount = local.principal ?? 0;
     const payments = await readSupplierPayments([], async (client) => {

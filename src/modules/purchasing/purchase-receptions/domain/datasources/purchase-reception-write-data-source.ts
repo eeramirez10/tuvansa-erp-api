@@ -2,6 +2,7 @@ import type { MovementHeader, MovementLine } from '../../../../inventories/movem
 import type { InventoryPepsCostBasis } from '../../../../inventories/movements/domain/entities/inventory-peps-cost.js';
 import type { PurchaseOrderProps } from '../../../purchase-orders/domain/entities/purchase-order.js';
 import type { PurchaseReceptionLine, PurchaseReceptionProps } from '../entities/purchase-reception.js';
+import type { PurchasePedimento } from '../entities/purchase-pedimento.js';
 import type {
   PurchaseOrderReceiptEffect, PurchaseOrderReceiptLineInput, PurchaseOrderReceiptPolicy,
 } from '../entities/purchase-reception-order-effect.js';
@@ -13,6 +14,7 @@ export interface PurchaseReceptionCreateInput {
   receivedAt: string;
   warehouse: string;
   supplierReference: string;
+  pedimento?: PurchasePedimento;
   retireCompletedOrder?: boolean;
   lines: PurchaseOrderReceiptLineInput[];
 }
@@ -28,6 +30,7 @@ export interface PurchaseReceptionWriteContext {
   warehouses: { code: string; name: string }[];
   defaults: { receivedAt: string; warehouse: string };
   reason: string | null;
+  pedimentoAvailable?: boolean;
 }
 
 export interface PurchaseReceptionPosting {
@@ -37,7 +40,13 @@ export interface PurchaseReceptionPosting {
     orderLineId: number;
     reception: Omit<PurchaseReceptionLine, 'id'>;
     movement: Omit<MovementLine, 'id' | 'userId'>;
-    pepsLayer?: { date: string | null; customsEntry: string; customsOffice: string; costBasis: InventoryPepsCostBasis };
+    pepsLayer?: {
+      date: string | null;
+      customsEntry: string;
+      customsOffice: string;
+      costBasis: InventoryPepsCostBasis;
+      tariff?: { goodsCost: number; amount: number };
+    };
   }[];
   payable: { amount: number; currencyId: number; exchangeRate: number; dueAt: string } | null;
   accounting: { type: string; lines: { account: string; department: string; debit: number; credit: number }[] } | null;

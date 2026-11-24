@@ -18,6 +18,7 @@ export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsCon
   router.get('/:purchaseReceptionId/next', controller.next);
   router.get('/:purchaseReceptionId/actions/auxiliary', controller.panel('auxiliary'));
   router.get('/:purchaseReceptionId/actions/classifications', controller.panel('classifications'));
+  router.get('/:purchaseReceptionId/actions/pedimento', controller.panel('pedimento'));
   router.get('/:purchaseReceptionId/actions/cancel-expense', cancellation.prepare);
   router.post('/:purchaseReceptionId/actions/cancel-expense', cancellation.save);
   router.get('/:purchaseReceptionId/actions/cancel-reception', cancelReceipt.prepare);

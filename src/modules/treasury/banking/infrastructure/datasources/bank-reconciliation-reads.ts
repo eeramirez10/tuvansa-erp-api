@@ -41,10 +41,11 @@ export async function readBankReconciliationState(companyId: number, bankAccount
   }
 }
 
-export function joinBankReconciliation(available: boolean): string {
-  if (!available) return 'CROSS JOIN (SELECT NULL::date AS statement_date) AS settlement';
+export function joinBankReconciliation(available: boolean, movement = 'posting', settlement = 'settlement', bank = movement): string {
+  if (!available) return `CROSS JOIN (SELECT NULL::bigint AS id,NULL::date AS statement_date) AS ${settlement}`;
+  const match = `${settlement}_movement`;
   // Derivada. Un movimiento pertenece a un solo registro de conciliación de esa cuenta y empresa.
-  return `LEFT JOIN tuvansa.bank_reconciliation_movements AS matched ON matched.movement_id = posting.id
-    LEFT JOIN tuvansa.bank_reconciliations AS settlement ON settlement.id = matched.reconciliation_id
-      AND settlement.company_id = posting.company_id AND settlement.bank_account_id = posting.bank_account_id`;
+  return `LEFT JOIN tuvansa.bank_reconciliation_movements AS ${match} ON ${match}.movement_id=${movement}.id
+    LEFT JOIN tuvansa.bank_reconciliations AS ${settlement} ON ${settlement}.id=${match}.reconciliation_id
+      AND ${settlement}.company_id=${movement}.company_id AND ${settlement}.bank_account_id=${bank}.bank_account_id`;
 }

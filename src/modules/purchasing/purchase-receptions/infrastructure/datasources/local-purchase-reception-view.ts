@@ -1,6 +1,6 @@
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { PurchaseReceptionProps } from '../../domain/entities/purchase-reception.js';
-import { expenseCancellationSql, readPurchaseDocuments, type PurchaseDocumentTables } from './postgres-purchase-payables.js';
+import { expenseCancellationSql, readPurchaseDocuments, receiptCancellationSql, type PurchaseDocumentTables } from './postgres-purchase-payables.js';
 
 export interface LocalReceptionViewRecord {
   reception: PurchaseReceptionProps;
@@ -10,10 +10,16 @@ export interface LocalReceptionViewRecord {
   policyId: number | null;
 }
 
-const receiptView = `SELECT id,company_id,number,order_number,result->'reception' AS reception,
-    (payable->>'amount')::numeric AS principal,movement #>> '{header,type}' AS movement_type,
-    accounting->>'number' AS policy_number,CASE WHEN accounting IS NOT NULL THEN id END AS policy_id
-  FROM tuvansa.purchase_receptions`;
+function receiptView(withCancellations: boolean) {
+  const cancellation = receiptCancellationSql(withCancellations);
+  return `SELECT r.id,r.company_id,r.number,r.order_number,
+    CASE WHEN ${cancellation.cancelled} THEN (r.result->'reception') ||
+      jsonb_build_object('status','C','cancelled',true,'cancellation',${cancellation.reference})
+      ELSE r.result->'reception' END AS reception,
+    (r.payable->>'amount')::numeric AS principal,r.movement #>> '{header,type}' AS movement_type,
+    r.accounting->>'number' AS policy_number,CASE WHEN r.accounting IS NOT NULL THEN r.id END AS policy_id
+    FROM tuvansa.purchase_receptions r ${cancellation.join}`;
+}
 
 const expenseLines = `(
     SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -56,7 +62,7 @@ export function readLocalReceptionView<T>(
 ) {
   return readPurchaseDocuments(fallback, (client, tables: PurchaseDocumentTables) => {
     const sources = [];
-    if (tables.receipts) sources.push(receiptView);
+    if (tables.receipts) sources.push(receiptView(tables.receiptCancellations));
     if (tables.expenses) sources.push(expenseView(includeLines, tables.expenseCancellations));
     return read(client, sources.join(' UNION ALL '));
   });

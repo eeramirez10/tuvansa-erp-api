@@ -9,6 +9,8 @@ import type { PurchaseOrderSupplierChangeStorage } from '../../domain/datasource
 import { isLocalPurchaseOrderId, type PurchaseOrderCreateStorage } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { PurchaseOrder } from '../../domain/entities/purchase-order.js';
 import { readLocalPurchaseReceptions } from '../../../purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { receiptCancellationSql } from '../../../purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import { purchaseReceptionCancellationsAvailable } from '../../../purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import type {
   PurchaseOrderNavigationDirection,
   PurchaseOrderClassificationPanel,
@@ -134,9 +136,11 @@ export class HybridPurchaseOrdersDataSource implements PurchaseOrdersDataSource 
       const panel = await this.dataSource.getPanel(id, key, undefined, local?.order.identity);
       if (!panel) return null;
       const projected = await readLocalPurchaseReceptions<Record<string, unknown>[]>([], async (client) => {
+        const cancellation = receiptCancellationSql(await purchaseReceptionCancellationsAvailable(client));
         const { rows } = await client.query(
-          `SELECT id::text AS id,number AS document,result #>> '{reception,dates,receivedAt}' AS date
-           FROM tuvansa.purchase_receptions WHERE order_id=$1 AND order_number=$2 ORDER BY number`,
+          `SELECT r.id::text AS id,r.number AS document,r.result #>> '{reception,dates,receivedAt}' AS date,
+             ${cancellation.cancelled} AS cancelled,${cancellation.reference} AS cancellation
+           FROM tuvansa.purchase_receptions r ${cancellation.join} WHERE r.order_id=$1 AND r.order_number=$2 ORDER BY r.number`,
           [id, panel.purchaseOrder.number],
         );
         return rows.map((row) => ({ ...row, id: Number(row.id) }));

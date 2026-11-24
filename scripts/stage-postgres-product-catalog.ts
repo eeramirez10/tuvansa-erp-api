@@ -1,6 +1,8 @@
 import { closePostgresPool, connectPostgres } from '../src/shared/infrastructure/database/postgres-pool.js';
 import { migratePostgresProductCatalog } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-catalog-schema.js';
 import { stageProductCatalog } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-catalog-snapshot.js';
+import { migrateProductOtherData } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-other-data-source.js';
+import { migrateProductClassification } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-classification-data-source.js';
 
 if (process.argv.slice(2).join(' ') !== '--stage') {
   console.error('Uso: pnpm exec tsx scripts/stage-postgres-product-catalog.ts --stage');
@@ -13,7 +15,11 @@ if (process.argv.slice(2).join(' ') !== '--stage') {
         '../src/modules/inventories/products/infrastructure/datasources/legacy-mysql-product-catalog-snapshot.js'
       );
       const client = await connectPostgres();
-      try { await migratePostgresProductCatalog(client); } finally { client.release(); }
+      try {
+        await migratePostgresProductCatalog(client);
+        await migrateProductClassification(client);
+        await migrateProductOtherData(client);
+      } finally { client.release(); }
       const totals = await withLegacyProductSnapshot((snapshot) => stageProductCatalog(connectPostgres, snapshot));
       console.log(`Catálogo conciliado: ${totals.productCount} productos en PostgreSQL.`);
     } finally {

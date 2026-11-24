@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import type { CaptureCustomerCollection } from '../../application/use-cases/capture-customer-collection.js';
+import type { ReverseCustomerCollection } from '../../application/use-cases/reverse-customer-collection.js';
 import type { GetClientBalance } from '../../application/use-cases/get-client-balance.js';
 import type { GetClientAnalytics } from '../../application/use-cases/get-client-analytics.js';
 import type {
@@ -25,6 +26,12 @@ const clientParamsSchema = z.object({
 });
 
 const collectionParamsSchema = clientParamsSchema.extend({ remissionId: z.coerce.number().int().positive() });
+const collectionReversalParams = clientParamsSchema.extend({ collectionId: z.coerce.number().int().positive() });
+const blockClientSchema = z.strictObject({ blocked: z.boolean(), confirmed: z.literal(true), reason: z.string().trim().min(1).max(200) });
+const collectionReversalSchema = z.strictObject({
+  requestKey: z.uuid(), date: z.iso.date(), reason: z.string().trim().min(1).max(90), confirmed: z.literal(true),
+  expectedReconciliationId: z.int().positive().nullable().optional(),
+});
 const collectionSchema = z.strictObject({
   requestKey: z.uuid(),
   revision: z.int().positive(),
@@ -164,6 +171,8 @@ export class ClientsController {
     private readonly updateClient: UpdateClient,
     private readonly deleteClient: DeleteClient,
     private readonly captureCollection: CaptureCustomerCollection,
+    private readonly reverseCollection: ReverseCustomerCollection,
+    private readonly blockInCatalog: (id: number, blocked: boolean, reason: string) => Promise<void>,
   ) {}
 
   private consultation(execute: ConsultationExecutor): RequestHandler {
@@ -344,6 +353,21 @@ export class ClientsController {
     }
   };
 
+  prepareCollectionReversal: RequestHandler = async (request, response, next) => {
+    try {
+      const identity = { companyId: 1, ...collectionReversalParams.parse(request.params) };
+      response.set('Cache-Control', 'no-store').json({ data: await this.reverseCollection.prepare(identity) });
+    } catch (error) { next(error); }
+  };
+
+  recordCollectionReversal: RequestHandler = async (request, response, next) => {
+    try {
+      const identity = { companyId: 1, ...collectionReversalParams.parse(request.params) };
+      const data = await this.reverseCollection.save(identity, 0, collectionReversalSchema.parse(request.body));
+      response.status(201).json({ data });
+    } catch (error) { next(error); }
+  };
+
   getAnalytics: RequestHandler = async (request, response, next) => {
     try {
       const query = analyticsQuerySchema.parse(request.query);
@@ -400,6 +424,14 @@ export class ClientsController {
     this.getClientActions.destinations(clientId));
   getBlockStatus: RequestHandler = this.action((clientId) =>
     this.getClientActions.blockStatus(clientId));
+  blockClient: RequestHandler = async (request, response, next) => {
+    try {
+      const { clientId } = clientParamsSchema.parse(request.params);
+      const { blocked, reason } = blockClientSchema.parse(request.body);
+      await this.blockInCatalog(clientId, blocked, reason);
+      response.json(await this.getClientActions.blockStatus(clientId));
+    } catch (error) { next(error); }
+  };
   getPhoto: RequestHandler = this.action((clientId) =>
     this.getClientActions.photo(clientId));
   getDiscounts: RequestHandler = this.paginatedAction((input) =>

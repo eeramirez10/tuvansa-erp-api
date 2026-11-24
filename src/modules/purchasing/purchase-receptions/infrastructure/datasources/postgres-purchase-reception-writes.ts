@@ -1,7 +1,8 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
-import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { assertActiveSupplierCatalog } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
 import type { PostgresPurchaseOrderEdits } from '../../../purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import type {
@@ -81,7 +82,7 @@ export async function readLocalPurchaseReceptions<T>(fallback: T, read: (client:
 export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDataSource {
   private migration?: Promise<void>;
 
-  constructor(private readonly orders: PostgresPurchaseOrderEdits) {}
+  constructor(private readonly orders: PostgresPurchaseOrderEdits, private readonly connect: PostgresConnectionFactory = connectPostgres) {}
 
   writable() { return this.orders.writable(); }
 
@@ -99,7 +100,7 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
   }
 
   private async migrate() {
-    const client = await connectPostgres();
+    const client = await this.connect();
     try { await ensurePurchaseReceptionSchema(client); } finally { client.release(); }
   }
 
@@ -119,6 +120,7 @@ export class PostgresPurchaseReceptionWrites implements PurchaseReceptionWriteDa
       return this.byRequest(client, actor.companyId, input.requestKey, fingerprint);
     };
     return this.orders.postReceipt(snapshot, effect.stock, classifications, effect.assignmentMarker, context.supplierRevision ?? 0, replay, async (client) => {
+      await assertActiveSupplierCatalog(client, posting.document.supplier.id);
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.purchase_reception_ids') AS id");
       const id = Number(allocation!.id);
       const sequence = String(id - receiptIdStart + 1).padStart(8, '0');

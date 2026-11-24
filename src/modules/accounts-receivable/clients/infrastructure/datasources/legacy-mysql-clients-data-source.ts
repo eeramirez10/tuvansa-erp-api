@@ -258,7 +258,16 @@ const dependencyTables = [
   'fcenso',
 ] as const;
 
+const excludeIds = (ids: number[]) => ids.length ? ` AND FCLI.CLISEQ NOT IN (${ids.map(() => '?').join(',')})` : '';
+
 export class LegacyMysqlClientsDataSource implements ClientsDataSource {
+  async findByIds(ids: number[]): Promise<Map<number, Client>> {
+    if (!ids.length) return new Map();
+    const [rows] = await legacyMysqlPool.execute<ClientRow[]>(`SELECT ${selectClientFields} FROM fcli
+       WHERE CLISEQ IN (${ids.map(() => '?').join(',')})`, ids);
+    return new Map(rows.map((row) => [Number(row.id), toClient(row)]));
+  }
+
   async findById(clientId: number): Promise<Client | null> {
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields} FROM fcli WHERE CLISEQ = ? LIMIT 1`,
@@ -269,25 +278,29 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
     return row === undefined ? null : toClient(row);
   }
 
-  async findFirstActive(): Promise<Client | null> {
+  findFirstActive(): Promise<Client | null> { return this.findFirstActiveExcluding([]); }
+
+  async findFirstActiveExcluding(ids: number[]): Promise<Client | null> {
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields}
        FROM fcli
-       WHERE CLIBAJA = '1900-12-31'
+       WHERE CLIBAJA = '1900-12-31'${excludeIds(ids)}
        ORDER BY CLICOD, CLISEQ
-       LIMIT 1`,
+       LIMIT 1`, ids,
     );
     const row = rows[0];
     return row === undefined ? null : toClient(row);
   }
 
-  async search(criteria: ClientSearchCriteria): Promise<ClientSearchResult> {
+  search(criteria: ClientSearchCriteria): Promise<ClientSearchResult> { return this.searchExcluding(criteria, []); }
+
+  async searchExcluding(criteria: ClientSearchCriteria, ids: number[]): Promise<ClientSearchResult> {
     const searchCondition = criteria.query === undefined
       ? ''
       : ' AND (CLICOD LIKE ? OR CLINOM LIKE ? OR CLIRFC LIKE ?)';
-    const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}`;
+    const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}${excludeIds(ids)}`;
     const searchValue = criteria.query === undefined ? [] : Array(3).fill(`%${criteria.query}%`);
-    const parameters = searchValue;
+    const parameters = [...searchValue, ...ids];
 
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields} FROM fcli WHERE ${where} ORDER BY CLICOD LIMIT ? OFFSET ?`,
@@ -314,16 +327,19 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
     );
     const current = currentRows[0];
     if (current === undefined) return null;
+    return this.findAdjacentByCode(current.code, direction, []);
+  }
 
+  async findAdjacentByCode(code: string, direction: ClientNavigationDirection, ids: number[]): Promise<Client | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields}
        FROM fcli
-       WHERE CLICOD ${operator} ?
+       WHERE CLICOD ${operator} ?${excludeIds(ids)}
        ORDER BY CLICOD ${order}, CLISEQ ${order}
        LIMIT 1`,
-      [current.code],
+      [code, ...ids],
     );
 
     const row = rows[0];
@@ -345,6 +361,36 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
       'SELECT 1 AS found FROM fbenc WHERE BCOD = ? LIMIT 1',
       [account],
     );
+    return rows.length > 0;
+  }
+
+  async catalogAccountSettings() {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { account: string; active: number; required: number }>>(
+      `SELECT CIACTACXC AS account,SUBSTRING(CIAPLUGS,4,1)='X' AS active,
+         SUBSTRING(CIACOMPORTA,84,1)<>'1' AS required FROM FCIA WHERE CIASEQ=1 AND CIAALIAS='TUVANSA' LIMIT 1`,
+    );
+    const row = rows[0];
+    return row ? { account: row.account, active: Boolean(row.active), required: Boolean(row.required) } : null;
+  }
+
+  async catalogLeafAccount(account: string): Promise<boolean> {
+    const [rows] = await legacyMysqlPool.execute<ExistsRow[]>('SELECT 1 AS found FROM FBENC WHERE BCOD=? AND BSUBCTAS=0 LIMIT 1', [account]);
+    return rows.length > 0;
+  }
+
+  async findDependency(id: number, code: string): Promise<string | null> {
+    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+      `SELECT ${dependencyTables.map((table) => `EXISTS(SELECT 1 FROM ${table} WHERE CLISEQ=? LIMIT 1) AS ${table}`).join(',')},
+       EXISTS(SELECT 1 FROM fcli WHERE CLIAPLICAR=? AND CLIAPLICAR<>'' AND CLISEQ<>? LIMIT 1) AS applications,
+       EXISTS(SELECT 1 FROM FYG WHERE LEFT(YGKEY,9)=CONCAT('Li~',RPAD(LEFT(?,6),6,' ')) LIMIT 1) AS licenses`,
+      [...dependencyTables.map(() => id), code, id, code],
+    );
+    const row = rows[0];
+    return dependencyTables.find((table) => row?.[table]) ?? (row?.licenses ? 'FYG (licencias)' : row?.applications ? 'CLIAPLICAR' : null);
+  }
+
+  async hasCatalogBranches(id: number): Promise<boolean> {
+    const [rows] = await legacyMysqlPool.execute<ExistsRow[]>('SELECT 1 AS found FROM FSUCURSALES WHERE CLISEQ=? LIMIT 1', [id]);
     return rows.length > 0;
   }
 

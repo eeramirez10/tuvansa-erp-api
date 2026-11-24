@@ -5,6 +5,8 @@ import { ClientFiscalRepositoryImpl } from './infrastructure/repositories/client
 import { ClientFiscalController, createClientFiscalRouter } from './presentation/http/client-fiscal-controller.js';
 import type { Router } from 'express';
 import { CaptureCustomerCollection } from './application/use-cases/capture-customer-collection.js';
+import { ReverseCustomerCollection } from './application/use-cases/reverse-customer-collection.js';
+import { MysqlPostingReversalReferences } from '../../purchasing/purchase-receptions/infrastructure/datasources/mysql-posting-reversal-references.js';
 import { GetClientBalance } from './application/use-cases/get-client-balance.js';
 import { GetClientActions } from './application/use-cases/get-client-actions.js';
 import { GetClientAnalytics } from './application/use-cases/get-client-analytics.js';
@@ -22,12 +24,13 @@ import {
 } from './infrastructure/datasources/client-ledger-with-sales-remissions-data-source.js';
 import { ClientsWithSalesRemissionsDataSource } from './infrastructure/datasources/clients-with-sales-remissions-data-source.js';
 import { LegacyMysqlClientBalanceDataSource } from './infrastructure/datasources/legacy-mysql-client-balance-data-source.js';
-import { LegacyMysqlClientActionsDataSource } from './infrastructure/datasources/legacy-mysql-client-actions-data-source.js';
+import { ClientActionsWithCatalogDataSource } from './infrastructure/datasources/client-actions-with-catalog-data-source.js';
 import { LegacyMysqlClientAnalyticsDataSource } from './infrastructure/datasources/legacy-mysql-client-analytics-data-source.js';
 import { LegacyMysqlClientMovementsDataSource } from './infrastructure/datasources/legacy-mysql-client-movements-data-source.js';
 import { LegacyMysqlClientConsultationsDataSource } from './infrastructure/datasources/legacy-mysql-client-consultations-data-source.js';
 import { MysqlCustomerCollectionReferences } from './infrastructure/datasources/mysql-customer-collection-references.js';
 import { PostgresCustomerCollections } from './infrastructure/datasources/postgres-customer-collections.js';
+import { PostgresCustomerCollectionReversals } from './infrastructure/datasources/postgres-customer-collection-reversals.js';
 import { ClientActionsRepositoryImpl } from './infrastructure/repositories/client-actions-repository-impl.js';
 import { ClientAnalyticsRepositoryImpl } from './infrastructure/repositories/client-analytics-repository-impl.js';
 import { ClientBalanceRepositoryImpl } from './infrastructure/repositories/client-balance-repository-impl.js';
@@ -50,7 +53,7 @@ export const createClientsModule = (): Router => {
     new LegacyMysqlClientConsultationsDataSource(),
   );
   const actionsRepository = new ClientActionsRepositoryImpl(
-    new LegacyMysqlClientActionsDataSource(),
+    new ClientActionsWithCatalogDataSource(),
   );
   const analyticsRepository = new ClientAnalyticsRepositoryImpl(
     new LegacyMysqlClientAnalyticsDataSource(),
@@ -64,7 +67,7 @@ export const createClientsModule = (): Router => {
   const getClientActions = new GetClientActions(actionsRepository);
   const getClientAnalytics = new GetClientAnalytics(analyticsRepository);
   const navigateClient = new NavigateClient(repository, repository);
-  const createClient = new CreateClient(repository);
+  const createClient = new CreateClient(repository, () => clientsDataSource.defaultAccountingAccount());
   const updateClient = new UpdateClient(repository);
   const deleteClient = new DeleteClient(repository);
   const controller = new ClientsController(
@@ -81,6 +84,8 @@ export const createClientsModule = (): Router => {
     updateClient,
     deleteClient,
     new CaptureCustomerCollection(new PostgresCustomerCollections(), new MysqlCustomerCollectionReferences()),
+    new ReverseCustomerCollection(new PostgresCustomerCollectionReversals(), new MysqlPostingReversalReferences()),
+    (id, blocked, reason) => clientsDataSource.block(id, blocked, reason),
   );
 
   const router = createClientsRouter(controller);

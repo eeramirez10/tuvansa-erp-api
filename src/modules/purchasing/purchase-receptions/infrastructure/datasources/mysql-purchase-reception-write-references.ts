@@ -3,6 +3,11 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { readLegacySaleStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
+import { supplierCatalogRecord } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
+import {
+  catalogOtherData, catalogProductsById, isNewCatalogProduct,
+} from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { loadPurchaseOrderWriteContext } from '../../../purchase-orders/application/use-cases/load-purchase-order-write-context.js';
 import { PurchaseOrder } from '../../../purchase-orders/domain/entities/purchase-order.js';
 import type { LegacyMysqlPurchaseOrderEditDataSource } from '../../../purchase-orders/infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
@@ -10,9 +15,11 @@ import type { PostgresPurchaseOrderEdits } from '../../../purchase-orders/infras
 import type {
   PurchaseReceptionCreateInput, PurchaseReceptionPosting, PurchaseReceptionWriteContext, PurchaseReceptionWriteReferences,
 } from '../../domain/datasources/purchase-reception-write-data-source.js';
+import type { ReceiptCancellationReferences } from '../../domain/datasources/purchase-reception-cancellation-data-source.js';
 import { purchaseOrderReceiptLines, type PurchaseOrderReceiptEffect } from '../../domain/entities/purchase-reception-order-effect.js';
 
 interface ReceiptRules extends RowDataPacket {
+  fiscalStart: string | null; fiscalEnd: string | null;
   flags: string; plugs: string; defaultWarehouse: string; movement: string;
   stockSign: number; payableSign: number; invoiceSign: number; policyType: string;
   accountMode: number; movementAccount: string; vatRate: number; vatAccount: string; alternateVatAccount: string;
@@ -32,27 +39,37 @@ const unsupported = (message: string) => new ApplicationError(message, 'PURCHASE
 const flag = (rules: ReceiptRules, position: number) => rules.flags.charAt(position - 1) === '1';
 const validAccount = (account: string | undefined) => Boolean(account?.trim());
 
-export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionWriteReferences {
+export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionWriteReferences, ReceiptCancellationReferences {
   constructor(
     private readonly capture: LegacyMysqlPurchaseOrderEditDataSource,
     private readonly edits: PostgresPurchaseOrderEdits,
   ) {}
 
   private async rules(supplierId: number): Promise<ReceiptRules | undefined> {
+    const supplier = await supplierCatalogRecord(supplierId);
+    if (supplier?.deleted) return undefined;
+    const source = supplier ? '' : 'JOIN FPRV S ON S.PRVSEQ=?';
+    const supplierFields = supplier ? '' : `,S.PRVTOLERANCIA AS tolerance,S.PRVPLAZO AS terms,S.PRVCTA AS supplierAccount,
+      S.PRVINTERCIA AS betweenCompanies,S.PRVRETIVA AS withheldVat,S.PRVRETISR AS withheldIsr`;
     const [rows] = await legacyMysqlPool.execute<ReceiptRules[]>(
-      `SELECT C.CIACOMPORTA AS flags, C.CIAPLUGS AS plugs, ROOT.CATMCIAALM AS defaultWarehouse,
+      `SELECT C.CIACOMPORTA AS flags,C.CIAPLUGS AS plugs,ROOT.CATMCIAALM AS defaultWarehouse,
+         NULLIF(C.CIAFI,'1900-12-31') AS fiscalStart,NULLIF(C.CIAFF,'1900-12-31') AS fiscalEnd,
          M.TICLA AS movement, M.TIAFINV AS stockSign, M.TIAFCXC AS payableSign, M.TIAFVTS AS invoiceSign,
          C.CIAPOLIZACONT AS policyType, M.TICONTA AS accountMode, M.TICUENTA AS movementAccount,
-         C.CIATASAIVA AS vatRate, C.CIACTAIVAC AS vatAccount, C.CIACTAIVAC2 AS alternateVatAccount,
-         S.PRVTOLERANCIA AS tolerance, S.PRVPLAZO AS terms, S.PRVCTA AS supplierAccount,
-         S.PRVINTERCIA AS betweenCompanies, S.PRVRETIVA AS withheldVat, S.PRVRETISR AS withheldIsr
+         C.CIATASAIVA AS vatRate,C.CIACTAIVAC AS vatAccount,C.CIACTAIVAC2 AS alternateVatAccount
+         ${supplierFields}
        FROM FCIA C JOIN FALMCAT ROOT ON ROOT.CATKEY='CIA1' AND ROOT.CATCOD='1'
        JOIN FTIPMV M ON M.TICLA=ROOT.CATMCIATMR AND M.TIMULTICIA=1 AND M.TIMODULO=7
-       JOIN FPRV S ON S.PRVSEQ=?
+       ${source}
        WHERE C.CIASEQ=1 AND C.CIAALIAS='TUVANSA' ORDER BY ROOT.CATSEQ,M.TISEQ LIMIT 1`,
-      [supplierId],
+      supplier ? [] : [supplierId],
     );
-    return rows[0];
+    const rules = rows[0];
+    return rules && supplier ? {
+      ...rules, tolerance: supplier.tolerancePercent, terms: supplier.supplier.terms.paymentTermDays,
+      supplierAccount: supplier.supplier.fiscal.accountingAccount, betweenCompanies: supplier.intercompany,
+      withheldVat: supplier.withheldVat, withheldIsr: supplier.withheldIncomeTax,
+    } : rules;
   }
 
   private async products(ids: number[]): Promise<Map<number, ProductRules>> {
@@ -63,13 +80,53 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
         IPORCARANC AS tariff, ICTA AS account, ICTADEV AS returnAccount
        FROM FINV WHERE ISEQ IN (${ids.map(() => '?').join(',')})`, ids,
     );
-    return new Map(rows.map((item) => [item.id, item]));
+    const result = new Map(rows.map((item) => [item.id, item]));
+    const [references, otherData] = await Promise.all([catalogProductsById(ids), catalogOtherData(ids)]);
+    for (const [id, { document, deleted, revision }] of references) {
+      if (deleted || !document.isActive) {
+        result.delete(id);
+        continue;
+      }
+      const legacy = result.get(id);
+      if (!revision && !isNewCatalogProduct(id)) continue;
+      const other = otherData.get(id);
+      result.set(id, {
+        id, unit: document.classification.unit.code, receivedAt: document.createdAt,
+        account: document.warehouse.accounts.primary, returnAccount: document.warehouse.accounts.secondary,
+        noLayers: typeof other?.noInventoryLayer === 'boolean' ? Number(other.noInventoryLayer) : legacy?.noLayers ?? 0,
+        vatCode: Number(other?.taxRateType ?? legacy?.vatCode ?? 0),
+        withheldVat: Number(other?.vatWithholdingType ?? legacy?.withheldVat ?? 0),
+        exciseRate: Number(other?.iepsPercentage ?? legacy?.exciseRate ?? 0),
+        exciseUnit: legacy?.exciseUnit ?? 0, tariff: Number(other?.tariffPercentage ?? legacy?.tariff ?? 0),
+      } as ProductRules);
+    }
+    return result;
   }
 
   private inventoryAccount(rules: ReceiptRules, product: ProductRules) {
     if (rules.accountMode === 0) return product.account;
     if (rules.accountMode === 1) return product.returnAccount;
     return rules.movementAccount;
+  }
+
+  async cancellationOrder(orderId: number) {
+    const state = await loadPurchaseOrderWriteContext(orderId, this.capture, this.edits, this.edits).catch((error: unknown) => {
+      if (error instanceof NotFoundError) return null;
+      throw error;
+    });
+    if (!state) return null;
+    const { base, stored, version } = state;
+    const source = PurchaseOrder.create(base);
+    const order = (stored ? source.withEditedLines(stored, true) : source).toPrimitives();
+    const change = (await this.edits.findSupplierChanges([orderId])).find(({ number }) => number === base.number);
+    return {
+      order, revision: stored?.revision ?? 0, legacyVersion: version, supplierRevision: change?.revision ?? 0,
+      amountInWords: stored?.amountInWords ?? null, stale: Boolean(stored && stored.legacyVersion !== version),
+    };
+  }
+
+  inventory(warehouse: string, productIds: number[]): ReturnType<ReceiptCancellationReferences['inventory']> {
+    return readLegacySaleStock(warehouse, productIds);
   }
 
   async context(companyId: number, orderId: number): Promise<PurchaseReceptionWriteContext | null> {
@@ -90,7 +147,10 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       canRetireCompletedOrder: false,
     };
     const defaultWarehouse = [order.warehouse, rules?.defaultWarehouse].find((code) => warehouses.some((item) => item.code === code));
-    const defaults = { receivedAt: date.format(), warehouse: defaultWarehouse ?? warehouses[0]?.code ?? '' };
+    const today = date.format();
+    const receivedAt = rules?.fiscalEnd && today > rules.fiscalEnd ? rules.fiscalEnd
+      : rules?.fiscalStart && today < rules.fiscalStart ? rules.fiscalStart : today;
+    const defaults = { receivedAt, warehouse: defaultWarehouse ?? warehouses[0]?.code ?? '' };
     let reason: string | null = null;
     if (companyId !== 1 || orderRules.companyId !== companyId) reason = 'La orden pertenece a otra compañía.';
     else if (stored && stored.legacyVersion !== version) reason = 'La orden cambió en PROSCAI.';
@@ -142,6 +202,9 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
     const rules = await this.rules(order.supplier.id);
     if (!rules) throw unsupported('No está disponible la configuración de recepción de TUVANSA.');
     const { receivedAt, warehouse, supplierReference } = input;
+    if (!rules.fiscalStart || !rules.fiscalEnd || receivedAt < rules.fiscalStart || receivedAt > rules.fiscalEnd) {
+      throw unsupported('La fecha de recepción debe estar en el periodo contable abierto.');
+    }
     const products = await this.products([...new Set(effect.lines.map(({ productId }) => productId))]);
     const orderLines = new Map(order.lines.map((line) => [line.id, line]));
     const gl = new Map<string, number>();

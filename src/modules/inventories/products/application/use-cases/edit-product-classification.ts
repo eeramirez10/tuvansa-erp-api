@@ -57,7 +57,7 @@ export class EditProductClassification {
 
   async get(productId: number, page: number, pageSize: number) {
     const [catalog, stored] = await Promise.all([this.catalog(productId), this.repository.get(productId)]);
-    const data = panel(catalog, stored, this.repository.writable(productId));
+    const data = panel(catalog, stored, await this.repository.writable(productId));
     if (page > 1) data.items = [];
     return { data, pagination: { page, pageSize, returned: data.items.length } };
   }
@@ -67,8 +67,8 @@ export class EditProductClassification {
     changes: ProductClassificationAssignments;
     rebuildFamily?: boolean | undefined;
   }) {
-    if (!this.repository.writable(productId)) {
-      throw new ApplicationError('Este producto está fuera del piloto de clasificación en PostgreSQL.', 'CLASSIFICATION_READ_ONLY', 403);
+    if (!await this.repository.writable(productId)) {
+      throw new ApplicationError('Este producto no está disponible para clasificar en PostgreSQL.', 'CLASSIFICATION_READ_ONLY', 403);
     }
     const [catalog, stored] = await Promise.all([this.catalog(productId), this.repository.get(productId)]);
     if ((stored?.revision ?? 0) !== requested.revision) {

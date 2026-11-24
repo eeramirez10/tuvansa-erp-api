@@ -18,6 +18,10 @@ const productParamsSchema = z.object({
 
 const productCodeSchema = z.string().trim().min(1).max(13);
 const codeAvailabilityQuerySchema = z.object({ code: productCodeSchema });
+const removalConfirmationSchema = z.object({
+  code: productCodeSchema,
+  revision: z.string().max(32).regex(/^\d+:\d+:\d+$/),
+}).strict();
 
 const searchQuerySchema = z.object({
   q: z.string().trim().min(1).optional(),
@@ -240,10 +244,27 @@ export class ProductsController {
     }
   };
 
+  getCreateOptions: RequestHandler = async (_request, response, next) => {
+    try {
+      response.json({ data: await this.createProduct.options() });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getRemoval: RequestHandler = async (request, response, next) => {
+    try {
+      const { productId } = productParamsSchema.parse(request.params);
+      response.json({ data: await this.deleteProduct.preview(productId) });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   delete: RequestHandler = async (request, response, next) => {
     try {
       const { productId } = productParamsSchema.parse(request.params);
-      await this.deleteProduct.execute(productId);
+      await this.deleteProduct.execute(productId, removalConfirmationSchema.parse(request.body));
       response.status(204).send();
     } catch (error) {
       next(error);

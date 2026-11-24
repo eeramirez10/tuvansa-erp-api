@@ -41,10 +41,11 @@ export class CaptureCustomerCollection {
     const settings = reason ? null : await this.references.settings(identity.companyId, identity.clientId);
     const bankAccounts = this.banks(settings);
     const unavailable = reason ?? (!settings ? configurationMissing : bankAccounts.length === 0 ? bankMissing : null);
+    const defaultsDate = [mexicoDate.format(), target.issuedAt, target.lastReversalDate ?? ''].sort().at(-1)!;
     return {
       remissionId: target.remissionId, number: target.number, remaining: target.remaining, revision: target.revision,
       canWrite: unavailable === null, reason: unavailable, bankAccounts,
-      defaults: { date: mexicoDate.format(), amount: target.remaining },
+      defaults: { date: defaultsDate, amount: target.remaining },
     };
   }
 

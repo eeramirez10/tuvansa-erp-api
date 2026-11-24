@@ -3,8 +3,10 @@ import { Invoice, type InvoiceProps } from '../../domain/entities/invoice.js';
 import type { InvoiceNavigationDirection, InvoiceSearchCriteria, InvoiceSearchResult } from '../../domain/repositories/invoices-repository.js';
 import type { LegacyMysqlInvoicesDataSource } from './legacy-mysql-invoices-data-source.js';
 import { isLocalSalesRemissionId, readSalesRemissions } from './postgres-sales-remissions.js';
+import { remissionCancellationSql, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
+import { customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
 
-const invoice = "(result->'invoice')";
+const invoice = "(remission.result->'invoice')";
 const empty = { items: [], total: 0 };
 type InvoiceHeader = Omit<InvoiceProps, 'lines'>;
 
@@ -18,17 +20,23 @@ interface InvoiceCollectionRow<T extends InvoiceHeader> {
   charge: number;
   paid: number;
   lastPaymentAt: string | null;
+  cancellation: InvoiceProps['cancellation'] | null;
 }
 
-const collectionFields = `charge::float8 AS charge, collections.paid::float8 AS paid,
+const collectionFields = `remission.charge::float8 AS charge, collections.paid::float8 AS paid,
   collections.last_payment_date::text AS "lastPaymentAt"`;
 
 async function remissionScope(client: PostgresClient) {
-  const join = joinRemissionCollections(await customerCollectionsAvailable(client));
-  return `FROM tuvansa.sales_remissions AS remission ${join} WHERE remission.company_id = 1`;
+  const join = joinRemissionCollections(await customerCollectionsAvailable(client), await customerCollectionReversalsAvailable(client));
+  const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+  return {
+    from: `FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join} WHERE remission.company_id = 1`,
+    fields: `${collectionFields},${cancellation.result} AS cancellation`,
+  };
 }
 
-function withCollectionTotals<T extends InvoiceHeader>({ invoice, charge, paid, lastPaymentAt }: InvoiceCollectionRow<T>): T {
+function withCollectionTotals<T extends InvoiceHeader>({ invoice, charge, paid, lastPaymentAt, cancellation }: InvoiceCollectionRow<T>): T {
+  if (cancellation) return { ...invoice, canceled: true, status: 'CANCELADA', cancellation, totals: { ...invoice.totals, balance: 0 } };
   if (paid === 0) return invoice;
   const balance = Math.max(0, Number((charge - paid).toFixed(2)));
   return {
@@ -40,8 +48,9 @@ function withCollectionTotals<T extends InvoiceHeader>({ invoice, charge, paid, 
 
 function readLocalInvoice(field: 'id' | 'number', value: number | string): Promise<SalesRemissionInvoice | null> {
   return readSalesRemissions<SalesRemissionInvoice | null>(null, async (client) => {
+    const { from, fields } = await remissionScope(client);
     const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
-      `SELECT ${invoice} AS invoice, ${collectionFields} ${await remissionScope(client)} AND remission.${field} = $1`, [value],
+      `SELECT ${invoice} AS invoice, ${fields} ${from} AND remission.${field} = $1`, [value],
     );
     return row ? { invoice: withCollectionTotals(row), charge: row.charge } : null;
   });
@@ -98,12 +107,13 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
 
   private browseLocal(number: string | null, direction: InvoiceNavigationDirection) {
     const previous = direction === 'previous';
-    const filter = number === null ? '' : `AND number ${previous ? '<' : '>'} $1`;
+    const filter = number === null ? '' : `AND remission.number ${previous ? '<' : '>'} $1`;
     const order = previous ? 'DESC' : 'ASC';
     return readSalesRemissions<InvoiceProps | null>(null, async (client) => {
+      const { from, fields } = await remissionScope(client);
       const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
-        `SELECT ${invoice} AS invoice, ${collectionFields}
-         ${await remissionScope(client)} ${filter} ORDER BY number ${order}, id ${order} LIMIT 1`,
+        `SELECT ${invoice} AS invoice, ${fields} ${from} ${filter}
+         ORDER BY remission.number ${order}, remission.id ${order} LIMIT 1`,
         number === null ? [] : [number.toUpperCase()],
       );
       return row ? withCollectionTotals(row) : null;
@@ -115,11 +125,11 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     const values: Array<string | number> = [];
     if (criteria.query !== undefined) {
       values.push(`%${criteria.query}%`);
-      conditions.push(`(number ILIKE $1 OR order_number ILIKE $1 OR ${invoice}->>'customerOrderNumber' ILIKE $1
+      conditions.push(`(remission.number ILIKE $1 OR order_number ILIKE $1 OR ${invoice}->>'customerOrderNumber' ILIKE $1
         OR ${invoice}#>>'{customer,code}' ILIKE $1 OR ${invoice}#>>'{customer,name}' ILIKE $1)`);
     }
     const prefixes = [
-      ['number', criteria.invoiceNumber], ['order_number', criteria.orderNumber],
+      ['remission.number', criteria.invoiceNumber], ['order_number', criteria.orderNumber],
       [`${invoice}->>'customerOrderNumber'`, criteria.customerOrderNumber],
       [`${invoice}->>'deliveryNote'`, criteria.deliveryNote],
       [`${invoice}->>'folio'`, criteria.folio],
@@ -142,10 +152,11 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     const where = conditions.length === 0 ? '' : `AND ${conditions.join(' AND ')}`;
     values.push(limit);
     return readSalesRemissions<{ items: InvoiceHeader[]; total: number }>(empty, async (client) => {
+      const { from, fields } = await remissionScope(client);
       // Derivada. Busca el encabezado de las remisiones web con los filtros de Facturación.
       const { rows: [row] } = await client.query<{ items: InvoiceCollectionRow<InvoiceHeader>[]; total: number }>(
         `WITH matched AS (
-           SELECT id, number, ${invoice} - 'lines' AS invoice, ${collectionFields} ${await remissionScope(client)} ${where}
+           SELECT remission.id, remission.number, ${invoice} - 'lines' AS invoice, ${fields} ${from} ${where}
          )
          SELECT count(*)::float8 AS total,
                 ARRAY(SELECT to_jsonb(matched) FROM matched ORDER BY number, id LIMIT $${values.length}) AS items FROM matched`,

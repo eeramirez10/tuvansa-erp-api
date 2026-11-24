@@ -166,6 +166,15 @@ el saldo inicial con esa lista ya filtrada. Se aplican los filtros antes
 de `LIMIT/OFFSET`. Esta consulta es una adaptación de las reglas leídas en el
 código de Omnis 7, con `FALM` adicional para el saldo inicial.
 
+El Auxiliar agrega las partidas locales de EI, SI, RW y FAW, así como sus
+cancelaciones, a continuación de las partidas heredadas y en orden de
+identificador de partida. Las EI y SI canceladas se muestran como `K` con
+cantidad cero. Las cancelaciones de RW y FAW registran un movimiento
+compensatorio `K` con cantidad firmada. Para el saldo inicial por almacén,
+el backend suma el movimiento local neto al saldo actual y resta las
+partidas locales incluidas por el filtro de apertura. La proyección a los
+campos del auxiliar es derivada de los documentos guardados en PostgreSQL.
+
 ## Acciones reproducidas en frontend
 
 Los 14 controles de **Acciones** conservan el nombre visible de OMNIS y su

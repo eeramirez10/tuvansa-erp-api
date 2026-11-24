@@ -1,5 +1,6 @@
 @baseUrl = http://localhost:3000/api
 @document = EI1000
+@adjustmentDate = 2026-11-24
 
 ### Consultas → Documentos → Búsqueda (independiente del producto)
 # @name movementSearch
@@ -9,6 +10,31 @@ Accept: application/json
 ### Consultas → Documentos → Abrir resultado por el identificador de Búsqueda
 GET {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}
 Accept: application/json
+
+### Movimientos de inventario → Preparar captura de EI o SI
+GET {{baseUrl}}/inventories/movements/capture
+Accept: application/json
+
+### Movimientos de inventario → OK para una entrada en una base aislada de pruebas
+# @name createInventoryAdjustment
+POST {{baseUrl}}/inventories/movements
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "type": "EI",
+  "date": "{{adjustmentDate}}",
+  "warehouse": "01",
+  "reference": "PRUEBA EI WEB",
+  "lines": [{ "productId": 13265, "quantity": 1, "cost": 10 }]
+}
+
+### Consultar el folio que quedó guardado
+GET {{baseUrl}}/inventories/movements/{{createInventoryAdjustment.response.body.$.data.header.id}}
+Accept: application/json
+
+### Cancelar exclusivamente el movimiento creado para la prueba
+DELETE {{baseUrl}}/inventories/movements/{{createInventoryAdjustment.response.body.$.data.header.id}}
 
 ### Consultas → Documentos → Cancelar. Ejecutar sólo sobre un folio de prueba cargado en PostgreSQL.
 DELETE {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}

@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import type { CancelPurchaseReception } from '../../application/use-cases/cancel-purchase-reception.js';
 import type { ReversePurchasePosting } from '../../application/use-cases/reverse-purchase-posting.js';
 import type { PostingReversalTarget } from '../../domain/datasources/purchase-posting-reversal-data-source.js';
 
@@ -22,6 +23,24 @@ export function postingReversalHandlers(service: ReversePurchasePosting, kind: P
   const save: RequestHandler = async (request, response, next) => {
     try {
       const data = await service.save(actor, target(request.params), capture.parse(request.body));
+      response.status(201).json({ data });
+    } catch (error) { next(error); }
+  };
+  return { prepare, save };
+}
+
+export function purchaseReceptionCancellationHandlers(service: CancelPurchaseReception) {
+  const actor = { companyId: 1, userId: 0 };
+  const prepare: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseReceptionId } = expenseParams.parse(request.params);
+      response.json({ data: await service.prepare(actor.companyId, purchaseReceptionId) });
+    } catch (error) { next(error); }
+  };
+  const save: RequestHandler = async (request, response, next) => {
+    try {
+      const { purchaseReceptionId } = expenseParams.parse(request.params);
+      const data = await service.save(actor, purchaseReceptionId, capture.parse(request.body));
       response.status(201).json({ data });
     } catch (error) { next(error); }
   };

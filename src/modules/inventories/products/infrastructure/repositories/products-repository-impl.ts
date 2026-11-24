@@ -15,6 +15,7 @@ import type {
   DeleteProductResult,
   ProductCreateValues,
   ProductNavigationDirection,
+  ProductRemovalConfirmation,
   ProductSearchCriteria,
   ProductSearchResult,
   ProductsRepository,
@@ -42,6 +43,7 @@ export class ProductsRepositoryImpl implements ProductsRepository {
   private async withPilotValues(product: Product | null, savedEdit?: ProductCatalogEditSnapshot): Promise<Product | null> {
     if (!product) return null;
     const details = product.toPrimitives();
+    if (details.editing) return product;
     const edit = savedEdit ?? await this.edits?.get(details.id);
     const [classification, otherData] = edit
       ? [edit.classification, edit.otherData]
@@ -118,6 +120,10 @@ export class ProductsRepositoryImpl implements ProductsRepository {
     return this.dataSource.listUnits?.() ?? Promise.resolve([]);
   }
 
+  catalogWritable() { return this.dataSource.catalogWritable?.() ?? Promise.resolve(false); }
+
+  removal(productId: number) { return this.dataSource.removal?.(productId) ?? Promise.resolve(null); }
+
   async findById(productId: number): Promise<Product | null> {
     return this.withPilotValues(await this.dataSource.findById(productId));
   }
@@ -127,6 +133,7 @@ export class ProductsRepositoryImpl implements ProductsRepository {
   }
 
   async search(criteria: ProductSearchCriteria): Promise<ProductSearchResult> {
+    if (await this.catalogWritable()) return this.dataSource.search(criteria);
     const overrides = criteria.query === undefined ? undefined : await this.edits?.searchOverrides();
     const result = await this.dataSource.search(criteria, overrides);
     const items = await Promise.all(result.items.map(async (product) => {
@@ -162,6 +169,7 @@ export class ProductsRepositoryImpl implements ProductsRepository {
   }
 
   async update(productId: number, values: ProductWriteValues, revision?: string): Promise<Product | null> {
+    if (await this.catalogWritable()) return this.dataSource.update(productId, values, revision);
     if (!this.edits?.writable(productId)) {
       throw new ApplicationError('Este producto está fuera del piloto de edición del catálogo.', 'PRODUCT_EDIT_READ_ONLY', 403);
     }
@@ -215,7 +223,7 @@ export class ProductsRepositoryImpl implements ProductsRepository {
     return this.withPilotValues(product, saved);
   }
 
-  delete(productId: number): Promise<DeleteProductResult> {
-    return this.dataSource.delete(productId);
+  delete(productId: number, confirmation?: ProductRemovalConfirmation): Promise<DeleteProductResult> {
+    return this.dataSource.delete(productId, confirmation);
   }
 }

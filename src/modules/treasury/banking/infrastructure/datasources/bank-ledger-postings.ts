@@ -3,6 +3,8 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
+import { customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
+import { activeManualPolicyLines, manualPoliciesAvailable, manualPolicyAffectsAccount } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
 
 interface MonthPosting {
   month: string;
@@ -17,7 +19,7 @@ interface FiscalWindow extends RowDataPacket {
 
 const money = (value: number) => Number(value.toFixed(2));
 
-async function monthlyPostings(client: PostgresClient, accountId: number, window: FiscalWindow) {
+async function monthlyPostings(client: PostgresClient, accountId: number, window: FiscalWindow, costCenter: number | null) {
   const { rows: [tables] } = await client.query<{ payments: boolean; collections: boolean; transfers: boolean }>(
     `SELECT to_regclass('tuvansa.supplier_payments') IS NOT NULL AS payments,
             to_regclass('tuvansa.customer_collections') IS NOT NULL AS collections,
@@ -25,18 +27,25 @@ async function monthlyPostings(client: PostgresClient, accountId: number, window
               AND to_regclass('tuvansa.bank_transfers') IS NOT NULL AS transfers`,
   );
   const source: string[] = [];
-  if (tables?.payments) source.push('SELECT date,-amount AS amount FROM tuvansa.supplier_payments WHERE company_id=1 AND bank_account_id=$1');
-  if (tables?.payments && await supplierPaymentReversalsAvailable(client)) source.push(
+  if (costCenter === null && tables?.payments) source.push('SELECT date,-amount AS amount FROM tuvansa.supplier_payments WHERE company_id=1 AND bank_account_id=$1');
+  if (costCenter === null && tables?.payments && await supplierPaymentReversalsAvailable(client)) source.push(
     `SELECT reversal.date,payment.amount FROM tuvansa.supplier_payment_reversals reversal
      JOIN tuvansa.supplier_payments payment ON payment.id=reversal.payment_id AND payment.company_id=reversal.company_id
      WHERE payment.company_id=1 AND payment.bank_account_id=$1`,
   );
-  if (tables?.collections) source.push('SELECT date,amount FROM tuvansa.customer_collections WHERE company_id=1 AND bank_account_id=$1');
-  if (tables?.transfers) source.push(
+  if (costCenter === null && tables?.collections) source.push('SELECT date,amount FROM tuvansa.customer_collections WHERE company_id=1 AND bank_account_id=$1');
+  if (costCenter === null && tables?.collections && await customerCollectionReversalsAvailable(client)) source.push(
+    `SELECT reversal.date,-collection.amount FROM tuvansa.customer_collection_reversals reversal
+     JOIN tuvansa.customer_collections collection ON collection.id=reversal.collection_id AND collection.company_id=reversal.company_id
+     WHERE collection.company_id=1 AND collection.bank_account_id=$1`,
+  );
+  if (costCenter === null && tables?.transfers) source.push(
     `SELECT t.date,m.amount FROM tuvansa.bank_transfer_movements m
      JOIN tuvansa.bank_transfers t ON t.id=m.transfer_id AND t.company_id=m.company_id
      WHERE m.company_id=1 AND m.bank_account_id=$1`,
   );
+  if (await manualPoliciesAvailable(client)) source.push(`SELECT p.date,l.debit-l.credit AS amount ${activeManualPolicyLines}
+    WHERE ${manualPolicyAffectsAccount} ${costCenter === null ? '' : 'AND l.cost_center=$4'}`);
   if (source.length === 0) return [];
 
   // Derivada. Los movimientos web se suman a los acumulados mensuales del catálogo histórico.
@@ -46,12 +55,12 @@ async function monthlyPostings(client: PostgresClient, accountId: number, window
             coalesce(sum(amount) FILTER (WHERE amount > 0),0)::float8 AS charges,
             coalesce(-sum(amount) FILTER (WHERE amount < 0),0)::float8 AS credits
      FROM postings WHERE date BETWEEN $2::date AND $3::date GROUP BY 1 ORDER BY 1`,
-    [accountId, window.from, window.to],
+    [accountId, window.from, window.to, ...(costCenter === null ? [] : [costCenter])],
   );
   return rows;
 }
 
-export async function bankLedgerWithWebPostings(accountId: number, base: Record<string, unknown>[]) {
+export async function bankLedgerWithWebPostings(accountId: number, base: Record<string, unknown>[], costCenter: number | null = null) {
   const [settings] = await legacyMysqlPool.execute<FiscalWindow[]>(
     'SELECT CIAFI AS `from`, CIAFF AS `to` FROM FCIA WHERE CIASEQ=1 LIMIT 1',
   );
@@ -64,7 +73,7 @@ export async function bankLedgerWithWebPostings(accountId: number, base: Record<
   let client: PostgresClient | undefined;
   try {
     client = await connectPostgres();
-    const rows = await monthlyPostings(client, accountId, window);
+    const rows = await monthlyPostings(client, accountId, window, costCenter);
     const monthTotals = new Map(rows.map((row) => [row.month, row]));
     let running = 0;
     const items = base.map((row, index) => {

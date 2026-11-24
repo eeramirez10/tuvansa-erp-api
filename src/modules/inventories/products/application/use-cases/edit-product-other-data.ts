@@ -55,12 +55,12 @@ export class EditProductOtherData {
 
   async get(productId: number, page: number, pageSize: number) {
     const [catalog, saved] = await Promise.all([this.catalog(productId), this.repository.get(productId)]);
-    return panel(catalog, saved, this.repository.writable(productId), page, pageSize);
+    return panel(catalog, saved, await this.repository.writable(productId), page, pageSize);
   }
 
   async save(productId: number, revision: number, requested: ProductOtherDataValues) {
-    if (!this.repository.writable(productId)) {
-      throw new ApplicationError('Este producto está fuera del piloto de Otros en PostgreSQL.', 'OTHER_DATA_READ_ONLY', 403);
+    if (!await this.repository.writable(productId)) {
+      throw new ApplicationError('Este producto no está disponible para editar Otros en PostgreSQL.', 'OTHER_DATA_READ_ONLY', 403);
     }
     const [catalog, saved] = await Promise.all([this.catalog(productId), this.repository.get(productId)]);
     if ((saved?.revision ?? 0) !== revision) {

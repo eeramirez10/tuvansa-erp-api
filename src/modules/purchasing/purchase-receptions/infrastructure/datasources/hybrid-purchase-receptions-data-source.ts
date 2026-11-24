@@ -174,7 +174,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       policyNumber: local.policyNumber ?? '', policyId: local.policyId,
     }] : [];
     const cancelled = cancellation ? [{
-      id: cancellation.id, date: cancellation.date, transactionType: 'CG', reference: cancellation.reason,
+      id: cancellation.id, date: cancellation.date, transactionType: local.movementType === 'GA' ? 'CG' : 'K', reference: cancellation.reason,
       relatedDocumentId: id, charges: 0, payments: amount, signedAmount: -amount, relatedDocument: number,
       policyNumber: cancellation.policyNumber, policyId: cancellation.id,
     }] : [];

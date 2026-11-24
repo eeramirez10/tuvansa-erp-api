@@ -72,6 +72,19 @@ acumulados de Inventarios y Cuentas por cobrar. La captura fiscal, la
 validación de CFDI 4.0, el sellado con CSD y la certificación con un PAC
 corresponden a la integración posterior.
 
+## Cancelar una remisión
+
+`GET /api/sales/invoices/:invoiceId/actions/cancel-remission` prepara la
+cancelación de una remisión web FAW. El POST registra el motivo, la fecha,
+la confirmación y la elección de regenerar el pedido. El servidor aplica
+las reglas de `MFACT/28,29,112,113,232` para el flujo ordinario de TUVANSA.
+
+El folio original conserva su historial. El documento K repone las unidades
+en el mismo almacén y se revierte el cargo de cartera. Al elegir regenerar,
+las unidades vuelven al pendiente del pedido con asignación cero. Si hay
+cobros activos, se deben revertir primero. La API requiere un periodo
+abierto y comprueba que la remisión carezca de timbre fiscal.
+
 ## Mapeo de la ficha
 
 | Zona OMNIS | Etiqueta | Campo API | Columna legacy |

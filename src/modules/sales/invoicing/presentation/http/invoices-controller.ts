@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import type { CancelSalesRemission } from '../../application/use-cases/cancel-sales-remission.js';
 import type { CreateInvoiceFromOrder } from '../../application/use-cases/create-invoice-from-order.js';
 import type { GetFirstInvoice } from '../../application/use-cases/get-first-invoice.js';
 import type { GetInvoice } from '../../application/use-cases/get-invoice.js';
@@ -11,6 +12,9 @@ import type { SimulateSalesStamping } from '../../application/use-cases/simulate
 import type { InvoicePanelKey } from '../../domain/repositories/invoice-panels-repository.js';
 
 const invoiceParamsSchema = z.object({ invoiceId: z.coerce.number().int().positive() });
+const cancellationSchema = z.strictObject({
+  requestKey: z.uuid(), date: z.iso.date(), reason: z.string().trim().min(1).max(90), confirmed: z.literal(true), regenerateOrder: z.boolean(),
+});
 const invoiceNumberParamsSchema = z.object({ invoiceNumber: z.string().trim().min(1).max(20) });
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const orderNumberSchema = z.string().trim().min(1).max(15).toUpperCase();
@@ -46,6 +50,7 @@ export class InvoicesController {
     private readonly getInvoicePanel: GetInvoicePanel,
     private readonly invoiceFromOrder: CreateInvoiceFromOrder,
     private readonly stamping: SimulateSalesStamping,
+    private readonly cancellations: CancelSalesRemission,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -78,6 +83,21 @@ export class InvoicesController {
   createFromOrder: RequestHandler = async (request, response, next) => {
     try {
       const result = await this.invoiceFromOrder.save(1, 0, invoiceFromOrderSchema.parse(request.body));
+      response.status(201).json({ data: result });
+    } catch (error) { next(error); }
+  };
+
+  prepareCancellation: RequestHandler = async (request, response, next) => {
+    try {
+      const { invoiceId } = invoiceParamsSchema.parse(request.params);
+      response.set('Cache-Control', 'no-store').json({ data: await this.cancellations.prepare(1, invoiceId) });
+    } catch (error) { next(error); }
+  };
+
+  cancelRemission: RequestHandler = async (request, response, next) => {
+    try {
+      const { invoiceId } = invoiceParamsSchema.parse(request.params);
+      const result = await this.cancellations.save(1, 0, invoiceId, cancellationSchema.parse(request.body));
       response.status(201).json({ data: result });
     } catch (error) { next(error); }
   };

@@ -1,7 +1,8 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
-import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { catalogProductsById } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { OrderProps } from '../../domain/entities/order.js';
 
@@ -27,12 +28,16 @@ export async function readLegacySaleStock(warehouse: string, products: number[])
 }
 
 export const hasLocalSalesStock = async (client: PostgresClient) => {
-  const { rows: [tables] } = await client.query<{ orders: boolean; receipts: boolean; remissions: boolean }>(
+  const { rows: [tables] } = await client.query<{ orders: boolean; receipts: boolean; remissions: boolean; receiptCancellations: boolean;
+    remissionCancellations: boolean; adjustments: boolean }>(
     `SELECT to_regclass('tuvansa.orders') IS NOT NULL AS orders,
             to_regclass('tuvansa.purchase_reception_inventory') IS NOT NULL AS receipts,
-            to_regclass('tuvansa.sales_remission_inventory') IS NOT NULL AS remissions`,
+            to_regclass('tuvansa.sales_remission_inventory') IS NOT NULL AS remissions,
+            to_regclass('tuvansa.purchase_reception_cancellation_inventory') IS NOT NULL AS "receiptCancellations",
+            to_regclass('tuvansa.sales_remission_cancellation_inventory') IS NOT NULL AS "remissionCancellations",
+            to_regclass('tuvansa.inventory_adjustment_stock') IS NOT NULL AS adjustments`,
   );
-  return tables ?? { orders: false, receipts: false, remissions: false };
+  return tables ?? { orders: false, receipts: false, remissions: false, receiptCancellations: false, remissionCancellations: false, adjustments: false };
 };
 
 export async function localOrderAssignmentRows(client: PostgresClient, products: number[], warehouse: string | null = null, excludeOrderId: number | null = null) {
@@ -54,11 +59,13 @@ export async function localOrderAssignmentRows(client: PostgresClient, products:
   return rows.map(({ productId, warehouse: code, assigned }) => ({ productId: Number(productId), warehouse: code, assigned: Number(assigned) }));
 }
 
-async function warehouseDeltas(client: PostgresClient, products: number[], warehouse: string) {
-  const tables = await hasLocalSalesStock(client);
+async function warehouseDeltas(client: PostgresClient, products: number[], warehouse: string, tables: Awaited<ReturnType<typeof hasLocalSalesStock>>) {
   const names = [
     ...(tables.receipts ? ['purchase_reception_inventory'] : []),
     ...(tables.remissions ? ['sales_remission_inventory'] : []),
+    ...(tables.receiptCancellations ? ['purchase_reception_cancellation_inventory'] : []),
+    ...(tables.remissionCancellations ? ['sales_remission_cancellation_inventory'] : []),
+    ...(tables.adjustments ? ['inventory_adjustment_stock'] : []),
   ];
   if (!names.length) return new Map<number, number>();
   const { rows } = await client.query<{ productId: string; quantity: string }>(
@@ -70,24 +77,55 @@ async function warehouseDeltas(client: PostgresClient, products: number[], wareh
   return new Map(rows.map(({ productId, quantity }) => [Number(productId), Number(quantity)]));
 }
 
-export async function assertSaleStock(client: PostgresClient, order: OrderProps, requests: SaleStockRequest[]) {
+export async function readLocalWarehouseStock(warehouse: string, products: number[]) {
+  const result = new Map<number, { quantity: number; assigned: number }>();
+  if (!products.length || !postgresConfigured()) return result;
+  const client = await connectPostgres();
+  try {
+    const tables = await hasLocalSalesStock(client);
+    const physical = await warehouseDeltas(client, products, warehouse, tables);
+    const assigned = tables.orders ? await localOrderAssignmentRows(client, products, warehouse) : [];
+    for (const [id, quantity] of physical) result.set(id, { quantity, assigned: 0 });
+    for (const { productId, assigned: quantity } of assigned) {
+      result.set(productId, { quantity: physical.get(productId) ?? 0, assigned: quantity });
+    }
+    return result;
+  } finally {
+    client.release();
+  }
+}
+
+export async function assertSaleStock(client: PostgresClient, order: OrderProps, requests: SaleStockRequest[], lock = true) {
   if (!requests.length) return;
   const warehouse = normalizeOrderWarehouse(order.warehouse);
-  const productIds = requests.map(({ productId }) => productId).sort((a, b) => a - b);
-  // Both assignments and dispatch lock inventory in product ID order.
-  for (const productId of productIds) {
+  return assertWarehouseStock(client, warehouse, requests, (productId) => {
+    const product = order.lines.find((line) => line.productId === productId);
+    return new ConflictError(`Existencia disponible insuficiente para ${product?.productCode ?? productId} en el almacén ${warehouse}.`, 'SALE_STOCK_INSUFFICIENT');
+  }, order.id, lock);
+}
+
+export async function lockWarehouseStock(client: PostgresClient, warehouse: string, productIds: number[]) {
+  // Assignments, dispatch and cancellations acquire the same locks in product ID order.
+  for (const productId of [...new Set(productIds)].sort((a, b) => a - b)) {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-stock:' || $1 || ':' || $2,0))", [warehouse, String(productId)]);
   }
-  const assigned = new Map((await localOrderAssignmentRows(client, productIds, warehouse, order.id))
+}
+
+export async function assertWarehouseStock(
+  client: PostgresClient, warehouse: string, requests: SaleStockRequest[], unavailable: (productId: number) => ConflictError,
+  excludeOrderId: number | null = null, lock = true,
+) {
+  if (!requests.length) return;
+  const productIds = requests.map(({ productId }) => productId);
+  if (lock) await lockWarehouseStock(client, warehouse, productIds);
+  const tables = await hasLocalSalesStock(client);
+  const assigned = new Map((tables.orders ? await localOrderAssignmentRows(client, productIds, warehouse, excludeOrderId) : [])
     .map(({ productId, assigned }) => [productId, assigned]));
-  const physical = await warehouseDeltas(client, productIds, warehouse);
+  const physical = await warehouseDeltas(client, productIds, warehouse, tables);
   for (const { productId, quantity, legacyOnHand, legacyAssigned } of requests) {
     const pending = Math.max(legacyAssigned + (assigned.get(productId) ?? 0), 0);
     const available = scaledStock(legacyOnHand + (physical.get(productId) ?? 0) - pending);
-    if (quantity > available) {
-      const product = order.lines.find((line) => line.productId === productId);
-      throw new ConflictError(`Existencia disponible insuficiente para ${product?.productCode ?? productId} en el almacén ${warehouse}.`, 'SALE_STOCK_INSUFFICIENT');
-    }
+    if (quantity > available) throw unavailable(productId);
   }
 }
 
@@ -102,13 +140,21 @@ export async function verifyLocalOrderAssignment(
   const productIds = [...after].filter(([productId, assigned]) => scaledStock(assigned - (before.get(productId) ?? 0)) > 0)
     .map(([productId]) => productId);
   if (!productIds.length) return;
-  const rows = await loadStock(normalizeOrderWarehouse(next.warehouse), productIds);
+  const warehouse = normalizeOrderWarehouse(next.warehouse);
+  const rows = await loadStock(warehouse, productIds);
+  await lockWarehouseStock(client, warehouse, productIds);
+  const catalog = await catalogProductsById(productIds, client);
   const requests = productIds.map((productId) => {
-    const stock = rows.get(productId);
-    const valid = stock && next.lines.filter((line) => line.productId === productId && line.assigned > 0)
-      .every((line) => line.unit.trim() === stock.unit.trim());
-    if (!valid || !stock) throw new ConflictError('La asignación requiere una partida en la unidad base de inventario.', 'SALE_STOCK_UNIT_REQUIRED');
-    return { productId, quantity: scaledStock(after.get(productId) ?? 0), legacyOnHand: Number(stock.onHand), legacyAssigned: Number(stock.assigned) };
+    const reference = catalog.get(productId);
+    if (reference?.deleted || reference?.document.isActive === false) {
+      throw new ConflictError(`El producto ${reference.document.code} está dado de baja.`, 'PRODUCT_NOT_ACTIVE');
+    }
+    const legacy = rows.get(productId);
+    const unit = ((reference?.revision || !legacy ? reference?.document.classification.unit.code : undefined) ?? legacy?.unit)?.trim();
+    const valid = unit && next.lines.filter((line) => line.productId === productId && line.assigned > 0)
+      .every((line) => line.unit.trim() === unit);
+    if (!valid) throw new ConflictError('La asignación requiere una partida en la unidad base de inventario.', 'SALE_STOCK_UNIT_REQUIRED');
+    return { productId, quantity: scaledStock(after.get(productId) ?? 0), legacyOnHand: Number(legacy?.onHand ?? 0), legacyAssigned: Number(legacy?.assigned ?? 0) };
   });
-  await assertSaleStock(client, next, requests);
+  await assertSaleStock(client, next, requests, false);
 }

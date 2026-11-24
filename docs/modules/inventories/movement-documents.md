@@ -80,3 +80,71 @@ El archivo contiene `policy` con `warehouseTracking`, `layerEffects` y
 Si una regla se desconoce, usa `null` y el sistema bloqueará la anulación.
 El selector afecta únicamente esta ventana. El catálogo y las consultas
 de existencias de otros módulos conservan sus fuentes actuales.
+
+## Inventarios → Movimientos
+
+| Control de Omnis 7 | Endpoint | Tablas | Procedencia |
+| --- | --- | --- | --- |
+| Inventarios → Movimientos | `GET /api/inventories/movements/capture` | FCIA, FTIPMV, FALMCAT | Derivada de `MINV/1`, `EINV#3/401`, `EINV#3/411` y `EALM#1/240` |
+| OK | `POST /api/inventories/movements` | FINV, FALM, FDOC de lectura, `tuvansa.inventory_adjustments`, `tuvansa.inventory_adjustment_stock` | Derivada de `EINV#3/401–402` |
+| Consultas → Documentos → Cancelar EI/SI web | `DELETE /api/inventories/movements/:id` | `tuvansa.inventory_adjustments`, `tuvansa.inventory_adjustment_stock` | Derivada de la cancelación observada de `EI1000` |
+
+La edición de pruebas de Omnis 7 inicia `EINV#3` con EI y toma el signo de
+`FTIPMV.TIAFINV`. La configuración local de TUVANSA confirma EI Entrada de
+inventario `+1` y SI Salida de inventario `−1`. La cantidad se captura en la
+unidad base. Omnis propone `ILISTA5 + IADVALOREM` como costo unitario. La API
+acepta el costo capturado con cuatro decimales.
+
+La API aplica el alcance de almacenes de captura configurado y habilita los
+almacenes ordinarios de la compañía. Los usuarios de Omnis están delimitados
+en `TIUSUARIOS` y `CATUSUARIOS`. La sesión web usa la política de acceso de
+la API y no identifica al operador por esos nombres históricos. Se admiten
+productos activos de inventario sin manejo de piezas, tallas, capas o
+pedimento. La maquila y las operaciones con lotes conservan sus procedimientos
+dedicados.
+Los productos web nuevos requieren **No manejar capa** en **Otros**
+para registrar EI, SI o TR.
+
+El POST requiere `requestKey` para reintentos. Permite usar un folio con el
+prefijo del tipo o dejar que PostgreSQL genere `EIW…` o `SIW…`. Los folios
+se comparan con los existentes y no incrementan `FTIPMV.TINUM`. La fecha
+se propone con la zona horaria de México. La salida suma las partidas por
+producto y valida disponibilidad del almacén con las asignaciones y los
+movimientos locales. El alta y la cancelación comparten el bloqueo de
+existencias utilizado por Pedidos y Compras.
+
+Cancelar una entrada exige que la cantidad todavía esté disponible. Cancelar
+una salida repone la cantidad. El documento conserva el mismo folio y se
+puede consultar con las partidas `K` en cero. PostgreSQL conserva el original
+y los movimientos de stock firmados de aplicación y cancelación. Las consultas
+de documentos incluyen los folios web con ambas fuentes de lectura.
+
+## Inventarios → Traspasos
+
+`MINV/2` abre `EINV#17` en el flujo multi-almacén. `EINV#17/401` guarda un
+folio `FDOC` cuando `CIACOMPORTA[94]=0` y registra el destino en `DALMACEN`
+y el origen en `DREFERELLOS`. `/402` genera una partida negativa en el
+origen y una positiva en el destino, ambas con el costo capturado. En
+`TR0004` (`DSEQ=115003`), el almacén `13` tiene −1,526.18 unidades y el `01`
+tiene +1,526.18 en el mismo folio, con costos opuestos en el auxiliar.
+`/411` propone `ILISTA4 + IADVALOREM` con el costeo promedio vigente en
+TUVANSA y comprueba `ALMCANT − ALMASIGNADO` en el origen.
+
+`GET /api/inventories/movements/capture` oferta TR cuando hay al menos dos
+almacenes habilitados y la configuración corresponde a un traspaso ordinario
+de un solo folio. El POST usa `type: "TR"`, `warehouse` para el origen y
+`destinationWarehouse` para el destino. La API propone `TRW…` y conserva
+ambas partidas con sus almacenes. **Documentos** encuentra el TR por el
+código de ambos almacenes y **Auxiliar** refleja cada signo en su almacén.
+El costo tiene cuatro decimales y el efecto neto de cantidad y costo es cero.
+La operación aplica a existencias en unidad base, sin capas, piezas, lotes
+ni pedimento. `FTIPMV.TR` de TUVANSA tiene efecto de inventario y flags de
+Cuentas por cobrar, ventas, bancos y fiscal en cero.
+
+`EINV#24/41` recorre todas las partidas del folio y aplica `MFACT/112`.
+En `TR0001` (`DSEQ=37842`) las dos partidas de `01` y `13` conservan tipo
+`K`, cantidad cero y costo cero. En la web, el `DELETE` requiere las
+existencias libres del destino para regresar el traspaso. Registra los dos
+deltas inversos, conserva el detalle original y muestra las partidas `K` con
+el mismo folio. El registro y la cancelación bloquean ambos almacenes en el
+mismo orden y se aplican en una sola transacción de PostgreSQL.

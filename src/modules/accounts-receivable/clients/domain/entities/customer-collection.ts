@@ -27,4 +27,7 @@ export function validateCustomerCollection(target: CustomerCollectionTarget, inp
   if (input.date < target.issuedAt) {
     throw new ApplicationError('La fecha de cobro debe ser igual o posterior a la remisión.', 'CUSTOMER_COLLECTION_DATE_INVALID', 422);
   }
+  if (target.lastReversalDate && input.date < target.lastReversalDate) {
+    throw new ApplicationError(`La fecha de cobro debe ser igual o posterior a la última reversión PA (${target.lastReversalDate}).`, 'CUSTOMER_COLLECTION_DATE_INVALID', 422);
+  }
 }

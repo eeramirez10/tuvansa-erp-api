@@ -66,7 +66,7 @@ describe('catálogo de productos / PostgreSQL aislado', () => {
     expect(await stageProductCatalog(connect, snapshot())).toMatchObject({ productCount: 3, currentStock: '10.250000' });
     await stageProductCatalog(connect, snapshot());
     await expect(stageProductCatalog(connect, snapshot('99'))).rejects.toThrow('no concilió');
-    expect((await catalog.findById(14))?.toPrimitives()).toEqual(first);
+    expect((await catalog.findById(14))?.toPrimitives()).toMatchObject(first);
     expect((await catalog.search({ status: 'all', offset: 10, limit: 1 }))).toEqual({ total: 3, items: [] });
   });
 

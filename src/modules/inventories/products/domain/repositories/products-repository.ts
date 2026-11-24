@@ -56,6 +56,13 @@ export type DeleteProductResult =
   | { status: 'not-found' }
   | { status: 'in-use'; relation: string };
 
+export interface ProductRemovalConfirmation { code: string; revision: string }
+export interface ProductRemovalPreview extends ProductRemovalConfirmation {
+  id: number;
+  canDelete: boolean;
+  reason: string | null;
+}
+
 export interface ProductsRepository {
   findById(productId: number): Promise<Product | null>;
   findFirstActive(): Promise<Product | null>;
@@ -66,9 +73,11 @@ export interface ProductsRepository {
   ): Promise<Product | null>;
   codeExists(code: string, excludingProductId?: number): Promise<boolean>;
   listUnits?(): Promise<ProductCatalogUnit[]>;
+  catalogWritable?(): Promise<boolean>;
+  removal?(productId: number): Promise<ProductRemovalPreview | null>;
   unitExists(unitId: number): Promise<boolean>;
   accountingAccountExists(account: string): Promise<boolean>;
   create(values: ProductCreateValues): Promise<Product>;
   update(productId: number, values: ProductWriteValues, revision?: string): Promise<Product | null>;
-  delete(productId: number): Promise<DeleteProductResult>;
+  delete(productId: number, confirmation?: ProductRemovalConfirmation): Promise<DeleteProductResult>;
 }

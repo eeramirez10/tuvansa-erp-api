@@ -1,5 +1,8 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import {
+  searchSupplierCatalogRecords, supplierCatalogRecord,
+} from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
 import type {
   ExpenseAccount, ExpenseCatalogEntry, ExpenseProduct, ExpenseReferences, ExpenseSettings, ExpenseSupplier, ExpenseTax,
 } from '../../domain/datasources/purchase-expense-data-source.js';
@@ -71,6 +74,16 @@ export class MysqlPurchaseExpenseReferences implements ExpenseReferences {
   }
 
   async supplier(companyId: number, code: string): Promise<ExpenseSupplier | null> {
+    const [local] = companyId === 1 ? await searchSupplierCatalogRecords(code, true) : [];
+    if (local && (local.deleted || !local.supplier.isActive || local.intercompany !== 0 || local.supplier.terms.currencyId > 1)) return null;
+    if (local && local.supplier.code.toUpperCase() === code.toUpperCase()) {
+      const s = local.supplier;
+      return {
+        id: s.id, code: s.code, name: s.name, vatType: local.vatCode, terms: s.terms.paymentTermDays,
+        vatWithholdingRate: local.withheldVat, incomeWithholdingRate: local.withheldIncomeTax,
+        accountCode: s.fiscal.accountingAccount,
+      };
+    }
     const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
       `SELECT PRVSEQ AS id,TRIM(PRVCOD) AS code,TRIM(PRVNOM) AS name,PRVTIPOIVA AS vatType,
          PRVRETIVA AS vatWithholdingRate,PRVRETISR AS incomeWithholdingRate,PRVPLAZO AS terms,
@@ -78,7 +91,10 @@ export class MysqlPurchaseExpenseReferences implements ExpenseReferences {
        FROM FPRV WHERE PRVCOD=? AND PRVBAJA='1900-12-31' AND PRVMULTICIA IN (0,?)
          AND PRVMONEDA IN (0,1) AND PRVINTERCIA=0 ORDER BY PRVSEQ LIMIT 1`, [code, companyId],
     );
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    const replacement = await supplierCatalogRecord(row.id);
+    return replacement?.deleted || (replacement && replacement.supplier.code.toUpperCase() !== code.toUpperCase()) ? null : row;
   }
 
   async product(code: string): Promise<ExpenseProduct | null> {

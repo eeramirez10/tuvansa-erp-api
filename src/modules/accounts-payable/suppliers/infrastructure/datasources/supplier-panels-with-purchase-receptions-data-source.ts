@@ -1,5 +1,6 @@
-import type { SupplierPanelKey } from '../../domain/repositories/supplier-panels-repository.js';
+import type { SupplierPanelKey, SupplierPanelResult } from '../../domain/repositories/supplier-panels-repository.js';
 import { LegacyMysqlSupplierPanelsDataSource } from './legacy-mysql-supplier-panels-data-source.js';
+import { supplierCatalogRecord } from './postgres-supplier-catalog-data-source.js';
 import {
   purchaseReceptionSupplierCharges, type SupplierPurchaseReceptionCharge, type SupplierPurchaseReceptionPayment,
 } from './purchase-reception-supplier-charges.js';
@@ -53,7 +54,7 @@ function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
     }
     const cancellation = charge.cancellation;
     if (cancellation) movements.push({ createdAt: cancellation.createdAt, row: {
-      ...original, id: cancellation.id, date: cancellation.date, amount: -charge.principal, movementType: 'CG',
+      ...original, id: cancellation.id, date: cancellation.date, amount: -charge.principal, movementType: charge.movementType === 'GA' ? 'CG' : 'K',
       policy: cancellation.policyNumber, policyId: cancellation.id, userId: cancellation.userId,
       paymentReference: cancellation.reason,
     } });
@@ -64,7 +65,20 @@ function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
 
 export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlSupplierPanelsDataSource {
   override async findPanel(supplierId: number, key: SupplierPanelKey) {
-    const result = await super.findPanel(supplierId, key);
+    const local = await supplierCatalogRecord(supplierId);
+    if (local?.deleted) return null;
+    const base = local && !local.legacy ? null : await super.findPanel(supplierId, key);
+    const record = local?.supplier;
+    const result: SupplierPanelResult | null = local && record && (!local.legacy || base) ? {
+      ...base, items: base?.items ?? [],
+      supplier: { id: record.id, code: record.code, name: record.name, currentBalance: base?.supplier.currentBalance ?? 0 },
+      ...(key === 'discounts' ? { detail: { discount1: record.terms.discounts[0], discount2: record.terms.discounts[1] } } : {}),
+      ...(key === 'block-status' && !local.legacy ? { detail: { isActive: record.isActive, deactivatedAt: record.deactivatedAt } } : {}),
+      ...(key === 'various' && !local.legacy ? { detail: {
+        tolerancePercent: local.tolerancePercent, vatType: local.vatCode, vatWithholdingPercent: local.withheldVat,
+        incomeTaxWithholdingPercent: local.withheldIncomeTax, interCompany: local.intercompany,
+      } } : {}),
+    } : base;
     if (!result || (key !== 'balance' && key !== 'movements')) return result;
     const charges = await purchaseReceptionSupplierCharges(supplierId);
     if (charges.length === 0) return result;

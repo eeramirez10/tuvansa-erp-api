@@ -14,6 +14,8 @@ import type {
 } from '../../domain/datasources/customer-collection-data-source.js';
 import { validateCustomerCollection } from '../../domain/entities/customer-collection.js';
 import { customerCollectionsAvailable } from './customer-collections-reads.js';
+import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from './customer-collection-reversal-reads.js';
+import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 
 const idStart = 7300000000000;
 const idEnd = idStart + 99999998;
@@ -93,19 +95,23 @@ export class PostgresCustomerCollections implements CustomerCollectionDataSource
   writable() { return this.configured(); }
 
   private async findTarget(client: PostgresClient, identity: CustomerCollectionIdentity, hasCollections: boolean) {
+    const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client), 'r');
+    const reversal = customerCollectionReversalSql(hasCollections && await customerCollectionReversalsAvailable(client));
     const { rows: [row] } = await client.query<CustomerCollectionTarget>(
       `SELECT r.id::float8 AS "remissionId", r.number, r.issued_at::text AS "issuedAt",
          r.result #>> '{invoice,movementType}' AS "movementType",
-         coalesce((r.result #>> '{invoice,canceled}')::boolean, false) AS canceled,
+         (${cancellation.canceled} OR coalesce((r.result #>> '{invoice,canceled}')::boolean, false)) AS canceled,
          r.charge::float8 AS principal,
          (r.result #>> '{invoice,currency,id}')::integer AS "currencyId",
          (r.result #>> '{invoice,currency,exchangeRate}')::float8 AS "exchangeRate",
-         ${hasCollections ? 'greatest(r.charge - payments.paid,0)' : 'r.charge'}::float8 AS remaining,
-         ${hasCollections ? 'payments.revision' : '1'} AS revision
-       FROM tuvansa.sales_remissions r
+         (CASE WHEN ${cancellation.canceled} THEN 0 ELSE ${hasCollections ? 'greatest(r.charge - payments.paid,0)' : 'r.charge'} END)::float8 AS remaining,
+         ${hasCollections ? 'payments.revision' : '1'} AS revision,
+         ${hasCollections ? 'payments."lastReversalDate"' : 'null::text'} AS "lastReversalDate"
+       FROM tuvansa.sales_remissions r ${cancellation.join}
        ${hasCollections ? `CROSS JOIN LATERAL (
-          SELECT coalesce(sum(amount),0) AS paid, (count(*) + 1)::integer AS revision
-          FROM tuvansa.customer_collections WHERE remission_id = r.id
+          SELECT coalesce(${reversal.paid},0) AS paid,${reversal.revision} AS revision,${reversal.latestDate} AS "lastReversalDate"
+          FROM tuvansa.customer_collections collection ${reversal.join}
+          WHERE collection.remission_id=r.id AND collection.company_id=r.company_id AND collection.client_id=r.customer_id
          ) AS payments` : ''}
        WHERE r.id = $1 AND r.company_id = $2 AND r.customer_id = $3 AND r.number LIKE 'FAW%'`,
       [identity.remissionId, identity.companyId, identity.clientId],
@@ -183,6 +189,7 @@ export class PostgresCustomerCollections implements CustomerCollectionDataSource
     if (!target) throw new NotFoundError('Remisión web del cliente');
     validateCustomerCollection(target, input);
     const { bank, clientAccount, clientAccountName, policyType } = await resolvePosting();
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:'||$1::text||':'||$2::text,0))", [companyId, bank.id]);
 
     const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.customer_collection_ids') AS id");
     const id = Number(allocation!.id);

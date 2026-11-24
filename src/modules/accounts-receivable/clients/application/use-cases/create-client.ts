@@ -6,25 +6,20 @@ import {
 } from '../dtos/client-mutation-input.js';
 import { toClientResponse, type ClientResponse } from '../dtos/client-response.js';
 
-const DEFAULT_ACCOUNTING_ACCOUNT = '1105001';
-
 export class CreateClient {
-  constructor(private readonly repository: ClientToolbarRepository) {}
+  constructor(private readonly repository: ClientToolbarRepository, private readonly defaultAccount = async () => '1105001') {}
 
   async execute(input: CreateClientInput): Promise<ClientResponse> {
     if (await this.repository.codeExists(input.code)) {
       throw new ConflictError('Ya existe un cliente con ese codigo', 'CLIENT_CODE_EXISTS');
     }
 
-    const accountingAccount = input.fiscal?.accountingAccount ?? DEFAULT_ACCOUNTING_ACCOUNT;
+    const accountingAccount = input.fiscal?.accountingAccount ?? await this.defaultAccount();
     if (!(await this.repository.accountingAccountExists(accountingAccount))) {
       throw new ConflictError('La cuenta contable no existe', 'ACCOUNTING_ACCOUNT_NOT_FOUND');
     }
 
-    const client = await this.repository.create({
-      ...toCreateValues(input),
-      accountingAccount,
-    });
+    const client = await this.repository.create({ ...toCreateValues(input), accountingAccount });
     return toClientResponse(client);
   }
 }

@@ -1,12 +1,17 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { allClientCatalogRecords, findClientCatalogByCode } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import {
+  catalogProductByIdentifier, catalogProductsById, isNewCatalogProduct, searchChangedCatalogProducts,
+} from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
 import type { CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureInput, CaptureOptions, CaptureProduct, CaptureProductMatch, CaptureProductSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
 import { amountInWords, captureTotals } from '../../domain/entities/order-capture-totals.js';
+import { readLocalWarehouseStock, scaledStock } from './sales-order-inventory-stock.js';
 import { LegacyMysqlOrdersDataSource } from './legacy-mysql-orders-data-source.js';
 
 type Db = Pick<PoolConnection, 'execute'>;
@@ -43,19 +48,28 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     return { warehouses, agents, types: [{ code: movement.code, description: movement.description, nextNumber: nextNumber(movement), taxPercentage: Number(movement.tax0) }] };
   }
 
-  private async readCustomer(db: Db, code: string): Promise<CaptureCustomer> {
+  private async readCustomer(db: Db, code: string, unblocked = false): Promise<CaptureCustomer> {
     // Adaptada: 05-CUSTOMER; proyección explícita y agente consolidado (JOIN derivado).
     const [rows] = await db.execute<Row<Omit<CaptureCustomer, 'branches'>>[]>(
       `SELECT CLISEQ AS id,CLICOD AS code,CLINOM AS name,CLIPAR1 AS agentCode,
        COALESCE(AGDESCR,'') AS agentName,CLIPLAZO0 AS termsDays,CLIPAR3 AS store,CLIPAR2 AS classification
-       FROM FCLI LEFT JOIN FAG ON FAG.AGTNUM=FCLI.CLIPAR1 WHERE CLICOD=? LIMIT 1`, [code]);
+       FROM FCLI LEFT JOIN FAG ON FAG.AGTNUM=FCLI.CLIPAR1
+       WHERE CLICOD=? ${unblocked ? '' : "AND CLIBAJA='1900-12-31'"} AND CLISOLOPOS<>2 LIMIT 1`, [code]);
     if (!rows[0]) throw new NotFoundError('Cliente');
     const [branches] = await db.execute<Row<{code: number; name: string}>[]>(
       `SELECT SUCCOD AS code,SUCNOM AS name FROM FSUCURSALES
        WHERE CLISEQ=? AND SUCBAJA='1900-12-31' ORDER BY CLISEQ,SUCSEQ`, [rows[0].id]);
     return { ...rows[0], termsDays: Number(rows[0].termsDays), branches };
   }
-  customer(code: string) { return this.readCustomer(legacyMysqlPool, code); }
+  async customer(code: string): Promise<CaptureCustomer> {
+    const record = await findClientCatalogByCode(code);
+    if (!record) return this.readCustomer(legacyMysqlPool, code);
+    if (record.deleted || record.blocked === true || record.document.code.toUpperCase() !== code.toUpperCase()) throw new NotFoundError('Cliente');
+    const { id, name, terms } = record.document;
+    if (!record.legacy) return { id, name, code: record.document.code, agentCode: '', agentName: '', store: '', classification: '', branches: [], termsDays: terms.paymentTermDays };
+    const base = await this.readCustomer(legacyMysqlPool, record.originalCode ?? code, record.blocked === false);
+    return { ...base, code: record.document.code, name: record.changes.name ?? base.name, termsDays: record.changes.paymentTermDays ?? base.termsDays };
+  }
 
   async searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]> {
     // Código: adaptada de ORDERS_CUSTOMER_MATCHES_00000. Nombre y RFC: filtros derivados para la ventana de búsqueda.
@@ -66,13 +80,43 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       `SELECT CLISEQ AS id,CLICOD AS code,CLINOM AS name,CLISUCURSAL AS branch,
        CLIRFC AS taxId,CLIEAN AS ean,CLITEL AS phone,CLITEL3 AS mobile,CLICELULAR AS email
        FROM FCLI
-       WHERE CLICURP<>'T'
+       WHERE CLICURP<>'T' AND CLIBAJA='1900-12-31' AND CLISOLOPOS<>2
        AND (?='' OR (CLICOD>=? AND CLICOD<=CONCAT(?,'zzzzzzzzzzzz')))
        AND (?='' OR CLINOM LIKE CONCAT('%',?,'%'))
        AND (?='' OR CLIRFC LIKE CONCAT(?,'%'))
        ORDER BY CLICOD,FCLI.CLISEQ LIMIT ?`,
       [code, code, code, name, name, taxId, taxId, limit]);
-    return rows;
+    const local = await allClientCatalogRecords();
+    if (!local.length) return rows;
+    const records = new Map(local.map((record) => [record.document.id, record]));
+    const matches = new Map<number, CaptureCustomerMatch>();
+    const includes = ({ code: foundCode, name: foundName, taxId: foundTaxId }: CaptureCustomerMatch) =>
+      foundCode.toUpperCase().startsWith(code.toUpperCase()) && foundName.toUpperCase().includes(name.toUpperCase())
+      && foundTaxId.toUpperCase().startsWith(taxId.toUpperCase());
+    const project = (row: CaptureCustomerMatch, record: Exclude<ReturnType<typeof records.get>, undefined>): CaptureCustomerMatch => {
+      const { document, changes } = record;
+      return { ...row, code: document.code, name: changes.name ?? row.name,
+        taxId: changes.taxId ?? row.taxId, branch: changes.branch ?? row.branch, phone: changes.phones ?? row.phone,
+        email: changes.email ?? row.email };
+    };
+    for (const row of rows) {
+      const record = records.get(row.id);
+      if (record?.deleted || record?.blocked === true) continue;
+      const projected = record ? project(row, record) : row;
+      if (includes(projected)) matches.set(row.id, projected);
+    }
+    for (const record of local) {
+      if (record.deleted || record.blocked === true || matches.has(record.document.id)) continue;
+      const { id, code, name, fiscal, contact } = record.document;
+      const option = { id, code, name, branch: fiscal.branch, taxId: fiscal.taxId, ean: '', phone: contact.phones, mobile: '', email: contact.email };
+      if (!includes(option)) continue;
+      if (record.legacy && !await this.readCustomer(legacyMysqlPool, record.originalCode ?? code, record.blocked === false).catch((error: unknown) => {
+        if (error instanceof NotFoundError) return null;
+        throw error;
+      })) continue;
+      matches.set(id, option);
+    }
+    return [...matches.values()].sort((a, b) => a.code.localeCompare(b.code) || a.id - b.id).slice(0, limit);
   }
 
   private async warehouse(db: Db, code: string) {
@@ -103,25 +147,89 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        AND (?='' OR FINV.ICODPRV LIKE CONCAT(?,'%'))
        ORDER BY FINV.ICOD,FINV.ISEQ LIMIT ?`,
       [warehouse, code, code, code, description, description, supplierCode, supplierCode, limit]);
-    return rows.map(row => ({...row, available:Number(row.available), price:Number(row.price)}));
+    const [current, changed] = await Promise.all([
+      catalogProductsById(rows.map(({ id }) => id)),
+      supplierCode ? [] : searchChangedCatalogProducts(code, description, limit),
+    ]);
+    const matches = new Map<number, CaptureProductMatch>();
+    for (const row of rows) {
+      const reference = current.get(row.id);
+      if (reference?.deleted || reference?.document.isActive === false) continue;
+      const product = reference?.document;
+      const updated = { ...row, available: Number(row.available), price: Number(row.price) };
+      if (product) {
+        if (code && ![product.code, product.warehouse.ean].some((value) => value.toUpperCase().startsWith(code.toUpperCase()))) continue;
+        if (description && !product.description.toUpperCase().includes(description.toUpperCase())) continue;
+        updated.code = product.code;
+        updated.description = product.description;
+        updated.family = product.classification.familyCode;
+        updated.price = product.prices.sale[0].amount;
+        const currency = product.prices.sale[0].currencyId;
+        if (currency === 1 || currency === 2) updated.currencyId = currency;
+      }
+      matches.set(updated.id, updated);
+    }
+    for (const { document } of changed) {
+      if (matches.has(document.id)) continue;
+      const currency = document.prices.sale[0].currencyId;
+      if (currency !== 1 && currency !== 2) continue;
+      if (!isNewCatalogProduct(document.id)) {
+        const [rows] = await legacyMysqlPool.execute<Row<Pick<CaptureProductMatch, 'available' | 'secondaryFamily' | 'nextReceipt' | 'supplierCode'>>[]>(
+          `SELECT (a.ALMCANT-a.ALMASIGNADO) AS available, i.IFAM1 AS secondaryFamily,
+             NULLIF(i.IPROXRECEP,'1900-12-31') AS nextReceipt,i.ICODPRV AS supplierCode
+           FROM FINV i JOIN FALM a ON a.ISEQ=i.ISEQ AND a.ALMNUM=? WHERE i.ISEQ=? LIMIT 1`, [warehouse, document.id],
+        );
+        if (!rows[0]) continue;
+        matches.set(document.id, { ...rows[0], id: document.id, code: document.code, description: document.description,
+          price: document.prices.sale[0].amount, currencyId: currency,
+          family: document.classification.familyCode, warehouse, available: Number(rows[0].available) });
+        continue;
+      }
+      matches.set(document.id, { id: document.id, code: document.code, description: document.description,
+        price: document.prices.sale[0].amount, currencyId: currency,
+        warehouse, family: document.classification.familyCode, secondaryFamily: '', nextReceipt: null,
+        supplierCode: '', available: 0 });
+    }
+    const result = [...matches.values()].sort((left, right) => left.code.localeCompare(right.code) || left.id - right.id).slice(0, limit);
+    const stock = await readLocalWarehouseStock(warehouse, result.map(({ id }) => id));
+    return result.map((product) => {
+      const delta = stock.get(product.id);
+      return delta ? { ...product, available: scaledStock(product.available + delta.quantity - delta.assigned) } : product;
+    });
   }
 
   private async readProduct(db: Db, identifier: string, warehouse: string, movement: Movement, customerCode: string): Promise<CaptureProduct> {
+    const selected = await catalogProductByIdentifier(identifier, true);
+    if (selected?.deleted || selected?.document.isActive === false) throw new NotFoundError('Producto');
     // Adaptada de 07-PRODUCT: OMNIS intenta IEAN antes de ICOD y luego consulta FALM para el almacén activo.
-    const [eanMatches] = await db.execute<Row<{code: string}>[]>(
+    const [eanMatches] = selected ? [[]] : await db.execute<Row<{code: string}>[]>(
       `SELECT FINV.ICOD AS code FROM FINV
        INNER JOIN FALM ON FALM.ISEQ=FINV.ISEQ
        WHERE UPPER(FINV.IEAN)=UPPER(?) AND FALM.ALMNUM=?
        ORDER BY FINV.ISEQ LIMIT 1`, [identifier, warehouse]);
     const code = eanMatches[0]?.code ?? identifier;
     // Proyección explícita de la consulta posterior por ICOD. SKU y serie siguen pendientes.
-    const [rows] = await db.execute<Row<Omit<CaptureProduct, 'taxPercentage' | 'stock' | 'assigned' | 'available' | 'cost' | 'costCurrencyId'> & { taxCode: number; family: string; pesoCost: number; dollarCost: number }>[]>(
+    const isNew = selected ? isNewCatalogProduct(selected.document.id) : false;
+    if (isNew) await this.warehouse(db, warehouse);
+    const [rows] = isNew ? [[]] : await db.execute<Row<Omit<CaptureProduct, 'taxPercentage' | 'stock' | 'assigned' | 'available' | 'cost' | 'costCurrencyId'> & { taxCode: number; family: string; pesoCost: number; dollarCost: number }>[]>(
       `SELECT FINV.ISEQ AS id,ICOD AS code,IDESCR AS description,COALESCE(NULLIF(UCOD,''),IUM) AS unit,
        ILISTA1 AS price,IMONEDA1 AS currencyId,ILISTA5 AS pesoCost,ILISTA6 AS dollarCost,
        IPORCIVA AS taxCode,IPORCIEPES AS excisePercentage,
        IPESO AS weight,IVOLUMEN AS volume,IFAM AS family
-       FROM FINV LEFT JOIN FUNIDAD ON FINV.USEQ=FUNIDAD.USEQ WHERE UPPER(ICOD)=UPPER(?) ORDER BY FINV.ISEQ LIMIT 1`, [code]);
-    const p = rows[0];
+       FROM FINV LEFT JOIN FUNIDAD ON FINV.USEQ=FUNIDAD.USEQ
+       WHERE ${selected ? 'FINV.ISEQ=?' : 'UPPER(ICOD)=UPPER(?)'} ORDER BY FINV.ISEQ LIMIT 1`, [selected?.document.id ?? code]);
+    const original = rows[0];
+    const reference = selected ?? (original ? (await catalogProductsById([original.id])).get(original.id) : undefined);
+    if (reference?.deleted || reference?.document.isActive === false
+      || (original && !selected && reference && reference.document.code !== original.code)) throw new NotFoundError('Producto');
+    const product = reference?.document;
+    const p = product ? {
+      id: product.id, code: product.code, description: product.description, unit: product.classification.unit.code,
+      price: product.prices.sale[0].amount, currencyId: product.prices.sale[0].currencyId,
+      pesoCost: product.prices.costs.last, dollarCost: product.prices.costs.previous, family: product.classification.familyCode,
+      taxCode: original?.taxCode ?? 0, excisePercentage: original?.excisePercentage ?? 0,
+      weight: original?.weight ?? 0, volume: original?.volume ?? 0,
+    } : original;
     if (!p) throw new NotFoundError('Producto');
     const taxCode = Number(p.taxCode);
     if (![0, 1, 2].includes(taxCode)) throw fail('El código de IVA del producto requiere configuración adicional');
@@ -129,20 +237,26 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     if (![1,2].includes(Number(p.currencyId))) throw fail('La moneda del precio del producto no es PESOS ni DOLARES');
     // Adaptada: las cuatro claves de 08-QUANTITY. La captura no tuvo coincidencias;
     // no inventar la prioridad, vigencia o combinación de DES1/DES2/DES3.
+    const oldCode = original?.code ?? p.code;
+    const discountKeys = [`${customerCode}+${p.code}`,`${customerCode}+${p.family}`,`*+${p.code}`,`${customerCode}+*`];
+    if (oldCode !== p.code) discountKeys.push(`${customerCode}+${oldCode}`, `*+${oldCode}`);
     const [discounts] = await db.execute<Row<{id: number}>[]>(
-      'SELECT DESSEQ AS id FROM FDESCTOS WHERE DESKEY IN (?,?,?,?) ORDER BY DESSEQ LIMIT 1',
-      [`${customerCode}+${p.code}`,`${customerCode}+${p.family}`,`*+${p.code}`,`${customerCode}+*`]);
+      `SELECT DESSEQ AS id FROM FDESCTOS WHERE DESKEY IN (${discountKeys.map(() => '?').join(',')}) ORDER BY DESSEQ LIMIT 1`,
+      discountKeys);
     if (discounts.length) throw fail('Este cliente/producto tiene reglas de descuento comercial que aún requieren validar en PROSCAI');
-    const [stock] = await db.execute<Row<{ stock: number; assigned: number }>[]>(
-      'SELECT ALMCANT AS stock,ALMASIGNADO AS assigned FROM FALM WHERE ALMKEY=? LIMIT 1', [p.code.padEnd(13, ' ') + warehouse]);
+    const [stock] = isNew ? [[{ stock: 0, assigned: 0 }]] : await db.execute<Row<{ stock: number; assigned: number }>[]>(
+      'SELECT ALMCANT AS stock,ALMASIGNADO AS assigned FROM FALM WHERE ALMKEY=? LIMIT 1', [oldCode.padEnd(13, ' ') + warehouse]);
     if (!stock[0]) throw new NotFoundError('Producto en el almacén activo');
     const currencyId = Number(p.currencyId) as 1 | 2;
     const cost = currencyId === 1 ? Number(p.pesoCost) : Number(p.dollarCost);
+    const changes = (await readLocalWarehouseStock(warehouse, [p.id])).get(p.id);
+    const onHand = scaledStock(Number(stock[0].stock) + (changes?.quantity ?? 0));
+    const assigned = scaledStock(Math.max(0, Number(stock[0].assigned) + (changes?.assigned ?? 0)));
     return { id: p.id, code: p.code, description: p.description, unit: p.unit,
       price: Number(p.price), cost, currencyId, costCurrencyId: currencyId,
       taxPercentage: Number([movement.tax0, movement.tax1, movement.tax2][taxCode]),
       excisePercentage: Number(p.excisePercentage), weight: Number(p.weight), volume: Number(p.volume),
-      stock: Number(stock[0].stock), assigned: Number(stock[0].assigned), available: Number(stock[0].stock) - Number(stock[0].assigned) };
+      stock: onHand, assigned, available: scaledStock(onHand - assigned) };
   }
   async product(code: string, warehouse: string, typeCode: string, customerCode: string) {
     warehouse = normalizeOrderWarehouse(warehouse);

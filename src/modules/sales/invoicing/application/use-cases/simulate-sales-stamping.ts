@@ -11,11 +11,16 @@ export class SimulateSalesStamping {
   ) {}
 
   private eligible(invoice: InvoiceProps) {
-    return invoice.movementType === 'FA' && !invoice.canceled && invoice.totals.total > 0;
+    return invoice.movementType === 'FA' && !invoice.canceled && invoice.totals.total > 0 && invoice.cfdStatus === '0' && invoice.folio === '';
   }
 
   async inspect(invoice: InvoiceProps) {
-    if (!this.enabled() || !this.eligible(invoice)) return undefined;
+    if (!this.enabled()) return undefined;
+    if (invoice.cancellation) {
+      const result = await this.simulations.find(invoice.id);
+      return result ? { result } : undefined;
+    }
+    if (!this.eligible(invoice)) return undefined;
     return { result: await this.simulations.find(invoice.id) };
   }
 

@@ -159,6 +159,18 @@ Accept: application/json
 GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/block-status
 Accept: application/json
 
+### Bloquear exclusivamente el cliente web de prueba
+PATCH {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{createTemporaryClient.response.body.$.data.id}}/actions/block-status
+Content-Type: application/json
+
+{ "blocked": true, "confirmed": true, "reason": "Prueba web de bloqueo" }
+
+### Desbloquear el mismo cliente web de prueba
+PATCH {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{createTemporaryClient.response.body.$.data.id}}/actions/block-status
+Content-Type: application/json
+
+{ "blocked": false, "confirmed": true, "reason": "Prueba web de desbloqueo" }
+
 ### Accion - Descuentos
 GET {{baseUrl}}{{apiPrefix}}/accounts-receivable/clients/{{clientId}}/actions/discounts?page=1&pageSize=25
 Accept: application/json

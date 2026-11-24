@@ -5,15 +5,25 @@ import { reversalReferenceSql } from './purchase-posting-reversal-reads.js';
 // La columna nueva es opcional en respaldos que sólo registraron pagos de recepciones.
 export const paymentDocumentIdSql = (alias: string) => `coalesce(${alias}.receipt_id,(to_jsonb(${alias})->>'expense_id')::bigint)`;
 
-export interface PurchaseDocumentTables { receipts: boolean; expenses: boolean; expenseCancellations: boolean }
+export interface PurchaseDocumentTables { receipts: boolean; expenses: boolean; expenseCancellations: boolean; receiptCancellations: boolean }
 
 async function purchaseDocumentTables(client: PostgresClient): Promise<PurchaseDocumentTables> {
   const { rows: [tables] } = await client.query<PurchaseDocumentTables>(
     `SELECT to_regclass('tuvansa.purchase_receptions') IS NOT NULL AS receipts,
             to_regclass('tuvansa.purchase_expense_documents') IS NOT NULL AS expenses,
-            to_regclass('tuvansa.purchase_expense_cancellations') IS NOT NULL AS "expenseCancellations"`,
+            to_regclass('tuvansa.purchase_expense_cancellations') IS NOT NULL AS "expenseCancellations",
+            to_regclass('tuvansa.purchase_reception_cancellations') IS NOT NULL AS "receiptCancellations"`,
   );
-  return tables ?? { receipts: false, expenses: false, expenseCancellations: false };
+  return tables ?? { receipts: false, expenses: false, expenseCancellations: false, receiptCancellations: false };
+}
+
+export function receiptCancellationSql(available: boolean) {
+  return {
+    cancelled: available ? 'cancellation.id IS NOT NULL' : 'false',
+    reference: available ? reversalReferenceSql('cancellation') : 'null::jsonb',
+    join: available ? `LEFT JOIN tuvansa.purchase_reception_cancellations cancellation
+      ON cancellation.receipt_id=r.id AND cancellation.company_id=r.company_id` : '',
+  };
 }
 
 export function expenseCancellationSql(available: boolean) {
@@ -27,6 +37,7 @@ export function expenseCancellationSql(available: boolean) {
 
 function payablesSql(tables: PurchaseDocumentTables): string | null {
   const sources: string[] = [];
+  const receiptCancellation = receiptCancellationSql(tables.receiptCancellations);
   if (tables.receipts) sources.push(`
     SELECT r.id,r.company_id,r.number,
       (r.result #>> '{reception,supplier,id}')::bigint AS supplier_id,
@@ -37,12 +48,12 @@ function payablesSql(tables: PurchaseDocumentTables): string | null {
       coalesce((r.payable->>'amount')::numeric,0) AS principal,
       coalesce((r.payable->>'currencyId')::integer,0) AS currency_id,
       coalesce((r.payable->>'exchangeRate')::numeric,0) AS exchange_rate,
-      coalesce((r.result #>> '{reception,cancelled}')::boolean,false) AS cancelled,
+      (${receiptCancellation.cancelled} OR coalesce((r.result #>> '{reception,cancelled}')::boolean,false)) AS cancelled,
       null::text AS supplier_account,null::text AS supplier_account_name,
       r.result #>> '{reception,supplierReference}' AS supplier_reference,r.order_number,
       r.movement #>> '{header,type}' AS movement_type,r.user_id,r.accounting->>'number' AS policy_number,
-      CASE WHEN r.accounting IS NOT NULL THEN r.id END AS policy_id,r.created_at,null::jsonb AS cancellation
-    FROM tuvansa.purchase_receptions r WHERE r.number LIKE 'RW%'`);
+      CASE WHEN r.accounting IS NOT NULL THEN r.id END AS policy_id,r.created_at,${receiptCancellation.reference} AS cancellation
+    FROM tuvansa.purchase_receptions r ${receiptCancellation.join} WHERE r.number LIKE 'RW%'`);
   const cancellation = expenseCancellationSql(tables.expenseCancellations);
   if (tables.expenses) sources.push(`
     SELECT d.id,d.company_id,d.number,d.supplier_id,d.supplier_code,d.supplier_name,

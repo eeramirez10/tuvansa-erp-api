@@ -4,11 +4,15 @@ import { GetAccountingPolicyClassifications } from './application/use-cases/get-
 import { GetAccountingPolicy } from './application/use-cases/get-accounting-policy.js';
 import { NavigateAccountingPolicy } from './application/use-cases/navigate-accounting-policy.js';
 import { SearchAccountingPolicies } from './application/use-cases/search-accounting-policies.js';
+import { ManageManualPolicy } from './application/use-cases/manage-manual-policy.js';
 import { LegacyMysqlAccountingPoliciesDataSource } from './infrastructure/datasources/legacy-mysql-accounting-policies-data-source.js';
 import { AccountingPoliciesWithLocalPostingsDataSource } from './infrastructure/datasources/accounting-policies-with-local-postings-data-source.js';
 import { AccountingPoliciesRepositoryImpl } from './infrastructure/repositories/accounting-policies-repository-impl.js';
+import { MysqlManualPolicyReferences } from './infrastructure/datasources/mysql-manual-policy-references.js';
+import { PostgresManualPolicies } from './infrastructure/datasources/postgres-manual-policies.js';
 import { AccountingPoliciesController } from './presentation/http/accounting-policies-controller.js';
 import { createAccountingPoliciesRouter } from './presentation/http/accounting-policies-routes.js';
+import { createManualPolicyRouter } from './presentation/http/manual-policy-routes.js';
 
 export const createAccountingPoliciesModule = (): Router => {
   const repository = new AccountingPoliciesRepositoryImpl(
@@ -21,5 +25,5 @@ export const createAccountingPoliciesModule = (): Router => {
     new NavigateAccountingPolicy(repository),
     new GetAccountingPolicyClassifications(repository),
   );
-  return createAccountingPoliciesRouter(controller);
+  return createAccountingPoliciesRouter(controller, createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(), new PostgresManualPolicies())));
 };

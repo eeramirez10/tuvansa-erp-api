@@ -2,6 +2,9 @@ import type { RowDataPacket } from 'mysql2/promise';
 import type { PurchaseOrderSupplierChoice, PurchaseOrderSupplierFilters } from '../../domain/datasources/purchase-order-supplier-change-data-source.js';
 import { env } from '../../../../../config/env.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import {
+  catalogProductsById, changedCatalogProductsByCode, isNewCatalogProduct, searchChangedCatalogProducts,
+} from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import type {
   PurchaseOrderEditLegacyDataSource, PurchaseOrderEditProduct, PurchaseOrderEditRules,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
@@ -9,6 +12,10 @@ import type {
   PurchaseOrderCreateDefaults, PurchaseOrderCreateLegacyDataSource, PurchaseOrderSupplier, PurchaseOrderWarehouse,
 } from '../../domain/datasources/purchase-order-create-data-source.js';
 import type { LegacyMysqlPurchaseOrdersDataSource } from './legacy-mysql-purchase-orders-data-source.js';
+import type { ProductProps } from '../../../../inventories/products/domain/entities/product.js';
+import {
+  searchSupplierCatalogRecords, supplierCatalogRecordsById,
+} from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
 
 type RulesRow = RowDataPacket & Omit<PurchaseOrderEditRules, 'supplierDiscounts' | 'activeCompanyId'> & {
   discount1: number;
@@ -123,7 +130,9 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     );
     const row = rows[0];
     if (!row) return null;
-    const today = mexicoDate.format();
+    const currentDate = mexicoDate.format();
+    const today = row.periodEnd && currentDate > row.periodEnd ? row.periodEnd
+      : row.periodStart && currentDate < row.periodStart ? row.periodStart : currentDate;
     const dueAt = new Date(`${today}T00:00:00Z`);
     if (row.alias === 'STYLO') dueAt.setUTCDate(dueAt.getUTCDate() + 30);
     return {
@@ -154,7 +163,7 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
        ORDER BY PRVCOD=? DESC, PRVCOD, PRVSEQ LIMIT ${exact ? 1 : 35}`,
       exact ? [query, query] : [`${query}%`, `%${query}%`, query],
     );
-    return rows.map((row) => ({
+    const base = rows.map((row): PurchaseOrderSupplier => ({
       supplier: { id: row.id, code: row.code, name: row.name },
       terms: Number(row.terms), taxType: Number(row.taxType),
       classifications: Array.from({ length: 9 }, (_, index) => String(row[`PRVPAR${index + 1}`] ?? '')),
@@ -165,6 +174,49 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
         supplierDiscounts: [Number(row.discount1), Number(row.discount2)],
       },
     }));
+    if (company !== 1) return base;
+    const [effective, additions] = await Promise.all([
+      supplierCatalogRecordsById(base.map(({ supplier }) => supplier.id)),
+      searchSupplierCatalogRecords(query, exact),
+    ]);
+    const merged = new Map<number, PurchaseOrderSupplier>();
+    const search = query.toUpperCase();
+    for (const entry of base) {
+      const local = effective.get(entry.supplier.id);
+      if (!local) { merged.set(entry.supplier.id, entry); continue; }
+      if (local.deleted || !local.supplier.isActive) continue;
+      const { id, code, name, terms } = local.supplier;
+      if (exact ? code.toUpperCase() !== search : !code.toUpperCase().startsWith(search) && !name.toUpperCase().includes(search)) continue;
+      merged.set(id, {
+        ...entry, supplier: { id, code, name }, terms: terms.paymentTermDays, taxType: local.vatCode,
+        rules: { ...entry.rules, currencyId: terms.currencyId, supplierCode: code, supplierDiscounts: terms.discounts },
+      });
+    }
+    const missing = additions.filter(({ supplier, deleted }) =>
+      !deleted && supplier.isActive && !merged.has(supplier.id) &&
+      (exact ? supplier.code.toUpperCase() === search : supplier.code.toUpperCase().startsWith(search) || supplier.name.toUpperCase().includes(search)));
+    if (missing.length) {
+      const [settings] = await legacyMysqlPool.query<(RowDataPacket & Pick<RulesRow, 'priceLocked' | 'supplierUnits' | 'validateSupplier'>)[]>(
+        `SELECT (SUBSTRING(CIACOMPORTA,71,1)='1') AS priceLocked,
+          (SUBSTRING(CIACOMPORTA,56,1)='1') AS supplierUnits,
+          (SUBSTRING(CIACOMPORTA,97,1)='1') AS validateSupplier,${currencies}
+         FROM FCIA WHERE CIASEQ=1 AND CIAALIAS='TUVANSA' LIMIT 1`,
+      );
+      const config = settings[0];
+      if (config) for (const { supplier: { id, code, name, terms }, vatCode } of missing) {
+        merged.set(id, {
+          supplier: { id, code, name }, terms: terms.paymentTermDays, taxType: vatCode, classifications: Array<string>(9).fill(''),
+          rules: {
+            companyId: 1, activeCompanyId: 1, supplierCode: code, supplierDiscounts: terms.discounts,
+            currencyId: terms.currencyId, currencyName: String(config[`CIAPDD${terms.currencyId}`] ?? ''),
+            priceLocked: Boolean(config.priceLocked), supplierUnits: Boolean(config.supplierUnits), validateSupplier: Boolean(config.validateSupplier),
+          },
+        });
+      }
+    }
+    return [...merged.values()].sort((a,b) =>
+      Number(b.supplier.code.toUpperCase() === search) - Number(a.supplier.code.toUpperCase() === search)
+      || a.supplier.code.localeCompare(b.supplier.code) || a.supplier.id - b.supplier.id).slice(0, exact ? 1 : 35);
   }
 
   async changeSuppliers({ code, name }: PurchaseOrderSupplierFilters, exact = false): Promise<PurchaseOrderSupplierChoice[]> {
@@ -194,9 +246,32 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
        FROM FPRV WHERE PRVSEQ>0 AND ${filters.join(' AND ')}
        ORDER BY ${name ? 'PRVNOM, ' : ''}PRVCOD, PRVSEQ LIMIT ${exact ? 1 : 35}`, params,
     );
-    return rows.map(({ id, code, name, discount1, discount2, taxType }) => ({
+    const base = rows.map(({ id, code, name, discount1, discount2, taxType }): PurchaseOrderSupplierChoice => ({
       supplier: { id, code, name }, supplierDiscounts: [Number(discount1), Number(discount2)], taxType: Number(taxType),
     }));
+    if (company !== 1) return base;
+    const [effective, additions] = await Promise.all([
+      supplierCatalogRecordsById(base.map(({ supplier }) => supplier.id)),
+      name?.startsWith('**') ? [] : searchSupplierCatalogRecords(code || (name?.replace(/^\*/, '') ?? ''), Boolean(code && exact)),
+    ]);
+    const merged = new Map(base.map((entry) => [entry.supplier.id, entry]));
+    for (const entry of [...effective.values(), ...additions]) {
+      const { supplier, deleted, vatCode } = entry;
+      if (deleted) { merged.delete(supplier.id); continue; }
+      if (!supplier.isActive) continue;
+      const key = supplier.code.toUpperCase(), text = supplier.name.toUpperCase();
+      const matchesCode = !code || (exact ? key === code.toUpperCase() : key.startsWith(code.toUpperCase()));
+      const matchesName = !name || (name.startsWith('**') ? merged.has(supplier.id)
+        : name.startsWith('*') ? text.includes(name.slice(1).toUpperCase()) : text.startsWith(name.toUpperCase()));
+      if (!matchesCode || !matchesName) { merged.delete(supplier.id); continue; }
+      merged.set(supplier.id, {
+        supplier: { id: supplier.id, code: supplier.code, name: supplier.name },
+        supplierDiscounts: supplier.terms.discounts, taxType: vatCode,
+      });
+    }
+    return [...merged.values()].sort((a,b) =>
+      (name ? a.supplier.name.localeCompare(b.supplier.name) : 0) ||
+        a.supplier.code.localeCompare(b.supplier.code) || a.supplier.id - b.supplier.id).slice(0, exact ? 1 : 35);
   }
 
   async creationWarehouses(): Promise<PurchaseOrderWarehouse[]> {
@@ -223,7 +298,7 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
     return rows.length > 0;
   }
 
-  private async products(where: string, values: string[], supplierUnits: boolean, orderBy = 'FINV.ISEQ'): Promise<PurchaseOrderEditProduct[]> {
+  private async productRows(where: string, values: (string | number)[], orderBy = 'FINV.ISEQ') {
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT FINV.ISEQ AS id, ICOD AS code, IDESCR AS description, IPRV AS supplierCode,
         ICODPRV AS supplierProductCode, (IINACTIVO=1 OR IFAM9='9INA') AS inactive,
@@ -238,24 +313,75 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
        WHERE ${where} ORDER BY ${orderBy}`,
       values,
     );
-    const [catalog] = supplierUnits && rows.length > 0
+    return rows;
+  }
+
+  private async projectProducts(legacy: ProductRow[], changed: ProductProps[], supplierUnits: boolean) {
+    const ids = new Set(legacy.map(({ id }) => id));
+    const renamedIds = changed.filter(({ id }) => !isNewCatalogProduct(id) && !ids.has(id)).map(({ id }) => id);
+    const renamed = renamedIds.length
+      ? await this.productRows(`FINV.ISEQ IN (${renamedIds.map(() => '?').join(',')})`, renamedIds) : [];
+    const legacyRows = [...legacy, ...renamed];
+    const current = await catalogProductsById(legacyRows.map(({ id }) => id));
+    const [units] = (supplierUnits || current.size > 0 || changed.length > 0) && (legacyRows.length + changed.length > 0)
       ? await legacyMysqlPool.query<UnitRow[]>('SELECT UCOD AS code, UTIPO AS type, UEQUIV AS equivalence FROM FUNIDAD WHERE UCOD <> \'\' ORDER BY USEQ')
       : [[]];
-    return rows.map((row) => ({
+    const rows = legacyRows.flatMap((row) => {
+      const ref = current.get(row.id);
+      if (ref?.deleted) return [];
+      if (!ref?.revision) return [row];
+      const p = ref.document;
+      const unit = units.find(({ code }) => code === p.classification.unit.code);
+      return [{
+        ...row, code: p.code, description: p.description, inactive: row.inactive || !p.isActive,
+        cost: p.prices.costs.last, dollarCost: p.prices.costs.previous, baseUnit: p.classification.unit.code,
+        baseType: unit?.type ?? row.baseType, baseEquivalence: unit?.equivalence ?? row.baseEquivalence,
+      }];
+    });
+    const newRows = changed.filter(({ id }) => isNewCatalogProduct(id)).map((p): ProductRow => {
+      const unit = units.find(({ code }) => code === p.classification.unit.code);
+      const currencyId = p.prices.costs.currencyId;
+      return {
+        id: p.id, code: p.code, description: p.description, supplierCode: '', supplierProductCode: '',
+        inactive: !p.isActive, taxable: true, exciseTaxPercentage: 0,
+        currencyId, currencyName: currencyId === 2 ? 'DOLARES' : 'PESOS',
+        cost: p.prices.costs.last, dollarCost: p.prices.costs.previous,
+        secondaryUnit: p.classification.unit.code, baseUnit: p.classification.unit.code,
+        baseType: unit?.type ?? 0, baseEquivalence: unit?.equivalence ?? 1,
+        density: 0, weightPerMeter: 0, box: 1, box2: 1,
+      } as ProductRow;
+    });
+    return [...rows, ...newRows].map((row) => ({
       id: row.id, code: row.code, description: row.description, supplierCode: row.supplierCode,
       supplierProductCode: row.supplierProductCode, inactive: Boolean(row.inactive), taxable: Boolean(row.taxable),
       exciseTaxPercentage: Number(row.exciseTaxPercentage ?? 0),
       currencyId: row.currencyId, currencyName: row.currencyName, cost: row.cost, dollarCost: row.dollarCost,
-      secondaryUnit: row.secondaryUnit, units: unitsForProduct(row, catalog),
+      secondaryUnit: row.secondaryUnit, units: unitsForProduct(row, supplierUnits ? units : []),
     }));
   }
 
-  findProducts(codes: string[], supplierUnits: boolean) {
-    if (codes.length === 0) return Promise.resolve([]);
-    return this.products(`ICOD IN (${codes.map(() => '?').join(',')})`, codes, supplierUnits);
+  async findProducts(codes: string[], supplierUnits: boolean) {
+    if (codes.length === 0) return [];
+    const [legacy, changed] = await Promise.all([
+      this.productRows(`ICOD IN (${codes.map(() => '?').join(',')})`, codes),
+      changedCatalogProductsByCode(codes),
+    ]);
+    const rows = await this.projectProducts(legacy, changed.map(({ document }) => document), supplierUnits);
+    const keys = new Set(codes.map((code) => code.toUpperCase()));
+    return rows.filter(({ code }) => keys.has(code.toUpperCase()));
   }
 
-  searchProducts(query: string, supplierUnits: boolean) {
-    return this.products('ICOD LIKE ? OR IDESCR LIKE ?', [`${query}%`, `%${query}%`, query], supplierUnits, 'FINV.ICOD = ? DESC, FINV.ICOD, FINV.ISEQ LIMIT 35');
+  async searchProducts(query: string, supplierUnits: boolean) {
+    const [legacy, changedByCode, changedByDescription] = await Promise.all([
+      this.productRows('ICOD LIKE ? OR IDESCR LIKE ?', [`${query}%`, `%${query}%`, query], 'FINV.ICOD = ? DESC, FINV.ICOD, FINV.ISEQ LIMIT 35'),
+      searchChangedCatalogProducts(query, '', 35),
+      searchChangedCatalogProducts('', query, 35),
+    ]);
+    const byId = new Map([...changedByCode, ...changedByDescription].map(({ document }) => [document.id, document]));
+    const rows = await this.projectProducts(legacy, [...byId.values()], supplierUnits);
+    const code = query.toUpperCase();
+    return rows.filter((row) => row.code.toUpperCase().startsWith(code) || row.description.toUpperCase().includes(code))
+      .sort((a,b) => Number(b.code.toUpperCase() === code) - Number(a.code.toUpperCase() === code) || a.code.localeCompare(b.code) || a.id-b.id)
+      .slice(0,35);
   }
 }

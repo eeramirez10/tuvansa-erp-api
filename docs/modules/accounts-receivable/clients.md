@@ -199,6 +199,16 @@ La revisión impide aplicar un cobro sobre un saldo que cambió. Reusar la misma
 
 Omnis mostró la lista de **Saldo** y la ventana **Captura de movimientos** en **Clientes → Movimientos CxC**. En el historial de México, dos abonos PA en `FAX` liquidaron `FE0064651`. El segundo se liga por `APOLIZA` a `112611-0026` de familia **COBRANZA**, con cargo PC al banco y abono a la cuenta de clientes en `FBANMOV`. La muestra incluye complemento fiscal. El botón web **Cobrar** aplica esa secuencia contable a FAW, el alcance local convenido para esta fase. En las remisiones FA sin timbrar consultadas, el historial mostraba el cargo de venta. El complemento fiscal queda para la integración posterior.
 
+### Revertir un cobro PA web
+
+`GET /api/accounts-receivable/clients/:clientId/collections/:collectionId/reversal` consulta el cobro, su remisión, la póliza, el periodo activo y el corte original si existe. El `POST` requiere fecha, motivo, confirmación y una clave de solicitud. Para un PA conciliado, `expectedReconciliationId` confirma el corte presentado en la consulta. La fecha de la corrección debe pertenecer al periodo activo y respetar la fecha mínima calculada a partir del cobro, los cortes aplicables y la última reversión PA de la remisión.
+
+PostgreSQL conserva el cobro y registra la reversión en `tuvansa.customer_collection_reversals`. **Movimientos** y **Auxiliar** conservan el PA original y muestran el cargo compensatorio. **Saldo** vuelve a incluir el importe pendiente. En **Bancos**, la póliza carga la cuenta del cliente y abona la misma cuenta bancaria que recibió el depósito. El Mayor registra ambos movimientos según sus fechas. Si el cobro estaba pendiente, el par sale de las partidas candidatas a conciliación. Si el cobro estaba conciliado, su corte queda registrado y el egreso compensatorio entra a **Conciliar** como movimiento independiente. El saldo bancario conciliado incorpora el egreso al registrar su propio corte. Una nueva cobranza o una cancelación FAW puede registrarse a partir de la fecha de la última reversión PA de la remisión.
+
+La fuente nativa verificada es una consulta de solo lectura en México. El 17 de enero de 2025, las pólizas aplicadas `112501-0075` y `112501-0102` de familia **COBRANZA** registraron, respectivamente, el cargo y el abono de 1,500,000 MXN en el banco `1102100001` (`BTIPO=0`). En `FAX`, 43 partidas PA pasan de −1,475,061.70 a +1,475,061.71 y las partidas de reversión referencian `REV 112501-0075`. Las pólizas contienen también una diferencia cambiaria. El par `112502-0098` y `112502-0101` muestra la misma referencia y los signos opuestos en CxC, con cuentas de compensación. El registro web es una adaptación de esas contrapartidas al PA individual en pesos y refleja exactamente el importe del depósito original.
+
+En el banco `1102100004`, la póliza aplicada `112408-0179` conserva `BAOK='X'` y el cargo de 130,588.42 del 1 de agosto de 2024. La póliza aplicada `112412-0147` registra −130,588.42 con `BAOK=''` el 1 de diciembre. El PA de reversión de `FE0060707` referencia `REV 112408-0179`. El par `112404-0054` y `112404-0063` conserva dos marcas `X` y signos opuestos. El historial consultado contiene las marcas y fechas de las pólizas. La fecha de cada corte en la web proviene de su registro de conciliación en PostgreSQL.
+
 La captura literal completa por boton y accion esta documentada en
 `legacy-mysql-capture.md`; el archivo crudo permanece local dentro de
 `captures/` porque puede contener datos de prueba.
@@ -295,10 +305,13 @@ Enviar a y Foto devuelven `available: false` y la razon. En ambos casos OMNIS
 solo consulto configuracion de ventana y no se encontro un origen funcional en
 MySQL o en archivos locales.
 
-Bloquear expone exclusivamente el estado actual y el evento cuyo `EVKEY` es el
-codigo del cliente seguido de `BLOQUE`. Los `UPDATE` sobre `fcli` y el
-`INSERT`/`UPDATE` sobre `feventos` estan en la captura SQL, pero no se publica
-todavia un endpoint de escritura.
+Bloquear consulta el estado y el evento cuyo `EVKEY` usa los seis espacios
+del código del cliente seguidos de `BLOQUE`. `PATCH /:clientId/actions/block-status`
+recibe `blocked`, `confirmed: true` y `reason`. Las acciones **Bloquear** y
+**Desbloquear** guardan el estado y agregan una entrada al evento `BLOQUEO`
+en la misma transacción. La ficha y Eventos reflejan el resultado.
+Pedidos y Remisión México consultan el estado antes de generar nuevos cargos.
+Los documentos previos conservan sus operaciones de cobro.
 
 Los endpoints Descuentos, Eventos, Sucursales y Contactos aceptan `page` y
 `pageSize`. Contactos excluye deliberadamente `CONTPASSWORD` de la respuesta.

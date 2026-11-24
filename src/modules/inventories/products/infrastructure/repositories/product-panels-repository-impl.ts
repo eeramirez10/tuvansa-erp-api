@@ -1,6 +1,8 @@
 import type { ProductPanelsDataSource } from '../../domain/datasources/product-panels-data-source.js';
 import type { ProductOtherDataRepository } from '../../domain/repositories/product-other-data-repository.js';
 import type { ProductCatalogEditDataSource } from '../../domain/datasources/product-catalog-edit-data-source.js';
+import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import type { PostgresProductsDataSource } from '../datasources/postgres-products-data-source.js';
 import type {
   ProductPanelCriteria,
   ProductBlockStatus,
@@ -14,6 +16,7 @@ export class ProductPanelsRepositoryImpl implements ProductPanelsRepository {
     private readonly dataSource: ProductPanelsDataSource,
     private readonly otherData?: Pick<ProductOtherDataRepository, 'get'>,
     private readonly edits?: Pick<ProductCatalogEditDataSource, 'get'>,
+    private readonly catalog?: PostgresProductsDataSource,
   ) {}
 
   async getPanel(
@@ -21,6 +24,15 @@ export class ProductPanelsRepositoryImpl implements ProductPanelsRepository {
     panel: ProductPanelKey,
     criteria: ProductPanelCriteria,
   ): Promise<ProductPanelResult | null> {
+    if (panel === 'block-status' && this.catalog && await this.catalog.catalogWritable()) {
+      const record = (await this.catalog.findById(productId))?.toPrimitives();
+      if (!record) return null;
+      const { id, code, description, isActive, deactivatedAt } = record;
+      return {
+        product: { id, code, description }, key: 'block-status', section: 'actions', button: 'Bloquear',
+        source: 'product-cache', available: true, items: [{ blocked: !isActive, deactivatedAt }],
+      };
+    }
     const result = await this.dataSource.getPanel(productId, panel, criteria);
     if (panel !== 'prices' || !result?.items.length) return result;
     const edit = await this.edits?.get(productId);
@@ -44,7 +56,13 @@ export class ProductPanelsRepositoryImpl implements ProductPanelsRepository {
     return { ...result, product: { ...result.product, description }, items: result.items.map((item) => ({ ...item, ...prices })) };
   }
 
-  setBlocked(productId: number, blocked: boolean): Promise<ProductBlockStatus | null> {
+  async setBlocked(productId: number, blocked: boolean): Promise<ProductBlockStatus | null> {
+    if (this.catalog) {
+      if (!await this.catalog.catalogWritable()) throw new ApplicationError(
+        'El catálogo PostgreSQL requiere una copia conciliada de PROSCAI.', 'PRODUCT_SNAPSHOT_REQUIRED', 503,
+      );
+      return this.catalog.setBlocked(productId, blocked);
+    }
     return this.dataSource.setBlocked(productId, blocked);
   }
 }

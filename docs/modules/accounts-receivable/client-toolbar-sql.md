@@ -172,7 +172,24 @@ son:
 - `TOOLBAR_DELETE_CLIENT_OPEN_ZZT826`
 - `TOOLBAR_DELETE_CLIENT_CONFIRM_ZZT826`
 
-Los SQL capturados ya estan adaptados en los endpoints de la barra principal.
-La API usa parametros enlazados, lista blanca de columnas modificables y una
-transaccion para la baja. Antes de eliminar vuelve a comprobar las siete tablas
-relacionadas; si encuentra datos responde `409 CLIENT_IN_USE`.
+## Escrituras web
+
+| Control | Endpoint | Fuente |
+| --- | --- | --- |
+| Alta | `POST /api/accounts-receivable/clients` | Derivada de `MCLI/21` y `/27`. `FCIA`, `FBENC`, `FCLI` y `tuvansa.client_catalog` |
+| Cambio | `PATCH /api/accounts-receivable/clients/:clientId` | Derivada de `MCLI/23` y `/27`. `FCLI`, `FBENC`, `FCIA` y `tuvansa.client_catalog` |
+| Baja | `DELETE /api/accounts-receivable/clients/:clientId` | Derivada de `MCLI/22`. Siete relaciones nativas, licencias de `FYG` y relaciones web |
+| Bloquear / Desbloquear | `PATCH /api/accounts-receivable/clients/:clientId/actions/block-status` | Derivada de `ECLI#1/43`, `/354` y `CLIENT_000001_ACTION_BLOQUEAR_CONFIRM`. `tuvansa.client_catalog`, `tuvansa.client_block_events` |
+
+Los cambios se guardan en PostgreSQL y se leen sobre el registro original.
+La ficha conserva los acumulados de la fuente y refleja los documentos web.
+El alta hereda la cuenta `FCIA.CIACTACXC` y la configuración contable.
+El cambio valida la cuenta vigente cuando aplica y guarda únicamente los
+campos recibidos. La API normaliza la lista fuera del rango 1–13 a 1 al editar.
+
+La baja se confirma en la ficha y conserva una marca local que excluye al
+cliente del catálogo. Las siete relaciones nativas, licencias y documentos
+web se vuelven a comprobar antes de grabar. Si existe una relación, se
+devuelve `409 CLIENT_IN_USE`. Los códigos con dependencias, sucursales
+o un evento de bloqueo quedan protegidos frente a su cambio mientras las
+referencias correspondientes se consulten de su origen.

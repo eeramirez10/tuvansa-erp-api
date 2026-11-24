@@ -16,6 +16,54 @@ GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/previous
 ###
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/next
 
+### Alta → Valores iniciales del formulario
+GET {{baseUrl}}/accounts-payable/suppliers/create
+
+### Alta → OK en una base de prueba
+# @name createCatalogSupplier
+POST {{baseUrl}}/accounts-payable/suppliers
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "fields": {
+    "code": "WT0001", "name": "PROVEEDOR PRUEBA WEB", "notes": "",
+    "address": { "street": "", "neighborhood": "", "city": "", "state": "", "postalCode": "" },
+    "contact": { "name": "", "phone": "", "phone2": "", "fax": "", "email": "" },
+    "fiscal": { "taxId": "", "curp": "", "accountingAccount": "2001001" },
+    "terms": { "priceList": 1, "discounts": [0, 0], "paymentTermDays": 0, "creditLimit": 0, "currencyId": 1, "type": 0, "applyToSupplierCode": "" }
+  }
+}
+
+### Cambio → Revisión de la ficha y condición para Baja
+# @name catalogSupplierEdit
+GET {{baseUrl}}/accounts-payable/suppliers/{{createCatalogSupplier.response.body.$.data.id}}/edit
+
+### Cambio → OK
+PATCH {{baseUrl}}/accounts-payable/suppliers/{{createCatalogSupplier.response.body.$.data.id}}
+Content-Type: application/json
+
+{
+  "revision": "{{catalogSupplierEdit.response.body.$.data.revision}}",
+  "fields": {
+    "code": "WT0001", "name": "PROVEEDOR PRUEBA WEB EDITADO", "notes": "",
+    "address": { "street": "", "neighborhood": "", "city": "", "state": "", "postalCode": "" },
+    "contact": { "name": "", "phone": "", "phone2": "", "fax": "", "email": "" },
+    "fiscal": { "taxId": "", "curp": "", "accountingAccount": "2001001" },
+    "terms": { "priceList": 1, "discounts": [0, 0], "paymentTermDays": 0, "creditLimit": 0, "currencyId": 1, "type": 0, "applyToSupplierCode": "" }
+  }
+}
+
+### Baja → Obtener revisión vigente y confirmar sólo sobre el proveedor de prueba
+# @name catalogSupplierRemoval
+GET {{baseUrl}}/accounts-payable/suppliers/{{createCatalogSupplier.response.body.$.data.id}}/edit
+
+### Baja → Sí
+DELETE {{baseUrl}}/accounts-payable/suppliers/{{createCatalogSupplier.response.body.$.data.id}}
+Content-Type: application/json
+
+{ "revision": "{{catalogSupplierRemoval.response.body.$.data.revision}}", "confirmed": true }
+
 ### Acciones: clasificar, bloqueo, descuentos, eventos, varios y contactos
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/classifications?position=1
 

@@ -54,9 +54,11 @@ export interface SupplierPaymentSettings {
   bankAccounts: SupplierPaymentBank[];
 }
 
+export interface SupplierPaymentCatalogTerms { accountCode: string; intercompany: number }
+
 export interface SupplierPaymentReferences {
   settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup,
-    liability?: SupplierPaymentLiability | null): Promise<SupplierPaymentSettings | null>;
+    liability?: SupplierPaymentLiability | null, catalog?: SupplierPaymentCatalogTerms | null): Promise<SupplierPaymentSettings | null>;
 }
 
 export interface SupplierPaymentIdentity {
@@ -70,7 +72,7 @@ export interface SupplierPaymentCommand {
   userId: number;
   input: SupplierPaymentInput;
   fingerprint: string;
-  resolvePosting(lookup?: BankAccountLookup): Promise<{
+  resolvePosting(lookup?: BankAccountLookup, catalog?: SupplierPaymentCatalogTerms | null): Promise<{
     policyType: string;
     supplierAccount: string;
     supplierAccountName: string;

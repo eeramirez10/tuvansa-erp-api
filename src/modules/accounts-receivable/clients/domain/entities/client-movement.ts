@@ -23,6 +23,9 @@ export interface ClientMovementProps {
   policy: string;
   policyId?: number;
   collectionNumber?: string;
+  canReverseCollection?: boolean;
+  isCollectionReversal?: boolean;
+  collectionReversal?: { id: number; policyNumber: string; date: string; reason: string };
   receiptNumber: number;
   userId: number;
   document: ClientMovementDocument | null;

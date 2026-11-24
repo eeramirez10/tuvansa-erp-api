@@ -15,12 +15,17 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const modify = ['PATCH','DELETE'].includes(req.method) && /^\/sales\/orders\/[1-9]\d*$/.test(path);
   const cancelInventory = env.INVENTORY_MOVEMENTS_SOURCE === 'postgres' &&
     req.method === 'DELETE' && /^\/inventories\/movements\/[1-9]\d*$/.test(path);
-  const classifyProduct = env.INVENTORY_CLASSIFICATION_PILOT_PRODUCTS.length > 0 && env.NEON_DATABASE_URL !== '' &&
+  const writeInventory = env.NEON_DATABASE_URL !== '' &&
+    ((req.method === 'POST' && path === '/inventories/movements') ||
+      (req.method === 'DELETE' && /^\/inventories\/movements\/79500\d{8}$/.test(path)));
+  const classifyProduct = env.NEON_DATABASE_URL !== '' &&
     req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*\/actions\/classifications$/.test(path);
-  const editOtherData = env.INVENTORY_OTHER_DATA_PILOT_PRODUCTS.length > 0 && env.NEON_DATABASE_URL !== '' &&
+  const editOtherData = env.NEON_DATABASE_URL !== '' &&
     req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*\/actions\/other-data$/.test(path);
-  const editProduct = env.INVENTORY_PRODUCT_EDIT_PILOT_PRODUCTS.length > 0 && env.NEON_DATABASE_URL !== '' &&
-    req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*$/.test(path);
+  const writeProduct = env.NEON_DATABASE_URL !== '' &&
+    ((req.method === 'POST' && path === '/inventories/products') ||
+      (req.method === 'PATCH' && /^\/inventories\/products\/[1-9]\d*\/actions\/block-status$/.test(path)) ||
+      (['PATCH','DELETE'].includes(req.method) && /^\/inventories\/products\/[1-9]\d*$/.test(path)));
   const purchaseOrderAction = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
     /^\/purchasing\/purchase-orders\/[1-9]\d*\/actions\/(classifications|comments|confirmation|ct|pieces(?:\/(?:confirmation|import))?|quote-conversion|change-supplier|authorization(?:\/supplier)?)$/.test(path);
   const changePurchaseOrder = env.NEON_DATABASE_URL !== '' && ['PATCH', 'DELETE'].includes(req.method) &&
@@ -31,14 +36,25 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     (path === '/purchasing/purchase-receptions' || path === '/purchasing/purchase-receptions/general-expenses');
   const createSupplierPayment = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*$/.test(path);
+  const writeSupplier = env.NEON_DATABASE_URL !== '' &&
+    ((req.method === 'POST' && path === '/accounts-payable/suppliers') ||
+     (['PATCH', 'DELETE'].includes(req.method) && /^\/accounts-payable\/suppliers\/[1-9]\d*$/.test(path)));
   const reversePurchasePosting = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     (/^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*\/reversal$/.test(path) ||
-      /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/cancel-expense$/.test(path));
+      /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/cancel-(expense|reception)$/.test(path));
   const createSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/sales/invoices/from-order';
+  const cancelSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
+    /^\/sales\/invoices\/[1-9]\d*\/actions\/cancel-remission$/.test(path);
   const simulateSalesStamping = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/sales\/invoices\/[1-9]\d*\/actions\/seal\/simulation$/.test(path);
   const createCustomerCollection = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/accounts-receivable\/clients\/[1-9]\d*\/collections\/[1-9]\d*$/.test(path);
+  const writeClient = env.NEON_DATABASE_URL !== '' &&
+    ((req.method === 'POST' && path === '/accounts-receivable/clients') ||
+     (['PATCH','DELETE'].includes(req.method) && /^\/accounts-receivable\/clients\/[1-9]\d*$/.test(path)) ||
+     (req.method === 'PATCH' && /^\/accounts-receivable\/clients\/[1-9]\d*\/actions\/block-status$/.test(path)));
+  const reverseCustomerCollection = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
+    /^\/accounts-receivable\/clients\/[1-9]\d*\/collections\/[1-9]\d*\/reversal$/.test(path);
   const createBankReconciliation = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/reconciliation$/.test(path);
   const bankCatalogMutations = env.NEON_DATABASE_URL !== '' &&
@@ -47,6 +63,10 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const bankActions = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(transfer|supplier-expenses)$/.test(path)) ||
      (req.method === 'PATCH' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(classifiers|general-ledger|cost-center-ledger|authorization-review)$/.test(path)));
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || classifyProduct || editOtherData || editProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || createSupplierPayment || reversePurchasePosting || createSalesRemission || simulateSalesStamping || createCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions) { next(); return; }
+  const writeManualPolicy = env.NEON_DATABASE_URL !== '' &&
+    ((req.method === 'POST' && (path === '/accounting/policies' ||
+       /^\/accounting\/policies\/[1-9]\d*\/actions\/(apply|unapply)$/.test(path))) ||
+     (['PATCH','DELETE'].includes(req.method) && /^\/accounting\/policies\/[1-9]\d*$/.test(path)));
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

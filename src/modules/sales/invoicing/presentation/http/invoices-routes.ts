@@ -29,6 +29,8 @@ export const createInvoicesRouter = (controller: InvoicesController): Router => 
   router.get('/:invoiceId/next', controller.getNext);
   panelRoutes.forEach(([path, key]) => router.get(`/:invoiceId/${path}`, controller.panel(key)));
   router.post('/:invoiceId/actions/seal/simulation', controller.simulateStamping);
+  router.get('/:invoiceId/actions/cancel-remission', controller.prepareCancellation);
+  router.post('/:invoiceId/actions/cancel-remission', controller.cancelRemission);
   router.get('/:invoiceId', controller.getById);
   return router;
 };

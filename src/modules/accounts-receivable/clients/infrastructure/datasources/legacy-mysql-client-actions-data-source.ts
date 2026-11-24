@@ -224,7 +224,7 @@ export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSour
         EVDESCR AS description,
         EVKEY AS \`key\`
       FROM feventos
-      WHERE EVKEY = CONCAT(?, 'BLOQUE')
+      WHERE EVKEY = CONCAT(RPAD(LEFT(?,6),6,' '), 'BLOQUE')
       ORDER BY EVSEQ DESC
       LIMIT 1
     `, [client.code]);
@@ -288,11 +288,13 @@ export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSour
     };
   }
 
-  async findEvents(criteria: ClientActionCriteria): Promise<ClientActionResult<{
+  async findEvents(criteria: ClientActionCriteria, replacedKey?: string): Promise<ClientActionResult<{
     events: ClientEvent[];
   }> | null> {
     const client = await this.findClient(criteria.clientId);
     if (client === null) return null;
+    const replaced = replacedKey === undefined ? '' : ' AND (EVKEY IS NULL OR EVKEY<>?)';
+    const parameters = replacedKey === undefined ? [criteria.clientId] : [criteria.clientId, replacedKey];
     const [[rows], [countRows]] = await Promise.all([
       legacyMysqlPool.execute<EventRow[]>(`
         SELECT
@@ -326,18 +328,18 @@ export class LegacyMysqlClientActionsDataSource implements ClientActionsDataSour
         WHERE CLISEQ = ?
           AND EVSOLICITA = ''
           AND EVDEPTO = 0
-          AND EVSUC = ''
+          AND EVSUC = ''${replaced}
         ORDER BY EVSEQ
         LIMIT ? OFFSET ?
-      `, [criteria.clientId, criteria.limit, criteria.offset]),
+      `, [...parameters, criteria.limit, criteria.offset]),
       legacyMysqlPool.execute<CountRow[]>(`
         SELECT COUNT(*) AS total
         FROM feventos
         WHERE CLISEQ = ?
           AND EVSOLICITA = ''
           AND EVDEPTO = 0
-          AND EVSUC = ''
-      `, [criteria.clientId]),
+          AND EVSUC = ''${replaced}
+      `, parameters),
     ]);
 
     return {

@@ -5,6 +5,7 @@ import {
   connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory,
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { assertActiveSupplierCatalog, supplierCatalogRecord } from './postgres-supplier-catalog-data-source.js';
 import {
   ensurePurchaseExpenseSchema, isLocalPurchaseExpenseDocumentId,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
@@ -209,6 +210,7 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
     const previous = await this.request(client, companyId, input.requestKey, fingerprint);
     if (previous) return previous;
 
+    await assertActiveSupplierCatalog(client, supplierId);
     const expense = isLocalPurchaseExpenseDocumentId(receiptId);
     const table = expense ? 'purchase_expense_documents' : 'purchase_receptions';
     // Se bloquea el documento para que dos solicitudes no usen el mismo saldo.
@@ -220,7 +222,9 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
       "SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:' || $1::text || ':' || $2::text, 0))",
       [companyId, input.bankAccountId],
     );
-    const { bank, policyType, supplierAccount, supplierAccountName } = await resolvePosting(this.bankCatalog?.lookupOn(client));
+    const supplier = await supplierCatalogRecord(supplierId, client);
+    const { bank, policyType, supplierAccount, supplierAccountName } = await resolvePosting(this.bankCatalog?.lookupOn(client),
+      supplier ? { accountCode: supplier.supplier.fiscal.accountingAccount, intercompany: supplier.intercompany } : null);
 
     const { rows: [allocation] } = await client.query<{ id: string; sequence: number }>(
       `INSERT INTO tuvansa.supplier_payment_bank_counters(bank_account_id,mode,sequence) VALUES ($1,$2,1)

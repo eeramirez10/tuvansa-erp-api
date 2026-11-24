@@ -13,6 +13,8 @@ export const createClientsRouter = (controller: ClientsController): Router => {
   router.get('/:clientId/balance', controller.getBalance);
   router.get('/:clientId/collections/:remissionId', controller.prepareCollection);
   router.post('/:clientId/collections/:remissionId', controller.recordCollection);
+  router.get('/:clientId/collections/:collectionId/reversal', controller.prepareCollectionReversal);
+  router.post('/:clientId/collections/:collectionId/reversal', controller.recordCollectionReversal);
   router.get('/:clientId/movements', controller.getMovements);
   router.get('/:clientId/invoices', controller.getInvoices);
   router.get('/:clientId/orders', controller.getOrders);
@@ -31,6 +33,7 @@ export const createClientsRouter = (controller: ClientsController): Router => {
   router.get('/:clientId/actions/classifications', controller.getClassifications);
   router.get('/:clientId/actions/destinations', controller.getDestinations);
   router.get('/:clientId/actions/block-status', controller.getBlockStatus);
+  router.patch('/:clientId/actions/block-status', controller.blockClient);
   router.get('/:clientId/actions/discounts', controller.getDiscounts);
   router.get('/:clientId/actions/events', controller.getEvents);
   router.get('/:clientId/actions/branches', controller.getBranches);

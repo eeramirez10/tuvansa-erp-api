@@ -92,9 +92,21 @@ Accept: application/json
   "description": "Descripción de prueba desde API"
 }
 
-### Barra - baja del producto temporal
+### Barra - disponibilidad de Alta y catálogo de unidades
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/create-options
+
+### Barra - preparar baja del producto temporal
+# @name productRemoval
+GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{createTemporaryProduct.response.body.$.data.id}}/removal
+
+### Barra - confirmar baja del producto temporal
 DELETE {{baseUrl}}{{apiPrefix}}/inventories/products/{{createTemporaryProduct.response.body.$.data.id}}
-Accept: application/json
+Content-Type: application/json
+
+{
+  "code": "{{productRemoval.response.body.$.data.code}}",
+  "revision": "{{productRemoval.response.body.$.data.revision}}"
+}
 
 ### Acciones - Almacenes
 GET {{baseUrl}}{{apiPrefix}}/inventories/products/{{productId}}/actions/warehouses?page=1&pageSize=25

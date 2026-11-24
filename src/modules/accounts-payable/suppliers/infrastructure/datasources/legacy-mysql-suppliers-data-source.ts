@@ -138,7 +138,17 @@ const statusCondition = (status: SupplierSearchCriteria['status']): string => {
   return '';
 };
 
+const excludeIds = (ids: number[]) => ids.length ? ` AND FPRV.PRVSEQ NOT IN (${ids.map(() => '?').join(',')})` : '';
+
 export class LegacyMysqlSuppliersDataSource implements SuppliersDataSource {
+  async findByIds(ids: number[]): Promise<Map<number, Supplier>> {
+    if (!ids.length) return new Map();
+    const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
+      `SELECT ${selectSupplierFields} FROM FPRV WHERE PRVSEQ IN (${ids.map(() => '?').join(',')})`, ids,
+    );
+    return new Map(rows.map((row) => [Number(row.id), toSupplier(row)]));
+  }
+
   async findById(supplierId: number): Promise<Supplier | null> {
     const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
       `SELECT ${selectSupplierFields} FROM FPRV WHERE PRVSEQ = ? LIMIT 1`, [supplierId],
@@ -146,9 +156,11 @@ export class LegacyMysqlSuppliersDataSource implements SuppliersDataSource {
     return rows[0] === undefined ? null : toSupplier(rows[0]);
   }
 
-  async findFirst(): Promise<Supplier | null> {
+  findFirst(): Promise<Supplier | null> { return this.findFirstExcluding([]); }
+
+  async findFirstExcluding(ids: number[]): Promise<Supplier | null> {
     const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
-      `SELECT ${selectSupplierFields} FROM FPRV ORDER BY PRVCOD, FPRV.PRVSEQ LIMIT 1`,
+      `SELECT ${selectSupplierFields} FROM FPRV WHERE 1=1${excludeIds(ids)} ORDER BY PRVCOD, FPRV.PRVSEQ LIMIT 1`, ids,
     );
     return rows[0] === undefined ? null : toSupplier(rows[0]);
   }
@@ -159,25 +171,31 @@ export class LegacyMysqlSuppliersDataSource implements SuppliersDataSource {
     );
     const current = currentRows[0];
     if (current === undefined) return null;
+    return this.findAdjacentByCode(current.code, current.id, direction, []);
+  }
+
+  async findAdjacentByCode(code: string, id: number, direction: SupplierNavigationDirection, excluded: number[]): Promise<Supplier | null> {
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
       `SELECT ${selectSupplierFields}
          FROM FPRV
-        WHERE PRVCOD ${operator} ? OR (PRVCOD = ? AND PRVSEQ ${operator} ?)
+        WHERE (PRVCOD ${operator} ? OR (PRVCOD = ? AND PRVSEQ ${operator} ?))${excludeIds(excluded)}
         ORDER BY PRVCOD ${order}, FPRV.PRVSEQ ${order}
         LIMIT 1`,
-      [current.code, current.code, current.id],
+      [code, code, id, ...excluded],
     );
     return rows[0] === undefined ? null : toSupplier(rows[0]);
   }
 
-  async search(criteria: SupplierSearchCriteria): Promise<SupplierSearchResult> {
+  search(criteria: SupplierSearchCriteria): Promise<SupplierSearchResult> { return this.searchExcluding(criteria, []); }
+
+  async searchExcluding(criteria: SupplierSearchCriteria, excluded: number[]): Promise<SupplierSearchResult> {
     const searchCondition = criteria.query === undefined
       ? ''
       : ' AND (PRVCOD LIKE ? OR PRVNOM LIKE ? OR PRVRFC LIKE ?)';
-    const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}`;
-    const parameters = criteria.query === undefined ? [] : Array(3).fill(`%${criteria.query}%`);
+    const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}${excludeIds(excluded)}`;
+    const parameters = [...(criteria.query === undefined ? [] : Array<string>(3).fill(`%${criteria.query}%`)), ...excluded];
     const [rows] = await legacyMysqlPool.execute<SupplierRow[]>(
       `SELECT ${selectSupplierFields} FROM FPRV WHERE ${where}
        ORDER BY PRVCOD, FPRV.PRVSEQ LIMIT ? OFFSET ?`,

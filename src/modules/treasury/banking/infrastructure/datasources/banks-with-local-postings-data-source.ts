@@ -5,6 +5,8 @@ import {
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
 import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
+import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
+import { activeManualPolicyLines, manualLineSettlement, manualPolicyAffectsAccount, readManualPolicies } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
 import { bankReconciliationsAvailable, joinBankReconciliation, readBankReconciliationState } from './bank-reconciliation-reads.js';
@@ -15,6 +17,7 @@ import { bankTransferCheque, readBankTransfers } from './postgres-bank-transfers
 const money = (value: number) => Number(value.toFixed(2));
 const emptyPostings = { amount: 0, hasMovements: false };
 const emptyTransfers = { ...emptyPostings, lastCheque: 0 };
+const emptyManualPolicies = { ...emptyPostings, currency: 0 };
 
 export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCatalogDataSource {
   override findById(id: number) { return this.withPostings(super.findById(id)); }
@@ -24,7 +27,7 @@ export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCat
     const account = await source;
     if (!account) return null;
     const data = account.toPrimitives();
-    const [payments, collections, transfers, reconciled] = await Promise.all([
+    const [payments, collections, transfers, manual, reconciled] = await Promise.all([
       readSupplierPayments(emptyPostings, async (client) => {
         const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
         const { rows: [row] } = await client.query<typeof emptyPostings>(
@@ -35,9 +38,10 @@ export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCat
         return row ?? emptyPostings;
       }),
       readCustomerCollections(emptyPostings, async (client) => {
+        const reversal = customerCollectionReversalSql(await customerCollectionReversalsAvailable(client));
         const { rows: [row] } = await client.query<typeof emptyPostings>(
-          `SELECT coalesce(sum(amount),0)::float8 AS amount, count(*) > 0 AS "hasMovements"
-           FROM tuvansa.customer_collections WHERE bank_account_id=$1 AND company_id=1`, [data.id],
+          `SELECT coalesce(${reversal.paid},0)::float8 AS amount,count(*)>0 AS "hasMovements"
+           FROM tuvansa.customer_collections collection ${reversal.join} WHERE collection.bank_account_id=$1 AND collection.company_id=1`, [data.id],
         );
         return row ?? emptyPostings;
       }),
@@ -52,12 +56,23 @@ export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCat
         );
         return row ?? emptyTransfers;
       }),
+      readManualPolicies(emptyManualPolicies, async (client) => {
+        const { rows: [row] } = await client.query<typeof emptyManualPolicies>(
+          `SELECT coalesce(sum(l.debit-l.credit),0)::float8 AS amount,
+             coalesce(sum(l.debit-l.credit) FILTER (WHERE l.account_id=$1),0)::float8 AS currency,
+             count(*) FILTER (WHERE l.account_id=$1)>0 AS "hasMovements"
+           ${activeManualPolicyLines} WHERE ${manualPolicyAffectsAccount}`, [data.id],
+        );
+        return row ?? emptyManualPolicies;
+      }),
       readBankReconciliationState(1, data.id),
     ]);
-    const net = money(collections.amount - payments.amount + transfers.amount);
-    const movements = data.control.movements || payments.hasMovements || collections.hasMovements || transfers.hasMovements;
+    const directNet = collections.amount - payments.amount + transfers.amount;
+    const net = money(directNet + manual.amount);
+    const netCurrency = money(directNet + manual.currency);
+    const movements = data.control.movements || payments.hasMovements || collections.hasMovements || transfers.hasMovements || manual.hasMovements;
     const nextCheckNumber = Math.max(data.control.nextCheckNumber, transfers.lastCheque);
-    if (net === 0 && reconciled.delta === 0 && movements === data.control.movements && nextCheckNumber === data.control.nextCheckNumber) return account;
+    if (net === 0 && netCurrency === 0 && reconciled.delta === 0 && movements === data.control.movements && nextCheckNumber === data.control.nextCheckNumber) return account;
     return BankAccount.create({
       ...data,
       control: { ...data.control, movements, nextCheckNumber },
@@ -66,8 +81,8 @@ export class BankAccountsWithLocalPostingsDataSource extends BankAccountsWithCat
         current: net === 0 ? data.balances.current : money(data.balances.current + net),
         bank: reconciled.delta === 0 ? data.balances.bank : money(data.balances.bank + reconciled.delta),
       },
-      currencyBalances: net === 0 ? data.currencyBalances : {
-        ...data.currencyBalances, current: money(data.currencyBalances.current + net),
+      currencyBalances: netCurrency === 0 ? data.currencyBalances : {
+        ...data.currencyBalances, current: money(data.currencyBalances.current + netCurrency),
       },
     });
   }
@@ -91,8 +106,9 @@ interface BankPaymentRow extends LocalBankRow {
   supplierId: number;
   reversal: PurchasePostingReversalReference | null;
 }
-interface BankCollectionRow extends LocalBankRow { reference: string }
+interface BankCollectionRow extends LocalBankRow { reference: string; offset: boolean; clientId: number; reversal: PurchasePostingReversalReference | null }
 interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string; mode: 'check' | 'transfer' }
+interface ManualBankRow extends LocalBankRow { linePolicyId: string; debit: string; credit: string; reference: string; center: number }
 
 const bankRow = ({ id, number, policyNumber, date, beneficiary, description, userId, statementDate }: LocalBankRow) => ({
   movementId: Number(id), policyId: Number(id), checkNumber: number,
@@ -110,12 +126,18 @@ const paymentRow = (row: BankPaymentRow) => ({
 });
 const collectionRow = (row: BankCollectionRow) => ({
   ...bankRow(row), bankNumber: row.reference || row.number,
-  movementType: 'PC', charge: Number(row.amount), credit: 0, mode: 'deposit',
+  movementType: 'PC', charge: row.offset ? 0 : Number(row.amount), credit: row.offset ? Number(row.amount) : 0, mode: 'deposit',
+  ...(row.offset ? {} : { clientId: row.clientId, collectionId: Number(row.id), canReverseCollection: !row.reversal }),
+  ...(row.reversal ? { reversal: row.reversal } : {}),
 });
 const transferRow = (row: BankTransferRow) => ({
   ...bankRow(row), policyId: Number(row.policyId), bankNumber: row.mode === 'check' ? '' : row.reference || row.number,
   checkNumber: row.mode === 'check' ? row.reference : row.number, movementType: row.movementType,
   charge: Math.max(Number(row.amount), 0), credit: Math.max(-Number(row.amount), 0), mode: row.mode,
+});
+const manualBankRow = (row: ManualBankRow) => ({
+  ...bankRow(row), policyId: Number(row.linePolicyId), bankNumber: row.reference || row.number,
+  checkNumber: '', movementType: '3', charge: Number(row.debit), credit: Number(row.credit), mode: 'journal', costCenter: row.center,
 });
 
 const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' || key === 'automatic-reconciliation';
@@ -127,13 +149,14 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     if (!keys.includes(key) || (!base.available && key !== 'payments' && key !== 'deposits')) return base;
     const fiscalYear = typeof base.summary?.fiscalYear === 'number' ? base.summary.fiscalYear : options.fiscalYear;
     const panelOptions = { ...options, fiscalYear };
-    const [payments, collections, transfers, reconciliation] = await Promise.all([
+    const [payments, collections, transfers, journals, reconciliation] = await Promise.all([
       key === 'deposits' ? [] : this.paymentRows(id, key, panelOptions),
       key === 'payments' ? [] : this.collectionRows(id, key, panelOptions),
       this.transferRows(id, key, panelOptions),
+      key === 'deposits' || key === 'payments' ? [] : this.manualRows(id, key, panelOptions),
       pendingReconciliation(key) ? readBankReconciliationState(1, id) : null,
     ]);
-    const local = [...payments, ...collections, ...transfers].sort((a, b) =>
+    const local = [...payments, ...collections, ...transfers, ...journals].sort((a, b) =>
       a.policyDate.localeCompare(b.policyDate) || a.movementId - b.movementId);
     const summary = { ...base.summary };
     if (reconciliation?.lastStatementDate) summary.lastStatementDate = reconciliation.lastStatementDate;
@@ -154,6 +177,7 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     if (payments.length) source.push('supplier_payments');
     if (collections.length) source.push('customer_collections');
     if (transfers.length) source.push('bank_transfers');
+    if (journals.length) source.push('manual_accounting_policy_lines');
     const manual = key === 'reconciliation';
     const items = [...base.items, ...local.map((row) => pendingReconciliation(key) ? { ...row, canReconcile: true } : row)];
     const panel = { ...base, available: true, source, readOnly: manual ? false : base.readOnly, items, summary };
@@ -210,19 +234,31 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
     const end = key === 'automatic-reconciliation' ? asOfDate : null;
     return readCustomerCollections<ReturnType<typeof collectionRow>[]>([], async (client) => {
-      const join = joinBankReconciliation(await bankReconciliationsAvailable(client));
+      const bankReconciliationAvailable = await bankReconciliationsAvailable(client);
+      const join = joinBankReconciliation(bankReconciliationAvailable);
+      const hasReversals = await customerCollectionReversalsAvailable(client);
+      const reversal = customerCollectionReversalSql(hasReversals, 'posting');
+      const pending = pendingReconciliation(key);
+      const includeReversed = !pending && key !== 'authorization-review';
+      const scope = `FROM tuvansa.customer_collections posting ${reversal.join}
+        JOIN tuvansa.sales_remissions remission ON remission.id=posting.remission_id AND remission.company_id=posting.company_id`;
+      const correctionJoin = joinBankReconciliation(bankReconciliationAvailable, 'reversal', 'correction_settlement', 'posting');
       const { rows } = await client.query<BankCollectionRow>(
-        `SELECT posting.id::text, posting.number, posting.policy_number AS "policyNumber",
-                posting.date::text, posting.amount::text, posting.description, posting.reference,
-                posting.user_id AS "userId", remission.result #>> '{invoice,customer,name}' AS beneficiary,
-                settlement.statement_date::text AS "statementDate"
-         FROM tuvansa.customer_collections AS posting
-         JOIN tuvansa.sales_remissions AS remission ON remission.id = posting.remission_id
-         ${join}
-         WHERE posting.bank_account_id = $1 AND posting.company_id = 1
-           AND ($2::date IS NULL OR posting.date >= $2) AND ($3::date IS NULL OR posting.date <= $3)
-           ${pendingReconciliation(key) ? 'AND settlement.statement_date IS NULL' : ''}
-         ORDER BY posting.date, posting.id LIMIT 32767`, [id, start, end],
+        `WITH entries AS (
+          SELECT posting.id,posting.number,posting.policy_number AS "policyNumber",posting.date,posting.amount,posting.description,posting.reference,
+                 posting.user_id AS "userId",remission.result #>> '{invoice,customer,name}' AS beneficiary,
+                 settlement.statement_date::text AS "statementDate",false AS "offset",posting.client_id::float8 AS "clientId",${reversal.reference} AS reversal
+          ${scope} ${join} WHERE posting.bank_account_id=$1 AND posting.company_id=1
+            ${pending ? 'AND settlement.statement_date IS NULL' : ''} ${!includeReversed ? `AND ${reversal.active}` : ''}
+          ${hasReversals && (includeReversed || pending) ? `UNION ALL
+            SELECT reversal.id,reversal.number,reversal.policy_number,reversal.date,posting.amount,reversal.reason,concat('REV ',posting.policy_number),
+                   reversal.user_id,remission.result #>> '{invoice,customer,name}',correction_settlement.statement_date::text,true,posting.client_id::float8,NULL::jsonb
+            ${scope} ${join} ${correctionJoin} WHERE posting.bank_account_id=$1 AND posting.company_id=1 AND reversal.id IS NOT NULL
+              ${pending ? `AND reversal.result #>> '{originalReconciliation,id}'=settlement.id::text
+                AND correction_settlement.id IS NULL` : ''}` : ''}
+        ) SELECT id::text,number,"policyNumber",date::text,amount::text,description,reference,"userId",beneficiary,"statementDate","offset","clientId",reversal
+        FROM entries WHERE ($2::date IS NULL OR date >= $2) AND ($3::date IS NULL OR date <= $3)
+        ORDER BY date,id LIMIT 32767`, [id, start, end],
       );
       return rows.map(collectionRow);
     });
@@ -252,6 +288,25 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
         [id, start, end],
       );
       return rows.map(transferRow);
+    });
+  }
+
+  private manualRows(id: number, key: BankPanelKey, { fiscalYear, asOfDate }: BankPanelOptions) {
+    const pending = pendingReconciliation(key);
+    const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
+    const end = key === 'automatic-reconciliation' ? asOfDate : null;
+    return readManualPolicies<ReturnType<typeof manualBankRow>[]>([], async (client) => {
+      const settlement = manualLineSettlement(await bankReconciliationsAvailable(client));
+      const { rows } = await client.query<ManualBankRow>(
+        `SELECT l.id::text,p.id::text AS "linePolicyId",p.number,p.number AS "policyNumber",p.date::text,
+          (l.debit-l.credit)::text AS amount,l.debit::text,l.credit::text,p.beneficiary,p.concept AS description,
+          l.reference,l.cost_center AS center,0 AS "userId",settlement.statement_date::text AS "statementDate"
+         ${activeManualPolicyLines} ${settlement} WHERE l.account_id=$1
+           AND ($2::date IS NULL OR p.date >= $2) AND ($3::date IS NULL OR p.date <= $3)
+           ${pending ? 'AND l.account_type=0 AND settlement.statement_date IS NULL' : ''}
+         ORDER BY p.date,l.id LIMIT 32767`, [id, start, end],
+      );
+      return rows.map(manualBankRow);
     });
   }
 }

@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { ProductClassificationCatalogDataSource } from '../../domain/datasources/product-classification-data-source.js';
+import { catalogProductsById, isNewCatalogProduct } from './product-catalog-references.js';
 import {
   productClassificationKeys,
   type ProductClassificationCatalog,
@@ -28,12 +29,15 @@ const companyLabelFields = productClassificationKeys.slice(0, 9).map((key) => `C
 // Adaptación de los SELECT de lectura de EINV#25C. El guardado usa PostgreSQL.
 export class LegacyMysqlProductClassificationDataSource implements ProductClassificationCatalogDataSource {
   async get(productId: number): Promise<ProductClassificationCatalog | null> {
-    const [products] = await legacyMysqlPool.execute<ProductRow[]>(
+    const ref = (await catalogProductsById([productId])).get(productId);
+    if (ref?.deleted) return null;
+    const product = ref?.document;
+    const [products] = isNewCatalogProduct(productId) ? [[]] : await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ISEQ AS id, ICOD AS code, IDESCR AS description, IFAM AS familyCode, ${productClassificationFields}
        FROM finv WHERE ISEQ = ? LIMIT 1`, [productId],
     );
     const found = products[0];
-    if (!found) return null;
+    if (!found && !product) return null;
     const [[labels], [options], [policy]] = await Promise.all([
       legacyMysqlPool.execute<LabelRow[]>(
         `SELECT YGDAT AS labels FROM fyg WHERE YGKEY = 'ABITITFAM1' ORDER BY YGSEQ LIMIT 1`,
@@ -51,10 +55,10 @@ export class LegacyMysqlProductClassificationDataSource implements ProductClassi
     ]);
     const labelsByPosition = labels[0]?.labels?.split(',');
     return {
-      product: { id: found.id, code: found.code, description: found.description },
-      familyCode: found.familyCode?.trim() ?? '',
+      product: { id: productId, code: product?.code ?? found!.code, description: product?.description ?? found!.description },
+      familyCode: product?.classification.familyCode ?? found?.familyCode?.trim() ?? '',
       recalculateFamily: policy[0]?.recalculateFamily === '1',
-      assignments: Object.fromEntries(productClassificationKeys.map((key) => [key, found[`IFAM${key}`]?.trim() ?? ''])),
+      assignments: Object.fromEntries(productClassificationKeys.map((key) => [key, found?.[`IFAM${key}`]?.trim() ?? ''])),
       labels: Object.fromEntries(productClassificationKeys.map((key, index) => [
         key,
         (labelsByPosition ? labelsByPosition[index] : policy[0]?.[`CIAFAMPAR${key}`])?.trim() ?? '',

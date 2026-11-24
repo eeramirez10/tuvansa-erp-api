@@ -23,7 +23,7 @@ export interface StoredProductOtherData {
 
 export interface ProductOtherDataRepository {
   catalog(productId: number): Promise<ProductOtherDataCatalog | null>;
-  writable(productId: number): boolean;
+  writable(productId: number): boolean | Promise<boolean>;
   get(productId: number): Promise<StoredProductOtherData | null>;
   save(productId: number, settings: StoredProductOtherData): Promise<StoredProductOtherData>;
 }

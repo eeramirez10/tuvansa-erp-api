@@ -86,6 +86,20 @@ El GA de prueba nativo quedó marcado con la referencia `GAT231701`. Se
 conservó para evitar el ajuste de existencias que ejecuta la baja estándar
 de Recepciones.
 
+## Cancelar una recepción de orden
+
+`GET /api/purchasing/purchase-receptions/:id/actions/cancel-reception`
+prepara la baja de una recepción web RW y explica los bloqueos. El POST
+registra la cancelación con fecha, motivo, confirmación y clave de reintento.
+El flujo se contrastó con `MRECEP/25,111,136–138` en la biblioteca de pruebas.
+
+La transacción conserva el folio, expone sus partidas K, resta las unidades
+recibidas del almacén, devuelve las cantidades al pendiente de la orden
+y revierte el pasivo y las contrapartidas contables de la recepción,
+incluido el IVA. Respeta los pagos vigentes, el periodo abierto y la
+existencia libre. Una segunda recepción de la misma orden conserva sus
+propios efectos.
+
 ## Acciones de lectura verificadas
 
 | Boton OMNIS | Endpoint | Fuente real |

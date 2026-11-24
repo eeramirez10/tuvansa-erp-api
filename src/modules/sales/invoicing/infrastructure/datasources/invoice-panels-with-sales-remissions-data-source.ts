@@ -1,4 +1,5 @@
 import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
+import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
 import type { InvoicePanelsDataSource } from '../../domain/datasources/invoice-panels-data-source.js';
 import type { InvoicePanelKey, InvoicePanelResult } from '../../domain/repositories/invoice-panels-repository.js';
 import { readSalesRemissionInvoice } from './invoices-with-sales-remissions-data-source.js';
@@ -18,12 +19,19 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     const { invoice, charge } = record;
     const base = { invoice: { id, number: invoice.number }, key, ...invoicePanelMetadata[key], readOnly: true };
     if (key === 'auxiliary') {
-      const payments = await readCustomerCollections<(Record<string, unknown> & { credits: number })[]>([], async (client) => {
-        const { rows } = await client.query<Record<string, unknown> & { credits: number }>(
-          `SELECT id::float8 AS id, date::text, movement_type AS "movementType", number AS "collectionNumber",
-                  coalesce(nullif(reference,''), number) AS reference, 0 AS charges, amount::float8 AS credits,
-                  (-amount)::float8 AS amount, id::float8 AS "policyId", policy_number AS "policyNumber"
-           FROM tuvansa.customer_collections WHERE remission_id = $1 AND company_id = 1 ORDER BY date,id`, [id],
+      const payments = await readCustomerCollections<(Record<string, unknown> & { id: number; date: string; charges: number; credits: number })[]>([], async (client) => {
+        const hasReversals = await customerCollectionReversalsAvailable(client);
+        const reversal = customerCollectionReversalSql(hasReversals);
+        const scope = `FROM tuvansa.customer_collections collection ${reversal.join} WHERE collection.remission_id=$1 AND collection.company_id=1`;
+        const { rows } = await client.query<Record<string, unknown> & { id: number; date: string; charges: number; credits: number }>(
+          `SELECT collection.id::float8 AS id,collection.date::text,collection.movement_type AS "movementType",collection.number AS "collectionNumber",
+                  coalesce(nullif(collection.reference,''),collection.number) AS reference,0 AS charges,collection.amount::float8 AS credits,
+                  (-collection.amount)::float8 AS amount,collection.id::float8 AS "policyId",collection.policy_number AS "policyNumber",
+                  ${reversal.reference} AS "collectionReversal",false AS "isCollectionReversal" ${scope}
+           ${hasReversals ? `UNION ALL SELECT reversal.id::float8,reversal.date::text,'PA',reversal.number,concat('REV ',collection.policy_number),
+                  collection.amount::float8,0,collection.amount::float8,reversal.id::float8,reversal.policy_number,NULL::jsonb,true
+                  ${scope} AND reversal.id IS NOT NULL` : ''}
+           ORDER BY date,id`, [id],
         );
         return rows;
       });
@@ -31,11 +39,17 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
         id, date: invoice.dates.issuedAt, movementType: invoice.movementType, reference: invoice.orderNumber,
         charges: charge, credits: 0, amount: charge,
       }] : [];
-      const credits = Number(payments.reduce((total, item) => total + item.credits, 0).toFixed(2));
+      const cancellation = invoice.cancellation ? [{
+        id: invoice.cancellation.id, date: invoice.cancellation.date, movementType: 'K', reference: invoice.number,
+        charges: 0, credits: charge, amount: -charge, reason: invoice.cancellation.reason,
+      }] : [];
+      const items = [...charges, ...payments, ...cancellation].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '') || a.id - b.id);
+      const credits = Number(items.reduce((total, item) => total + item.credits, 0).toFixed(2));
+      const totalCharges = Number(items.reduce((total, item) => total + item.charges, 0).toFixed(2));
       return {
         ...base, available: true, source: 'postgres',
-        items: [...charges, ...payments],
-        summary: { charges: charge, credits, balance: Number((charge - credits).toFixed(2)) },
+        items,
+        summary: { charges: totalCharges, credits, balance: Number((totalCharges - credits).toFixed(2)) },
       };
     }
     if (key === 'ct') {

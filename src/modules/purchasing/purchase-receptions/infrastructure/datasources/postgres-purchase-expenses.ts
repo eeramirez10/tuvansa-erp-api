@@ -4,6 +4,7 @@ import {
   connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory,
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { assertActiveSupplierCatalog } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
 import type { ExpensePosting, ExpenseResult, ExpenseStorage } from '../../domain/datasources/purchase-expense-data-source.js';
 
 const batchIdStart = 7900000000000;
@@ -122,6 +123,8 @@ export class PostgresPurchaseExpenses implements ExpenseStorage {
         await client.query('COMMIT');
         return replay;
       }
+      const suppliers = [...new Set(documents.map(({ supplierId }) => supplierId))].sort((a, b) => a - b);
+      for (const id of suppliers) await assertActiveSupplierCatalog(client, id);
       const references = [...new Set(documents.map(({ reference }) => reference.toUpperCase()).filter(Boolean))].sort();
       for (const reference of references) {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended('purchase-expense-reference:'||$1,0))", [reference]);

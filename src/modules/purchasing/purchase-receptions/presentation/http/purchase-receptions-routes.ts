@@ -1,11 +1,14 @@
 import { Router } from 'express';
+import type { CancelPurchaseReception } from '../../application/use-cases/cancel-purchase-reception.js';
 import type { ReversePurchasePosting } from '../../application/use-cases/reverse-purchase-posting.js';
-import { postingReversalHandlers } from './posting-reversal-handlers.js';
+import { postingReversalHandlers, purchaseReceptionCancellationHandlers } from './posting-reversal-handlers.js';
 import type { PurchaseReceptionsController } from './purchase-receptions-controller.js';
 
-export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController, expenses: Router, reversals: ReversePurchasePosting): Router => {
+export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController, expenses: Router,
+  reversals: ReversePurchasePosting, receiptCancellations: CancelPurchaseReception): Router => {
   const router = Router();
   const cancellation = postingReversalHandlers(reversals, 'expense');
+  const cancelReceipt = purchaseReceptionCancellationHandlers(receiptCancellations);
   router.use('/general-expenses', expenses);
   router.get('/', controller.search);
   router.get('/create', controller.prepare);
@@ -17,6 +20,8 @@ export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsCon
   router.get('/:purchaseReceptionId/actions/classifications', controller.panel('classifications'));
   router.get('/:purchaseReceptionId/actions/cancel-expense', cancellation.prepare);
   router.post('/:purchaseReceptionId/actions/cancel-expense', cancellation.save);
+  router.get('/:purchaseReceptionId/actions/cancel-reception', cancelReceipt.prepare);
+  router.post('/:purchaseReceptionId/actions/cancel-reception', cancelReceipt.save);
   router.get('/:purchaseReceptionId', controller.getById);
   return router;
 };

@@ -1,6 +1,6 @@
 import { Supplier } from '../../domain/entities/supplier.js';
 import type { SupplierNavigationDirection, SupplierSearchCriteria } from '../../domain/repositories/suppliers-repository.js';
-import { LegacyMysqlSuppliersDataSource } from './legacy-mysql-suppliers-data-source.js';
+import { SuppliersWithCatalogDataSource } from './suppliers-with-catalog-data-source.js';
 import { purchaseReceptionSupplierBalances } from './purchase-reception-supplier-charges.js';
 
 function withBalance(supplier: Supplier, balance: number): Supplier {
@@ -10,7 +10,7 @@ function withBalance(supplier: Supplier, balance: number): Supplier {
   return Supplier.create({ ...props, totals: { ...props.totals, currentBalance } });
 }
 
-export class SuppliersWithPurchaseReceptionsDataSource extends LegacyMysqlSuppliersDataSource {
+export class SuppliersWithPurchaseReceptionsDataSource extends SuppliersWithCatalogDataSource {
   private async withPurchaseReceptions(request: Promise<Supplier | null>) {
     const supplier = await request;
     if (!supplier) return null;

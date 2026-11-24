@@ -38,6 +38,7 @@ export interface CustomerCollectionTarget {
   exchangeRate: number;
   remaining: number;
   revision: number;
+  lastReversalDate?: string | null;
 }
 
 export interface CustomerCollectionBank {

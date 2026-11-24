@@ -1,5 +1,9 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { clientCatalogRecord } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
+import {
+  catalogOtherData, catalogProductsById, isNewCatalogProduct,
+} from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { normalizeOrderWarehouse } from '../../../orders/domain/entities/order-warehouse.js';
 import type { OrderProps } from '../../../orders/domain/entities/order.js';
 import type {
@@ -12,6 +16,7 @@ interface ReferencesRow extends RowDataPacket {
   customerCode: string;
   customerCurrency: number;
   blocked: number;
+  posRestricted: number;
   alternateCustomer: string;
   intercompany: number;
   withheldVat: number;
@@ -39,17 +44,18 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
   async context(companyId: number, order: OrderProps): Promise<InvoiceFromOrderContext> {
     const warehouse = normalizeOrderWarehouse(order.warehouse);
     const ids = [...new Set(order.lines.filter(({ assigned }) => assigned > 0).map(({ productId }) => productId))];
+    const client = await clientCatalogRecord(order.customer.id);
     const [rows] = await legacyMysqlPool.execute<ReferencesRow[]>(
       `SELECT c.CIAFI AS fiscalStart, c.CIAFF AS fiscalEnd, TRIM(cl.CLICOD) AS customerCode,
-         cl.CLIMONEDA AS customerCurrency,
-         (NULLIF(cl.CLIBAJA,'1900-12-31') IS NOT NULL OR cl.CLISOLOPOS=2) AS blocked,
-         TRIM(cl.CLIAPLICAR) AS alternateCustomer, cl.CLIINTERCIA AS intercompany,
-         cl.CLIRETIVA AS withheldVat, cl.CLIPLAZO0 AS customerTermsDays,
-         cl.CLICREDIT AS creditLimit, (cl.CLISACT + cl.CLITSACT) AS creditBalance,
-         CASE cl.CLITIPOIVA WHEN 0 THEN m.TIIVA0 WHEN 1 THEN m.TIIVA1 WHEN 2 THEN m.TIIVA2 END AS vat
+         COALESCE(cl.CLIMONEDA,1) AS customerCurrency,
+         NULLIF(cl.CLIBAJA,'1900-12-31') IS NOT NULL AS blocked, COALESCE(cl.CLISOLOPOS,0)=2 AS posRestricted,
+         TRIM(cl.CLIAPLICAR) AS alternateCustomer, COALESCE(cl.CLIINTERCIA,0) AS intercompany,
+         COALESCE(cl.CLIRETIVA,0) AS withheldVat, COALESCE(cl.CLIPLAZO0,0) AS customerTermsDays,
+         COALESCE(cl.CLICREDIT,0) AS creditLimit, COALESCE(cl.CLISACT + cl.CLITSACT,0) AS creditBalance,
+         CASE COALESCE(cl.CLITIPOIVA,0) WHEN 0 THEN m.TIIVA0 WHEN 1 THEN m.TIIVA1 WHEN 2 THEN m.TIIVA2 END AS vat
        FROM FCIA c
        JOIN FTIPMV m ON m.TICLA=c.CIATMFACT AND m.TIMULTICIA=c.CIASEQ AND m.TIMODULO=4
-       JOIN FCLI cl ON cl.CLISEQ=?
+       LEFT JOIN FCLI cl ON cl.CLISEQ=?
        WHERE c.CIASEQ=? AND c.CIAALIAS='TUVANSA' AND c.CIATMFACT='FA'
          AND m.TIFISCAL=0 AND m.TIAFINV=-1 AND m.TIAFCXC=1 AND m.TIAFVTS=1 AND m.TICONVERTIR='FE'
          AND SUBSTRING(c.CIACOMPORTA,2,1)='1' AND SUBSTRING(c.CIACOMPORTA,10,1)='1'
@@ -59,8 +65,19 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
        LIMIT 2`,
       [order.customer.id, companyId, warehouse],
     );
-    const rules = rows[0];
-    if (rows.length !== 1 || !rules || rules.customerCode !== order.customer.code) {
+    const base = rows[0];
+    if (rows.length !== 1 || !base || (!base.customerCode && (!client || client.legacy))) {
+      return { reason: noReferences, fiscalStart: '', fiscalEnd: '', customerTermsDays: 0, creditLimit: 0, creditBalance: 0, vat: 0, products: new Map() };
+    }
+    const changes = client?.changes;
+    const rules = {
+      ...base, customerCode: client?.document.code ?? base.customerCode,
+      blocked: Boolean(base.posRestricted || (client?.blocked ?? base.blocked) || client?.deleted),
+      customerTermsDays: changes?.paymentTermDays ?? base.customerTermsDays,
+      creditLimit: changes?.creditLimit ?? base.creditLimit,
+      alternateCustomer: changes?.applyToClientCode ?? base.alternateCustomer,
+    };
+    if (rules.customerCode !== order.customer.code) {
       return { reason: noReferences, fiscalStart: '', fiscalEnd: '', customerTermsDays: 0, creditLimit: 0, creditBalance: 0, vat: 0, products: new Map() };
     }
     let reason: string | null = null;
@@ -90,6 +107,28 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
       );
       for (const item of items) {
         products.set(item.id, { ...item, supported: Boolean(item.supported) });
+      }
+      const [references, otherData] = await Promise.all([catalogProductsById(ids), catalogOtherData(ids)]);
+      for (const [id, { document, deleted, revision }] of references) {
+        if (deleted || !document.isActive) {
+          products.delete(id);
+          continue;
+        }
+        const legacy = products.get(id);
+        const options = otherData.get(id);
+        if (!revision && legacy) continue;
+        const supported = legacy?.supported ?? (
+          isNewCatalogProduct(id) && options?.noInventoryLayer === true
+          && Number(options.taxRateType ?? 0) === 0 && Number(options.iepsPercentage ?? 0) === 0
+          && Number(options.vatWithholdingType ?? 0) === 0 && Number(options.tariffPercentage ?? 0) === 0
+        );
+        products.set(id, {
+          id, code: document.code, unit: document.classification.unit.code,
+          cost: document.prices.costs.average + document.prices.costs.adValorem,
+          package: legacy?.package ?? '', family: legacy?.family ?? '',
+          legacyOnHand: legacy?.legacyOnHand ?? 0, legacyAssigned: legacy?.legacyAssigned ?? 0,
+          supported: supported && ['rawMaterial', 'finishedProduct'].includes(document.classification.type),
+        });
       }
     }
     return {

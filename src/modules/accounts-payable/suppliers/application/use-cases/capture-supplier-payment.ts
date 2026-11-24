@@ -65,8 +65,8 @@ export class CaptureSupplierPayment {
     if (previous) return previous;
 
     const target = await this.target(identity);
-    const resolvePosting: SupplierPaymentCommand['resolvePosting'] = async (lookup) => {
-      const settings = await this.references.settings(identity.companyId, identity.supplierId, input.bankAccountId, lookup, target.liability);
+    const resolvePosting: SupplierPaymentCommand['resolvePosting'] = async (lookup, catalog) => {
+      const settings = await this.references.settings(identity.companyId, identity.supplierId, input.bankAccountId, lookup, target.liability, catalog);
       if (!settings) throw new ConflictError(settingsUnavailable, 'SUPPLIER_PAYMENT_CONFIG_UNAVAILABLE');
       const bank = this.bankAccounts(settings).find(({ id }) => id === input.bankAccountId);
       if (!bank) throw new ConflictError(bankUnavailable, 'SUPPLIER_PAYMENT_BANK_UNAVAILABLE');

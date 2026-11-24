@@ -1,7 +1,11 @@
 import { purchaseOrderInventoryAdjustment } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-pending.js';
+import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { Product, type ProductProps } from '../../domain/entities/product.js';
-import type { ProductNavigationDirection, ProductSearchCriteria } from '../../domain/repositories/products-repository.js';
+import type {
+  ProductCreateValues, ProductNavigationDirection, ProductRemovalConfirmation, ProductSearchCriteria, ProductWriteValues,
+} from '../../domain/repositories/products-repository.js';
 import { LegacyMysqlProductsDataSource } from './legacy-mysql-products-data-source.js';
+import type { PostgresProductsDataSource } from './postgres-products-data-source.js';
 import { localSalesProductStocks, type LocalSalesStock } from './local-sales-product-inventory.js';
 import {
   purchaseReceptionProductInventories, purchaseReceptionProductInventory, type ReceiptWarehouseTotals,
@@ -37,6 +41,48 @@ function addSalesInventory(accumulated: ProductProps['accumulated'], stock?: Loc
 }
 
 export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProductsDataSource {
+  constructor(private readonly catalog?: PostgresProductsDataSource) { super(); }
+
+  private async postgresCatalog() {
+    return this.catalog && await this.catalog.catalogWritable() ? this.catalog : null;
+  }
+
+  private async requireCatalog() {
+    const catalog = await this.postgresCatalog();
+    if (!catalog) throw new ApplicationError(
+      'El catálogo PostgreSQL requiere una copia conciliada de PROSCAI.', 'PRODUCT_SNAPSHOT_REQUIRED', 503,
+    );
+    return catalog;
+  }
+
+  catalogWritable() { return this.catalog?.catalogWritable() ?? Promise.resolve(false); }
+  override async listUnits() { return (await this.postgresCatalog())?.listUnits() ?? super.listUnits(); }
+  override async codeExists(code: string, excludingId?: number) {
+    return (await this.postgresCatalog())?.codeExists(code, excludingId) ?? super.codeExists(code, excludingId);
+  }
+  override async unitExists(unitId: number) {
+    return (await this.postgresCatalog())?.unitExists(unitId) ?? super.unitExists(unitId);
+  }
+  override async accountingAccountExists(account: string) {
+    return (await this.postgresCatalog())?.accountingAccountExists(account) ?? super.accountingAccountExists(account);
+  }
+  override async create(values: ProductCreateValues) { return (await this.requireCatalog()).create(values); }
+  override async update(id: number, values: ProductWriteValues, revision?: string) {
+    return (await this.requireCatalog()).update(id, values, revision);
+  }
+  override async delete(id: number, confirmation?: ProductRemovalConfirmation) {
+    return (await this.requireCatalog()).delete(id, confirmation);
+  }
+  async removal(id: number) {
+    const catalog = await this.postgresCatalog();
+    if (catalog) return catalog.removal(id);
+    const product = (await super.findById(id))?.toPrimitives();
+    return product ? {
+      id, code: product.code, revision: '0:0:0', canDelete: false,
+      reason: 'El catálogo PostgreSQL requiere una copia conciliada de PROSCAI.',
+    } : null;
+  }
+
   private async withPending(request: Promise<Product | null>): Promise<Product | null> {
     const product = await request;
     if (!product) return null;
@@ -57,14 +103,18 @@ export class ProductsWithPurchaseOrderPendingDataSource extends LegacyMysqlProdu
     });
   }
 
-  override findById(id: number) { return this.withPending(super.findById(id)); }
-  override findFirstActive() { return this.withPending(super.findFirstActive()); }
-  override findAdjacent(id: number, direction: ProductNavigationDirection) {
-    return this.withPending(super.findAdjacent(id, direction));
+  override async findById(id: number) {
+    return this.withPending((await this.postgresCatalog())?.findById(id) ?? super.findById(id));
+  }
+  override async findFirstActive() {
+    return this.withPending((await this.postgresCatalog())?.findFirstActive() ?? super.findFirstActive());
+  }
+  override async findAdjacent(id: number, direction: ProductNavigationDirection) {
+    return this.withPending((await this.postgresCatalog())?.findAdjacent(id, direction) ?? super.findAdjacent(id, direction));
   }
 
-  override async search(criteria: ProductSearchCriteria) {
-    const result = await super.search(criteria);
+  override async search(criteria: ProductSearchCriteria, overrides?: ReadonlyMap<number, ProductWriteValues>) {
+    const result = await ((await this.postgresCatalog())?.search(criteria) ?? super.search(criteria, overrides));
     const ids = result.items.map((item) => item.toPrimitives().id);
     const [inventory, sales] = await Promise.all([purchaseReceptionProductInventories(ids), localSalesProductStocks(ids)]);
     return { ...result, items: result.items.map((item) => {

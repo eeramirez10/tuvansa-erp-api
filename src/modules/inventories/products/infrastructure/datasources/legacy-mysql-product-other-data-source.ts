@@ -3,6 +3,7 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import type { ProductOtherDataCatalogSource } from '../../domain/datasources/product-other-data-source.js';
 import { productOtherDataFields, type ProductOtherDataValue } from '../../domain/entities/product-other-data.js';
 import type { ProductOtherDataCatalog } from '../../domain/repositories/product-other-data-repository.js';
+import { catalogProductsById, isNewCatalogProduct } from './product-catalog-references.js';
 
 const fields = {
   volume: 'IVOLUMEN', weight: 'IPESO', unitsPerBox: 'ICANTCAJA', packaging: 'IEMPAQUE',
@@ -51,12 +52,15 @@ const tariffPercentage = (description: string) => {
 // Derivada de los campos de EINV2#1. OMNIS abre la ventana con FINV en memoria.
 export class LegacyMysqlProductOtherDataSource implements ProductOtherDataCatalogSource {
   async get(productId: number): Promise<ProductOtherDataCatalog | null> {
-    const [products] = await legacyMysqlPool.execute<ProductRow[]>(
+    const reference = (await catalogProductsById([productId])).get(productId);
+    if (reference?.deleted) return null;
+    const product = reference?.document;
+    const [products] = isNewCatalogProduct(productId) ? [[]] : await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ISEQ AS id, ICOD AS code, IDESCR AS description, ${productOtherDataProjection}
        FROM finv WHERE ISEQ = ? LIMIT 1`, [productId],
     );
     const row = products[0];
-    if (!row) return null;
+    if (!row && !product) return null;
 
     const [[companies], [tariffs]] = await Promise.all([
       legacyMysqlPool.execute<RowDataPacket[]>(
@@ -68,12 +72,19 @@ export class LegacyMysqlProductOtherDataSource implements ProductOtherDataCatalo
       ),
     ]);
     const company = companies[0];
+    const values = Object.fromEntries(Object.keys(fields).map((key) => {
+      const value = row?.[key] ?? null;
+      return [key, productOtherDataFields[key]?.kind === 'boolean' ? Boolean(value) : value];
+    }));
     return {
-      product: { id: row.id, code: row.code.trim(), description: row.description.trim() },
-      values: Object.fromEntries(Object.keys(fields).map((key) => {
-        const value = row[key] ?? null;
-        return [key, productOtherDataFields[key]?.kind === 'boolean' ? Boolean(value) : value];
-      })),
+      product: { id: productId, code: product?.code ?? row!.code.trim(), description: product?.description ?? row!.description.trim() },
+      values: product ? {
+        ...values, unit: product.classification.unit.code, location: product.warehouse.location,
+        list4: product.prices.costs.average, list5: product.prices.costs.last,
+        list6: product.prices.costs.previous, currency6: product.prices.costs.currencyId,
+        ...(!row ? { alternateUnit: product.classification.unit.code, alternateUnitFactor: 1, unitsPerBox: 1,
+          taxRateType: 0, vatWithholdingType: 0, noInventoryLayer: false, ediPackaging: 'BX', warehouse: 1 } : {}),
+      } : values,
       tariffs: tariffs.map(({ code, description }) => ({
         code: code.trim(), description: description.trim(), percentage: tariffPercentage(description),
       })),

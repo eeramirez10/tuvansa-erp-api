@@ -1,7 +1,7 @@
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { ProductUnit } from './product-catalog-record.js';
-import { selectProductFields, toProduct, type ProductRow } from './legacy-mysql-products-data-source.js';
+import { legacyProductRemovalRelation, productSource, selectProductFields, toProduct, type ProductRow } from './legacy-mysql-products-data-source.js';
 import type { LegacyProductSnapshot } from './postgres-product-catalog-snapshot.js';
 
 const tables = ['finv', 'funidad', 'fbenc', 'fens', 'faxinv', 'fplin', 'fvanu2', 'fcanu2'];
@@ -22,16 +22,8 @@ async function* productBatches(connection: PoolConnection) {
   let previousId = 0;
   while (true) {
     const [rows] = await connection.execute<CatalogRow[]>(
-      `SELECT ${selectProductFields},
-         CASE
-           WHEN EXISTS (SELECT 1 FROM fens WHERE EPRO = FINV.ICOD)
-             OR EXISTS (SELECT 1 FROM fens WHERE EART = FINV.ICOD) THEN 'fens'
-           WHEN EXISTS (SELECT 1 FROM faxinv WHERE faxinv.ISEQ = FINV.ISEQ) THEN 'faxinv'
-           WHEN EXISTS (SELECT 1 FROM fplin WHERE fplin.ISEQ = FINV.ISEQ) THEN 'fplin'
-           WHEN EXISTS (SELECT 1 FROM fvanu2 WHERE fvanu2.ISEQ = FINV.ISEQ) THEN 'fvanu2'
-           WHEN EXISTS (SELECT 1 FROM fcanu2 WHERE fcanu2.ISEQ = FINV.ISEQ) THEN 'fcanu2'
-         END AS deletionRelation
-       FROM finv AS FINV LEFT JOIN funidad AS FUNIDAD ON FINV.USEQ = FUNIDAD.USEQ
+      `SELECT ${selectProductFields},${legacyProductRemovalRelation} AS deletionRelation
+       ${productSource}
        WHERE FINV.ISEQ > ? ORDER BY FINV.ISEQ LIMIT ?`,
       [previousId, chunkSize],
     );
@@ -59,7 +51,13 @@ export const withLegacyProductSnapshot = async <T>(
       }
     }
     await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-    await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+    try {
+      await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ER_PARSE_ERROR') throw error;
+      // Las versiones antiguas de MySQL admiten la copia consistente sin el modificador READ ONLY.
+      await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+    }
     const [totalsRows] = await connection.query<TotalsRow[]>(
       `SELECT COUNT(*) AS productCount,
         CAST(COALESCE(SUM(CAST(ISTKACT AS DECIMAL(30,6))), 0) AS CHAR) AS currentStock,

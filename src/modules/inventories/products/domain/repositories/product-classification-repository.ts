@@ -28,7 +28,7 @@ export interface StoredProductClassification {
 
 export interface ProductClassificationRepository {
   catalog(productId: number): Promise<ProductClassificationCatalog | null>;
-  writable(productId: number): boolean;
+  writable(productId: number): boolean | Promise<boolean>;
   get(productId: number): Promise<StoredProductClassification | null>;
   save(productId: number, classification: StoredProductClassification): Promise<StoredProductClassification>;
 }

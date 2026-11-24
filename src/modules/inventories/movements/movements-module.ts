@@ -2,11 +2,13 @@ import type { Router } from 'express';
 import { env } from '../../../config/env.js';
 import { connectPostgres } from '../../../shared/infrastructure/database/postgres-pool.js';
 import { CancelInventoryMovement } from './application/use-cases/cancel-inventory-movement.js';
+import { CaptureInventoryMovements } from './application/use-cases/capture-inventory-movements.js';
 import { ReadInventoryMovements } from './application/use-cases/read-inventory-movements.js';
 import type { MovementCancellationRepository } from './domain/repositories/movement-cancellation-repository.js';
 import type { MovementsRepository } from './domain/repositories/movements-repository.js';
 import { LegacyMysqlMovementsDataSource } from './infrastructure/datasources/legacy-mysql-movements-data-source.js';
 import { MovementsWithLocalDocumentsDataSource } from './infrastructure/datasources/movements-with-local-documents-data-source.js';
+import { PostgresInventoryAdjustmentsDataSource } from './infrastructure/datasources/postgres-inventory-adjustments.js';
 import { PostgresMovementsDataSource } from './infrastructure/datasources/postgres-movements-data-source.js';
 import { MovementCancellationRepositoryImpl, MovementsRepositoryImpl } from './infrastructure/repositories/movements-repository-impl.js';
 import { createMovementsRouter } from './presentation/http/movements-routes.js';
@@ -22,19 +24,13 @@ export const createMovementsModule = (
     );
   }
 
-  if (env.INVENTORY_MOVEMENTS_SOURCE === 'postgres') {
-    const base = new PostgresMovementsDataSource(connectPostgres);
-    const source = new MovementsWithLocalDocumentsDataSource(base, base);
-    const cancellations = new MovementCancellationRepositoryImpl(source);
-    return createMovementsRouter(
-      new ReadInventoryMovements(new MovementsRepositoryImpl(source), cancellations),
-      new CancelInventoryMovement(cancellations),
-    );
-  }
-
-  const source = new MovementsWithLocalDocumentsDataSource(new LegacyMysqlMovementsDataSource());
-  return createMovementsRouter(new ReadInventoryMovements(
-    new MovementsRepositoryImpl(source),
-    new MovementCancellationRepositoryImpl(source),
-  ));
+  const adjustments = new PostgresInventoryAdjustmentsDataSource();
+  const snapshot = env.INVENTORY_MOVEMENTS_SOURCE === 'postgres' ? new PostgresMovementsDataSource(connectPostgres) : undefined;
+  const source = new MovementsWithLocalDocumentsDataSource(snapshot ?? new LegacyMysqlMovementsDataSource(), snapshot, adjustments);
+  const cancellations = new MovementCancellationRepositoryImpl(source);
+  return createMovementsRouter(
+    new ReadInventoryMovements(new MovementsRepositoryImpl(source), cancellations),
+    new CancelInventoryMovement(cancellations),
+    new CaptureInventoryMovements(adjustments),
+  );
 };

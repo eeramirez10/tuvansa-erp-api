@@ -6,6 +6,8 @@ import {
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { assertActivePurchaseOrder, lockPurchaseOrderWrite, readPurchaseOrderRemovals } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-removals.js';
 import { readPurchaseOrderSupplierChanges } from '../../../../../shared/infrastructure/datasources/postgres-purchase-order-suppliers.js';
+import { assertActiveCatalogProducts } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
+import { assertActiveSupplierCatalog } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
 import type {
   PurchaseOrderEditSnapshot, PurchaseOrderEditStorage, PurchaseOrderStockChange,
 } from '../../domain/datasources/purchase-order-edit-data-source.js';
@@ -199,11 +201,13 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
     supplierRevision: number,
     replay: (client: PostgresClient) => Promise<T | null>,
     insert: (client: PostgresClient) => Promise<T>,
+    verify?: (client: PostgresClient) => Promise<void>,
   ): Promise<T> {
     return this.transaction(async (client) => {
       await lockPurchaseOrderWrite(client, snapshot.id);
       const existing = await replay(client);
       if (existing !== null) return existing;
+      if (verify) await verify(client);
       await this.saveRevision(client, snapshot, 'receipt', supplierRevision);
       const legacy = !isLocalPurchaseOrderId(snapshot.id);
       for (const { productId, pendingDelta, assigned } of stock) {
@@ -368,6 +372,8 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
   }
 
   private async insertLocal(client: PostgresClient, requestKey: string, fingerprint: string, order: NewPurchaseOrder, splitNumber?: string): Promise<PurchaseOrderIdentity> {
+    await assertActiveSupplierCatalog(client, order.header.supplier.id);
+    await assertActiveCatalogProducts(client, order.document.lines.map(({ productId }) => productId));
     const allocation = (await client.query<{ id: string }>("SELECT nextval('tuvansa.purchase_order_ids') AS id")).rows[0]!;
     const id = Number(allocation.id);
     const number = splitNumber ?? `OW${String(id - localPurchaseOrderIdStart + 1).padStart(8, '0')}`;
@@ -559,6 +565,8 @@ export class PostgresPurchaseOrderEdits implements PurchaseOrderEditStorage, Pur
 
   async save(snapshot: PurchaseOrderEditSnapshot, stock: PurchaseOrderStockChange[], supplierRevision: number): Promise<PurchaseOrderEditSnapshot> {
     return this.transaction(async (client) => {
+      await lockPurchaseOrderWrite(client, snapshot.id);
+      await assertActiveCatalogProducts(client, snapshot.lines.filter(({ id }) => id === 0).map(({ productId }) => productId));
       const lines = await this.allocateLineIds(client, snapshot.lines);
       const saved = await this.saveRevision(client, { ...snapshot, lines }, 'edit', supplierRevision);
       await this.saveStock(client, snapshot.id, snapshot.number, stock);

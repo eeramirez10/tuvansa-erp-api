@@ -119,7 +119,7 @@ async function paymentSnapshot(client: PostgresClient, companyId: number,
 
 interface ExpensePaymentStatus { active: boolean; lastReversalDate: string | null }
 
-async function expensePaymentStatus(client: PostgresClient, companyId: number, ids: number[]): Promise<ExpensePaymentStatus> {
+export async function getDocumentPaymentStatus(client: PostgresClient, companyId: number, ids: number[]): Promise<ExpensePaymentStatus> {
   if (!await supplierPaymentsAvailable(client)) return { active: false, lastReversalDate: null };
   const hasReversals = await supplierPaymentReversalsAvailable(client);
   const expressions = hasReversals
@@ -149,7 +149,7 @@ async function expenseSnapshot(client: PostgresClient, companyId: number,
   const { rows: [batchAmount] } = await client.query<{ amount: number }>(
     'SELECT sum(amount)::float8 AS amount FROM tuvansa.purchase_expense_documents WHERE batch_id=$1 AND company_id=$2', [header.targetId, companyId],
   );
-  const { active, lastReversalDate } = await expensePaymentStatus(client, companyId, documents.map(({ id }) => id));
+  const { active, lastReversalDate } = await getDocumentPaymentStatus(client, companyId, documents.map(({ id }) => id));
   return {
     ...header, documents, amount: batchAmount!.amount,
     minimumDate: lastReversalDate && lastReversalDate > header.originalDate ? lastReversalDate : header.originalDate,

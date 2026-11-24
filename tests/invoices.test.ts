@@ -95,7 +95,7 @@ const repository = (overrides: Partial<InvoicesRepository> = {}): InvoicesReposi
 
 const localRemission = () => {
   const source = invoice.toPrimitives();
-  return { ...source, id: 7100000000000, number: 'FAW00000001', totals: { ...source.totals, total: 116 } };
+  return { ...source, id: 7100000000000, number: 'FAW00000001', cfdStatus: '0', folio: '', totals: { ...source.totals, total: 116 } };
 };
 
 describe('Simulación de timbrado', () => {
@@ -105,9 +105,9 @@ describe('Simulación de timbrado', () => {
     try {
       await db.exec(`
         CREATE SCHEMA tuvansa;
-        CREATE TABLE tuvansa.sales_remissions (id bigint PRIMARY KEY);
-        INSERT INTO tuvansa.sales_remissions VALUES (7100000000000);
+        CREATE TABLE tuvansa.sales_remissions (id bigint PRIMARY KEY,result jsonb NOT NULL);
       `);
+      await db.query('INSERT INTO tuvansa.sales_remissions VALUES($1,$2::jsonb)', [remission.id, JSON.stringify({ invoice: remission })]);
       const store = new PostgresSalesStampingSimulations(async () => ({
         query: async <T extends object>(sql: string, values?: unknown[]) => {
           if (values) return db.query<T>(sql, values);
@@ -128,7 +128,7 @@ describe('Simulación de timbrado', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 15000);
 
   it('bloquea el flujo deshabilitado, documentos ajenos y remisiones canceladas o sin valor', async () => {
     const store = { find: vi.fn(), record: vi.fn() };

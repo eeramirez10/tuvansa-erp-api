@@ -13,10 +13,12 @@ export const createProductsRouter = (
   router.get('/', controller.search);
   router.post('/', controller.create);
   router.get('/code-availability', controller.getCodeAvailability);
+  router.get('/create-options', controller.getCreateOptions);
   router.get('/first', controller.getFirstActive);
   router.get('/:productId/previous', controller.getPrevious);
   router.get('/:productId/next', controller.getNext);
   router.get('/:productId/edit-options', controller.getEditOptions);
+  router.get('/:productId/removal', controller.getRemoval);
   router.get('/:productId/actions/warehouses', controller.panel('warehouses'));
   router.get('/:productId/actions/color-size-registration', controller.panel('color-size-registration'));
   router.get('/:productId/actions/block-status', controller.panel('block-status'));

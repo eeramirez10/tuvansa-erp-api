@@ -45,13 +45,16 @@ export const applyProductWriteValues = (
     code: values.code ?? previous.code,
     description: values.description ?? previous.description,
     classification: {
+      ...classification,
       type: values.type ?? classification.type,
       familyCode: values.familyCode ?? classification.familyCode,
-      unit: unit ? { id: unit.id, code: unit.code, description: unit.description } : classification.unit,
-      usesColorAndSize: unit?.usesColorAndSize ?? classification.usesColorAndSize,
+      unit: unit ? { id: unit.id, code: unit.code, description: unit.description,
+        catalogOption: { code: unit.code, description: unit.description } } : classification.unit,
+      usesColorAndSize: unit?.usesColorAndSize ?? values.usesColorAndSize ?? classification.usesColorAndSize,
       hasPhoto: values.hasPhoto ?? classification.hasPhoto,
     },
     prices: {
+      ...prices,
       sale: [
         { amount: values.salePrice1 ?? prices.sale[0].amount, currencyId: values.saleCurrency1 ?? prices.sale[0].currencyId },
         { amount: values.salePrice2 ?? prices.sale[1].amount, currencyId: values.saleCurrency2 ?? prices.sale[1].currencyId },
@@ -66,6 +69,7 @@ export const applyProductWriteValues = (
       },
     },
     warehouse: {
+      ...warehouse,
       minimum: values.minimum ?? warehouse.minimum,
       maximum: values.maximum ?? warehouse.maximum,
       location: values.location ?? warehouse.location,
@@ -76,6 +80,13 @@ export const applyProductWriteValues = (
         secondary: values.secondaryAccount ?? warehouse.accounts.secondary,
         costOfSales: values.costOfSalesAccount ?? warehouse.accounts.costOfSales,
       },
+    },
+    accumulated: {
+      ...previous.accumulated,
+      ...(values.salesLastSixWeeks === undefined ? {} : {
+        salesLastSixWeeks: values.salesLastSixWeeks, salesLastSixMonths: values.salesLastSixWeeks,
+      }),
+      inventoryDays: values.inventoryDays ?? previous.accumulated.inventoryDays,
     },
   };
 };

@@ -1,9 +1,10 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
+import { assertClientCatalogCreditAllowed } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
 import {
   salesRemissionsOutstanding,
 } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
-import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
 import { normalizeOrderWarehouse } from '../../../orders/domain/entities/order-warehouse.js';
@@ -54,6 +55,8 @@ const migrations = [{
   `,
 }];
 
+export const ensureSalesRemissionSchema = (client: PostgresClient) => migratePostgres(client, migrations);
+
 const unavailable = () => new ApplicationError('No fue posible consultar o guardar la remisión en PostgreSQL.', 'SALES_REMISSION_POSTGRES_UNAVAILABLE', 503);
 
 async function read<T>(fallback: T, callback: (client: PostgresClient) => Promise<T>): Promise<T> {
@@ -80,7 +83,7 @@ export function readSalesRemissions<T>(fallback: T, callback: (client: PostgresC
 export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
   private migration?: Promise<void>;
 
-  constructor(private readonly orders = new PostgresOrderOverlayDataSource()) {}
+  constructor(private readonly orders = new PostgresOrderOverlayDataSource(), private readonly connect: PostgresConnectionFactory = connectPostgres) {}
 
   writable() { return this.orders.configured; }
 
@@ -112,8 +115,8 @@ export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
 
   private async migrate() {
     await this.orders.initialize();
-    const client = await connectPostgres();
-    try { await migratePostgres(client, migrations); } finally { client.release(); }
+    const client = await this.connect();
+    try { await ensureSalesRemissionSchema(client); } finally { client.release(); }
   }
 
   async commit({ companyId, userId, requestKey, fingerprint, orderId, orderNumber, revision, post }: InvoiceFromOrderCommand) {
@@ -129,8 +132,7 @@ export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
     };
     return this.orders.postRemission(orderId, revision, replay, async (client, current) => {
       if (current.number !== orderNumber) throw new ConflictError('El folio del pedido cambió.', 'SALES_REMISSION_ORDER_CHANGED');
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-credit:' || $1 || ':' || $2,0))",
-        [String(companyId), String(current.customer.id)]);
+      await assertClientCatalogCreditAllowed(client, current.customer.id);
       const balance = await salesRemissionsOutstanding(client, companyId, current.customer.id);
       const posting = await post(current, balance);
       await assertSaleStock(client, current, posting.stock);

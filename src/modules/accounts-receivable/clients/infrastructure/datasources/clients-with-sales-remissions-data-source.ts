@@ -4,7 +4,7 @@ import type { ClientSearchCriteria } from '../../domain/repositories/clients-rep
 import {
   clientMoney, salesRemissionCustomerTotals, type SalesRemissionCustomerTotals,
 } from './client-ledger-with-sales-remissions-data-source.js';
-import { LegacyMysqlClientsDataSource } from './legacy-mysql-clients-data-source.js';
+import { ClientsWithCatalogDataSource } from './clients-with-catalog-data-source.js';
 
 function latestDate(legacy: string | null, local: string | null): string | null {
   return local && (!legacy || local > legacy) ? local : legacy;
@@ -20,7 +20,7 @@ function withRemissions(client: Client, remissions: SalesRemissionCustomerTotals
   return Client.create({ ...props, totals: { ...props.totals, currentBalance, availableCredit, lastPurchaseAt, lastPaymentAt } });
 }
 
-export class ClientsWithSalesRemissionsDataSource extends LegacyMysqlClientsDataSource {
+export class ClientsWithSalesRemissionsDataSource extends ClientsWithCatalogDataSource {
   private async includeRemissions(read: Promise<Client | null>): Promise<Client | null> {
     const client = await read;
     if (!client) return null;

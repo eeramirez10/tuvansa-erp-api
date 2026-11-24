@@ -46,13 +46,15 @@ export class BankPanelsWithActionsDataSource extends BankPanelsWithLocalPostings
     const base = panel.items as Record<string, unknown>[];
     const [local, ledger] = await Promise.all([
       this.settings.read<number[]>({ accountId: id, action: 'budget', scope }),
-      scope ? { items: base, years: [], webPostings: false } : bankLedgerWithWebPostings(id, base),
+      scope && !/^\d+$/.test(scope) ? { items: base, years: [], webPostings: false }
+        : bankLedgerWithWebPostings(id, base, scope ? Number(scope) : null),
     ]);
     const centers = Array.isArray(panel.summary?.centers) ? panel.summary.centers as { code: string }[] : [];
     const budgetEditable = this.settings.writable() && (scope === '' || centers.some(({ code }) => String(code).trim() === scope));
     return {
       ...panel, readOnly: !budgetEditable, source: [...panel.source, ...(local ? ['bank_panel_settings'] : []),
-        ...(ledger.webPostings ? ['supplier_payments', 'customer_collections', 'bank_transfer_movements'] : [])],
+        ...(ledger.webPostings ? (scope ? ['manual_accounting_policy_lines']
+          : ['supplier_payments', 'customer_collections', 'bank_transfer_movements', 'manual_accounting_policy_lines']) : [])],
       items: ledger.items.map((row, index) =>
         local && index < 12 ? { ...row, budget: local.values[index] ?? 0 } : row),
       summary: { ...panel.summary, budgetEditable, years: ledger.years, revision: local?.revision ?? 0 },

@@ -2,11 +2,20 @@ import type { PostgresClient } from '../../../../../shared/infrastructure/databa
 
 export const supplierPaymentReversalIdStart = 7920000000000;
 export const purchaseExpenseCancellationIdStart = 7930000000000;
+export const purchaseReceptionCancellationIdStart = 7940000000000;
 export const postingReversalSeriesLength = 99999999;
 
 const inSeries = (id: number, start: number) => id >= start && id < start + postingReversalSeriesLength;
 export const isLocalPurchaseExpenseCancellationId = (id: number) => inSeries(id, purchaseExpenseCancellationIdStart);
 export const isLocalSupplierPaymentReversalId = (id: number) => inSeries(id, supplierPaymentReversalIdStart);
+export const isLocalPurchaseReceptionCancellationId = (id: number) => inSeries(id, purchaseReceptionCancellationIdStart);
+
+export async function purchaseReceptionCancellationsAvailable(client: PostgresClient): Promise<boolean> {
+  const { rows: [row] } = await client.query<{ available: boolean }>(
+    "SELECT to_regclass('tuvansa.purchase_reception_cancellations') IS NOT NULL AS available",
+  );
+  return row?.available ?? false;
+}
 
 export async function supplierPaymentReversalsAvailable(client: PostgresClient): Promise<boolean> {
   const { rows: [row] } = await client.query<{ available: boolean }>(

@@ -33,6 +33,7 @@ export interface AccountingPolicyProps {
   usedAt: string | null;
   totals: { debit: number; credit: number; difference: number };
   movements: AccountingPolicyMovement[];
+  manual?: { revision: number; canceled: boolean; reconciled: boolean };
 }
 
 export class AccountingPolicy {

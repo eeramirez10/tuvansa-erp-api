@@ -14,6 +14,15 @@ export class CreateProduct {
     return !(await this.repository.codeExists(code));
   }
 
+  async options() {
+    const canWrite = await this.repository.catalogWritable?.() ?? false;
+    return {
+      canWrite,
+      reason: canWrite ? null : 'El catálogo PostgreSQL requiere una copia conciliada de PROSCAI.',
+      units: canWrite ? await this.repository.listUnits?.() ?? [] : [],
+    };
+  }
+
   async execute(input: CreateProductInput): Promise<ProductResponse> {
     if (!(await this.isCodeAvailable(input.code))) {
       throw new ConflictError('Ya existe un producto con ese codigo', 'PRODUCT_CODE_EXISTS');

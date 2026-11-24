@@ -4,12 +4,13 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { isLocalSupplierPaymentId } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
+import { customerCollectionReversalsAvailable, isLocalCustomerCollectionReversalId } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
 import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { isLocalPurchaseExpenseBatchId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-expenses.js';
 import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import {
-  isLocalPurchaseExpenseCancellationId, isLocalSupplierPaymentReversalId,
-  purchaseExpenseCancellationsAvailable, supplierPaymentReversalsAvailable,
+  isLocalPurchaseExpenseCancellationId, isLocalPurchaseReceptionCancellationId, isLocalSupplierPaymentReversalId,
+  purchaseExpenseCancellationsAvailable, purchaseReceptionCancellationsAvailable, supplierPaymentReversalsAvailable,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
@@ -19,6 +20,7 @@ import type {
   AccountingPolicyNavigationDirection, AccountingPolicySearchCriteria, AccountingPolicySearchResult,
 } from '../../domain/repositories/accounting-policies-repository.js';
 import type { LegacyMysqlAccountingPoliciesDataSource } from './legacy-mysql-accounting-policies-data-source.js';
+import { isManualPolicyId, manualLineSettlement, manualPoliciesAvailable } from './manual-policy-reads.js';
 
 interface LocalPolicyHeader {
   id: number;
@@ -32,12 +34,14 @@ interface LocalPolicyHeader {
   concept: string;
   auditAt: string;
   exchangeRate: number;
+  applied?: boolean;
+  manual?: { revision: number; canceled: boolean; reconciled: boolean } | null;
 }
 
 interface LocalPolicyRecord extends LocalPolicyHeader {
   lines: {
     account: string; department: string; debit: number; credit: number;
-    id?: number; reference?: string; accountName?: string; accountId?: number; reconciled?: boolean;
+    id?: number; reference?: string; accountName?: string; accountId?: number; accountType?: number; reconciled?: boolean;
   }[];
 }
 
@@ -54,6 +58,11 @@ const receiptFields = `
     result #>> '{reception,supplier,name}' AS beneficiary, 'COMPRAS'::text AS family,
     concat('Recepción ', number, '  Referencia ', result #>> '{reception,supplierReference}', ' O.C. ', order_number) AS concept,
     created_at AS "auditAt", coalesce((payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
+const receiptCancellationFields = `
+    cancellation.id,cancellation.policy_number AS number,cancellation.company_id AS company,cancellation.user_id AS "userId",
+    cancellation.date::text AS date,r.number AS cheque,r.result #>> '{reception,supplier,name}' AS beneficiary,'COMPRAS CANC'::text AS family,
+    concat('Cancelación de recepción ', r.number, ' · ', cancellation.reason) AS concept,
+    cancellation.created_at AS "auditAt",1::float8 AS "exchangeRate"`;
 const paymentFields = `
     posting.id, posting.policy_number AS number, posting.company_id AS company, posting.user_id AS "userId",
     posting.date::text AS date, posting.number AS cheque,
@@ -106,6 +115,18 @@ const collectionLines = `jsonb_build_array(
     jsonb_build_object('account', posting.client_account, 'accountName', posting.client_account_name,
       'department', '', 'debit', 0, 'credit', posting.amount, 'reference', remission.number)
   )`;
+const collectionReversalFields = `
+    reversal.id,reversal.policy_number AS number,reversal.company_id AS company,reversal.user_id AS "userId",
+    reversal.date::text AS date,reversal.number AS cheque,remission.result #>> '{invoice,customer,name}' AS beneficiary,
+    'COBRANZA'::text AS family,concat('Reversión de cobranza ',posting.policy_number,' · ',reversal.reason) AS concept,
+    reversal.created_at AS "auditAt",1::float8 AS "exchangeRate"`;
+const collectionReversalLines = `jsonb_build_array(
+    jsonb_build_object('account',posting.bank_code,'accountId',posting.bank_account_id,'accountName',posting.bank_name,
+      'department','','debit',0,'credit',posting.amount,'reference',posting.policy_number,
+      'reconciled',correction_settlement.statement_date IS NOT NULL),
+    jsonb_build_object('account',posting.client_account,'accountName',posting.client_account_name,
+      'department','','debit',posting.amount,'credit',0,'reference',remission.number)
+  )`;
 const transferFields = `
     transfer.id, transfer.policy_number AS number, transfer.company_id AS company, transfer.user_id AS "userId",
     transfer.date::text AS date, coalesce(nullif(transfer.reference,''),transfer.number) AS cheque,
@@ -126,8 +147,9 @@ const transferLines = (settlements: string) => `(
 const money = (amount: number) => Number(amount.toFixed(2));
 const isLocalPolicyId = (id: number) =>
   isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseBatchId(id) || isLocalSupplierPaymentId(id)
-    || isLocalCustomerCollectionId(id) || isLocalBankTransferId(id)
-    || isLocalPurchaseExpenseCancellationId(id) || isLocalSupplierPaymentReversalId(id);
+    || isLocalCustomerCollectionId(id) || isLocalCustomerCollectionReversalId(id) || isLocalBankTransferId(id)
+    || isLocalPurchaseExpenseCancellationId(id) || isLocalPurchaseReceptionCancellationId(id) || isLocalSupplierPaymentReversalId(id)
+    || isManualPolicyId(id);
 
 async function readLocalPolicies<T>(
   fallback: T, detail: boolean, read: (client: PostgresClient, view: string) => Promise<T>,
@@ -151,6 +173,12 @@ async function readLocalPolicies<T>(
     if (tables?.receipts) views.push(
       `SELECT ${receiptFields}, ${withLines("accounting->'lines'")} AS lines
        FROM tuvansa.purchase_receptions WHERE company_id = 1 AND accounting IS NOT NULL`,
+    );
+    if (tables?.receipts && await purchaseReceptionCancellationsAvailable(client)) views.push(
+      `SELECT ${receiptCancellationFields}, ${withLines("cancellation.accounting->'lines'")} AS lines
+       FROM tuvansa.purchase_reception_cancellations cancellation
+       JOIN tuvansa.purchase_receptions r ON r.id=cancellation.receipt_id AND r.company_id=cancellation.company_id
+       WHERE cancellation.company_id=1`,
     );
     if (tables?.expenses) views.push(
       `SELECT ${expenseFields}, ${withLines('accounting_lines')} AS lines
@@ -182,11 +210,34 @@ async function readLocalPolicies<T>(
        JOIN tuvansa.sales_remissions AS remission ON remission.id = posting.remission_id AND remission.company_id = posting.company_id
        ${settlements} WHERE posting.company_id = 1`,
     );
+    if (tables?.collections && await customerCollectionReversalsAvailable(client)) views.push(
+      `SELECT ${collectionReversalFields},${withLines(collectionReversalLines)} AS lines
+       FROM tuvansa.customer_collection_reversals reversal
+       JOIN tuvansa.customer_collections posting ON posting.id=reversal.collection_id AND posting.company_id=reversal.company_id
+       JOIN tuvansa.sales_remissions remission ON remission.id=posting.remission_id AND remission.company_id=posting.company_id
+       ${joinBankReconciliation(detail && await bankReconciliationsAvailable(client), 'reversal', 'correction_settlement', 'posting')}
+       WHERE reversal.company_id=1`,
+    );
     if (tables?.transfers) views.push(
       `SELECT ${transferFields}, ${withLines(transferLines(settlements))} AS lines
        FROM tuvansa.bank_transfers AS transfer WHERE transfer.company_id=1`,
     );
-    return views.length ? await read(client, views.join(' UNION ALL ')) : fallback;
+    const projections = views.length ? [`SELECT postings.*,true AS applied,NULL::jsonb AS manual FROM (${views.join(' UNION ALL ')}) postings`] : [];
+    if (await manualPoliciesAvailable(client)) {
+      const reconciled = manualLineSettlement(await bankReconciliationsAvailable(client));
+      projections.push(`SELECT p.id,p.number,p.company_id AS company,0 AS "userId",p.date::text AS date,''::text AS cheque,
+        p.beneficiary,p.family,p.concept,p.updated_at AS "auditAt",1::float8 AS "exchangeRate",
+        ${detail ? 'lineInfo.lines' : "'[]'::jsonb"} AS lines,p.applied,
+        jsonb_build_object('revision',p.revision,'canceled',p.canceled_at IS NOT NULL,'reconciled',lineInfo.reconciled) AS manual
+        FROM tuvansa.manual_accounting_policies p CROSS JOIN LATERAL (
+          SELECT coalesce(bool_or(settlement.statement_date IS NOT NULL),false) AS reconciled,
+            ${detail ? `coalesce(jsonb_agg(jsonb_build_object('id',l.id,'account',l.account->>'code','accountId',l.account_id,
+              'accountName',l.account->>'name','accountType',l.account_type,'department',l.cost_center,'debit',l.debit,'credit',l.credit,
+              'reference',l.reference,'reconciled',settlement.statement_date IS NOT NULL) ORDER BY l.position),'[]'::jsonb)` : "'[]'::jsonb"} AS lines
+          FROM tuvansa.manual_accounting_policy_lines l ${reconciled} WHERE l.policy_id=p.id
+        ) lineInfo WHERE p.company_id=1`);
+    }
+    return projections.length ? await read(client, projections.join(' UNION ALL ')) : fallback;
   } catch (error) {
     if (error instanceof ApplicationError) throw error;
     throw new ApplicationError('No fue posible consultar las pólizas en PostgreSQL.', 'ACCOUNTING_POLICY_POSTGRES_UNAVAILABLE', 503);
@@ -200,9 +251,10 @@ function localPolicy(header: LocalPolicyHeader, movements: AccountingPolicyMovem
   const debit = money(movements.reduce((sum, line) => sum + line.debit, 0));
   const credit = money(movements.reduce((sum, line) => sum + line.credit, 0));
   return AccountingPolicy.create({
-    id, number, date, cheque, company, userId, origin: family, applied: true, beneficiary, family, concept,
+    id, number, date, cheque, company, userId, origin: header.manual ? 'DIARIO' : family, applied: header.applied ?? true, beneficiary, family, concept,
     amountInWords: '', report: '', auditAt, postDate: null, classifications: ['', ''], exchangeRate, usedAt: null,
     totals: { debit, credit, difference: money(debit - credit) }, movements,
+    ...(header.manual ? { manual: header.manual } : {}),
   });
 }
 
@@ -216,7 +268,7 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
   if (record.lines.length === 0) return localPolicy(record);
   const codes = [...new Set(record.lines.map(({ account }) => account))];
   // Derivada. Completa las cuentas de la póliza web con el catálogo de Contabilidad.
-  const [rows] = await legacyMysqlPool.query<AccountRow[]>(
+  const [rows] = record.manual ? [[]] : await legacyMysqlPool.query<AccountRow[]>(
     'SELECT BSEQ AS id, BCOD AS code, BNOMBRE AS name, BTIPO AS type FROM FBENC WHERE BCOD IN (?) ORDER BY BSEQ', [codes],
   );
   const accounts = new Map<string, AccountRow>();
@@ -224,12 +276,12 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
     const code = row.code.trim();
     if (!accounts.has(code)) accounts.set(code, row);
   }
-  return localPolicy(record, record.lines.map(({ id, account, accountId, accountName, department, debit, credit, reference, reconciled }, index) => {
+  return localPolicy(record, record.lines.map(({ id, account, accountId, accountName, accountType, department, debit, credit, reference, reconciled }, index) => {
     const details = accounts.get(account);
     return {
       id: id ?? index + 1, accountId: accountId ?? details?.id ?? 0, accountCode: account, accountName: accountName ?? details?.name ?? '',
       debit, credit, reference: reference ?? '', exchangeRate: record.exchangeRate, costCenter: Number(department) || 0,
-      reconciled: reconciled ?? false, accountType: details?.type ?? 0,
+      reconciled: reconciled ?? false, accountType: accountType ?? details?.type ?? 0,
     };
   }));
 }
@@ -259,7 +311,6 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
   }
 
   private searchLocal(criteria: AccountingPolicySearchCriteria, filtered: boolean, offset: number, limit: number) {
-    if (criteria.applied === false) return Promise.resolve({ items: [], total: 0 });
     const conditions = [];
     const values: (string | number)[] = [];
     if (criteria.query !== undefined) {
@@ -279,6 +330,7 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       values.push(criteria.date);
       conditions.push(`date = $${values.length}`);
     }
+    if (criteria.applied !== undefined) conditions.push(criteria.applied ? 'applied' : 'NOT applied');
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const order = filtered ? 'upper(number), id' : '"auditAt" DESC, id DESC';
     values.push(offset, limit);

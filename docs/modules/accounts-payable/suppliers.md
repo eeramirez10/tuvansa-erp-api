@@ -1,6 +1,6 @@
 # Cuentas por pagar — Catálogo de proveedores
 
-Módulo de solo lectura reconstruido desde la ventana **Cuentas x Pagar / Catálogo de proveedores** de OMNIS 7.
+Catálogo, consultas y mantenimiento de la ficha **Cuentas x Pagar / Catálogo de proveedores** de Omnis 7.
 
 ## Pantalla principal y barra
 
@@ -14,6 +14,29 @@ Módulo de solo lectura reconstruido desde la ventana **Cuentas x Pagar / Catál
 
 La consulta inicial observada en OMNIS carga los identificadores con `SELECT PRVSEQ FROM FPRV ORDER BY PRVCOD, PRVSEQ` y después lee la ficha completa de `FPRV`. La API conserva ese orden y usa `PRVSEQ` como identificador estable.
 
+## Alta, Cambio y Baja
+
+| Control | Endpoint | Procedencia y tablas |
+| --- | --- | --- |
+| Alta | `GET /create`, `POST /` | Derivada de `MPRV/21` y `/27`. Defaults de `FCIA`; unicidad en `FPRV` y `supplier_catalog` |
+| Cambio | `GET /:id/edit`, `PATCH /:id` | Derivada de `MPRV/23` y `/27`. `FPRV`, `FCIA`, `FBENC`, `supplier_catalog` |
+| Baja | `DELETE /:id` | Derivada de `MPRV/22`. Dependencias en `FDOC`, `FAX`, `FAXINV`, `FPENC`, `FPLIN`, `FCANU2` y las tablas web de RW, GA, PP y órdenes |
+
+La ficha se edita en la misma vista. El alta propone moneda y lista 1,
+tolerancia de compra 10 y la cuenta `FCIA.CIACTAPRV`. Con Contabilidad activa,
+se verifica que la cuenta informada sea una cuenta sin subcuentas. La
+configuración de la compañía determina si puede quedar en blanco. El cambio
+normaliza una lista fuera de 1–5 a 1 y exige la revisión vigente de la ficha.
+Estas reglas provienen de los procedimientos de la biblioteca German pruebas
+exportados el 23 de noviembre de 2026.
+
+PostgreSQL guarda las altas, modificaciones y bajas de la web. Se usa un
+identificador estable. Los importes de un proveedor heredado conservan su
+origen en FPRV y se integran con las recepciones y pagos locales. La baja
+requiere confirmación y excluye al proveedor de la ficha, el buscador y las
+flechas. Si ya existen documentos o referencias, la API bloquea la baja y el
+cambio de código. El código de un proveedor dado de baja queda reservado.
+
 ## Acciones
 
 | Botón OMNIS | Endpoint GET | Fuente real |
@@ -25,7 +48,7 @@ La consulta inicial observada en OMNIS carga los identificadores con `SELECT PRV
 | Varios | `/:id/actions/various` | campos bancarios, fiscales y varios ya almacenados en `FPRV` |
 | Contactos | `/:id/actions/contacts` | `FCONTACTOS` por `CONTKEY = PRVCOD` |
 
-`Foto` se omitió por decisión del proyecto. Los controles de alta, baja y cambio que aparecen dentro de las ventanas se muestran deshabilitados en el frontend porque esta fase es GET.
+`Foto` se omitió por decisión del proyecto. Los controles internos de las consultas y acciones conservan el alcance de lectura indicado en la tabla.
 
 ## Consultas
 

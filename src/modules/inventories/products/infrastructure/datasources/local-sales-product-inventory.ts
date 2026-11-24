@@ -42,6 +42,20 @@ export async function localSalesProductStocks(ids: number[]): Promise<Map<number
         row.lastSaleAt = lastSaleAt;
       }
     }
+    if (tables.adjustments) {
+      const { rows } = await client.query<{ id: string; warehouse: string; quantity: string }>(
+        `SELECT product_id AS id,warehouse,sum(quantity) AS quantity
+         FROM tuvansa.inventory_adjustment_stock WHERE product_id=ANY($1::bigint[]) GROUP BY product_id,warehouse`, [ids],
+      );
+      for (const { id, warehouse, quantity } of rows) warehouseRecord(Number(id), warehouse).quantity += Number(quantity);
+    }
+    if (tables.remissionCancellations) {
+      const { rows } = await client.query<{ id: string; warehouse: string; quantity: string }>(
+        `SELECT product_id AS id,warehouse,sum(quantity) AS quantity
+         FROM tuvansa.sales_remission_cancellation_inventory WHERE product_id=ANY($1::bigint[]) GROUP BY product_id,warehouse`, [ids],
+      );
+      for (const { id, warehouse, quantity } of rows) warehouseRecord(Number(id), warehouse).quantity += Number(quantity);
+    }
     for (const [id, warehouses] of grouped) {
       const product = results.get(id) ?? { ordered: 0, quoted: 0, warehouses: [] };
       results.set(id, { ...product, warehouses: [...warehouses.values()] });

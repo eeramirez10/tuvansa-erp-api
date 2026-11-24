@@ -138,12 +138,21 @@ export const selectProductFields = `
 `;
 
 // EINV#1 uses USEQ for the connected UCOD field and selects the dropdown by IUM in /239.
-const productSource = `FROM finv
+export const productSource = `FROM finv
   LEFT JOIN funidad ON FINV.USEQ = FUNIDAD.USEQ
   LEFT JOIN funidad AS catalog_unit ON catalog_unit.USEQ = (
     SELECT candidate.USEQ FROM funidad AS candidate
     WHERE candidate.UCOD = FINV.IUM ORDER BY candidate.USEQ LIMIT 1
   )`;
+
+export const legacyProductRemovalRelation = `CASE
+  WHEN FINV.ISTKACT <> 0 THEN 'Existencias'
+  WHEN EXISTS (SELECT 1 FROM fens WHERE EPRO=FINV.ICOD OR EART=FINV.ICOD) THEN 'fens'
+  WHEN EXISTS (SELECT 1 FROM faxinv WHERE faxinv.ISEQ=FINV.ISEQ) THEN 'faxinv'
+  WHEN EXISTS (SELECT 1 FROM fplin WHERE fplin.ISEQ=FINV.ISEQ) THEN 'fplin'
+  WHEN EXISTS (SELECT 1 FROM fvanu2 WHERE fvanu2.ISEQ=FINV.ISEQ) THEN 'fvanu2'
+  WHEN EXISTS (SELECT 1 FROM fcanu2 WHERE fcanu2.ISEQ=FINV.ISEQ) THEN 'fcanu2'
+END`;
 
 const typeFromId = (typeId: number): ProductType => {
   const types: ProductType[] = [
@@ -296,6 +305,26 @@ const statusCondition = (status: ProductSearchCriteria['status']): string => {
 const productDependencyTables = ['faxinv', 'fplin', 'fvanu2', 'fcanu2'] as const;
 
 export class LegacyMysqlProductsDataSource implements ProductsDataSource {
+  async catalogRemovalRelation(productId: number): Promise<string | null> {
+    const [rows] = await legacyMysqlPool.execute<(RowDataPacket & { relation: string | null })[]>(
+      `SELECT ${legacyProductRemovalRelation} AS relation FROM FINV WHERE ISEQ=? LIMIT 1`, [productId],
+    );
+    return rows[0] ? rows[0].relation : 'Catálogo de origen';
+  }
+
+  async catalogRenameRelation(productId: number): Promise<string | null> {
+    const [rows] = await legacyMysqlPool.execute<(RowDataPacket & { relation: string | null })[]>(
+      `SELECT CASE
+         WHEN EXISTS (SELECT 1 FROM FENS WHERE EPRO=FINV.ICOD OR EART=FINV.ICOD) THEN 'Ensamble'
+         WHEN EXISTS (SELECT 1 FROM FPLIN WHERE FPLIN.ISEQ=FINV.ISEQ) THEN 'Partidas de pedidos'
+         WHEN EXISTS (SELECT 1 FROM FLOTES WHERE FLOTES.ISEQ=FINV.ISEQ) THEN 'Lotes'
+         WHEN EXISTS (SELECT 1 FROM FTIKETS WHERE TKTPROD=FINV.ICOD) THEN 'Trabajo en proceso'
+         WHEN EXISTS (SELECT 1 FROM FDESCTOS WHERE DESKEY2 LIKE concat(FINV.ICOD,'+%')) THEN 'Descuentos'
+       END AS relation FROM FINV WHERE ISEQ=? LIMIT 1`, [productId],
+    );
+    return rows[0] ? rows[0].relation : 'Catálogo de origen';
+  }
+
   async findById(productId: number): Promise<Product | null> {
     const [rows] = await legacyMysqlPool.execute<ProductRow[]>(
       `SELECT ${selectProductFields}

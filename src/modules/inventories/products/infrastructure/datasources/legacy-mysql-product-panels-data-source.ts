@@ -7,6 +7,7 @@ import type { ProductPanelsDataSource } from '../../domain/datasources/product-p
 import type {
   ProductPanelCriteria,
   ProductBlockStatus,
+  ProductLedgerFilters,
   ProductPanelKey,
   ProductPanelResult,
   ProductPanelSection,
@@ -599,6 +600,14 @@ const parametersFor = (
 };
 
 export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSource {
+  protected async countLedgerItems(productId: number, filters?: ProductLedgerFilters): Promise<number> {
+    const conditions = ledgerConditions(filters?.warehouse, filters?.movementType);
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { count: number | string }>>(
+      `SELECT COUNT(*) AS count ${ledgerScope}${conditions.sql}`, [productId, ...conditions.params],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
   async getPanel(
     productId: number,
     panel: ProductPanelKey,

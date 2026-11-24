@@ -6,6 +6,8 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { connectPostgres, postgresConfigured, postgresUnavailable, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { assertClientCatalogCreditAllowed } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
+import { assertActiveCatalogProducts } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { readLegacySaleStock, verifyLocalOrderAssignment } from './sales-order-inventory-stock.js';
 
 type Stored = { document: OrderProps; base: OrderProps | null; deleted: boolean; revision: number };
@@ -61,6 +63,8 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       const row = (await c.query<{id:string}>("SELECT nextval('tuvansa.order_ids') AS id")).rows[0]!;
       const id = Number(row.id);
       const doc = await build(id);
+      await assertClientCatalogCreditAllowed(c, doc.customer.id);
+      await assertActiveCatalogProducts(c, doc.lines.map(({ productId }) => productId));
       await c.query('INSERT INTO tuvansa.orders(id,number,document) VALUES ($1,$2,$3::jsonb)', [id,doc.number,JSON.stringify(doc)]);
       await this.record(c,doc,null,false,1,'create');
       return doc;
@@ -79,6 +83,15 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       }
       if (stored.deleted) return null;
       const changed = await transform(structuredClone(stored.document));
+      if (changed && (operation === 'convert' || (changed.authorization === 'O.K.' && stored.document.authorization !== 'O.K.')
+        || (operation === 'assignment' && changed.lines.some((line) =>
+          line.assigned > (stored.document.lines.find(({ id }) => id === line.id)?.assigned ?? 0))))) {
+        await assertClientCatalogCreditAllowed(c, changed.customer.id);
+      }
+      if (changed && operation === 'update') {
+        const previousProducts = new Set(stored.document.lines.map(({ productId }) => productId));
+        await assertActiveCatalogProducts(c, changed.lines.map(({ productId }) => productId).filter((id) => !previousProducts.has(id)));
+      }
       if (operation === 'assignment' && changed && stored.base === null) {
         await verifyLocalOrderAssignment(c, stored.document, changed, this.loadStock);
       }
@@ -111,15 +124,35 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
         throw new ConflictError('El pedido cambió. Vuelve a abrir la remisión.', 'SALES_REMISSION_ORDER_CHANGED');
       }
       const { order, result } = await post(client, stored.document);
-      if (order.id !== id || order.number !== stored.document.number) {
-        throw new ConflictError('La remisión no coincide con el pedido.', 'SALES_REMISSION_ORDER_MISMATCH');
-      }
-      const nextRevision = stored.revision + 1;
-      await client.query('UPDATE tuvansa.orders SET document=$2::jsonb,revision=$3,updated_at=now() WHERE id=$1',
-        [id, JSON.stringify(order), nextRevision]);
-      await this.record(client, order, null, false, nextRevision, 'update');
+      await this.updateRemissionOrder(client, stored, order);
       return result;
     });
+  }
+
+  async cancelRemission<T>(orderId: number | null, replay: (client: PostgresClient) => Promise<T | null>,
+    cancel: (client: PostgresClient, current: OrderProps | null) => Promise<{ order: OrderProps | null; result: T }>): Promise<T> {
+    return this.transaction(async (client) => {
+      if (orderId !== null) await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [orderId]);
+      const existing = await replay(client);
+      if (existing !== null) return existing;
+      const { rows: [stored] } = orderId === null ? { rows: [] } : await client.query<Stored>(
+        `SELECT ${columns} FROM tuvansa.orders WHERE id=$1 AND legacy_id IS NULL AND deleted_at IS NULL FOR UPDATE`, [orderId],
+      );
+      if (orderId !== null && !stored) throw new NotFoundError('Pedido local para regenerar');
+      const { order, result } = await cancel(client, stored?.document ?? null);
+      if (order && stored) await this.updateRemissionOrder(client, stored, order);
+      return result;
+    });
+  }
+
+  private async updateRemissionOrder(client: PostgresClient, stored: Stored, order: OrderProps) {
+    if (order.id !== stored.document.id || order.number !== stored.document.number) {
+      throw new ConflictError('La remisión no coincide con el pedido.', 'SALES_REMISSION_ORDER_MISMATCH');
+    }
+    const nextRevision = stored.revision + 1;
+    await client.query('UPDATE tuvansa.orders SET document=$2::jsonb,revision=$3,updated_at=now() WHERE id=$1',
+      [order.id, JSON.stringify(order), nextRevision]);
+    await this.record(client, order, null, false, nextRevision, 'update');
   }
   private async record(c: PostgresClient, doc: OrderProps, base: OrderProps | null, deleted: boolean, revision: number, operation: string) {
     await c.query('INSERT INTO tuvansa.order_changes(order_id,revision,operation,document) VALUES ($1,$2,$3,$4::jsonb)', [doc.id,revision,operation,JSON.stringify(doc)]);

@@ -13,6 +13,7 @@ import { historicalReceptionCancellationsOn } from '../src/modules/purchasing/pu
 import { localPurchasePayablesSql } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { PostgresPurchaseReceptionCancellations } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionWrites } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import * as salesStock from '../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import * as postgres from '../src/shared/infrastructure/database/postgres-pool.js';
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
 
@@ -138,6 +139,7 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
   const connect = connectionTo(db);
   const inventoryConnection = vi.spyOn(postgres, 'connectPostgres').mockImplementation(connect);
   const inventoryConfiguration = vi.spyOn(postgres, 'postgresConfigured').mockReturnValue(true);
+  const openingStock = vi.spyOn(salesStock, 'readLegacySaleStock').mockResolvedValue(new Map());
   const { actor, order, edits, cancel, receive } = localReceipts(connect);
   const productId = 7;
   const costBasis = { openingStock: 0, average: 0, last: 0, adValorem: 0 };
@@ -147,7 +149,8 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
   };
   const inventory = new PostgresInventoryAdjustmentsDataSource({
     capture: async () => ({ reason: null, defaultDate: '2025-12-04', defaultWarehouse: '01', automaticPeps: true,
-      types: [{ code: 'SI', name: 'Salida', sign: -1 }], warehouses: [{ code: '01', name: 'México' }] }),
+      types: [{ code: 'SI', name: 'Salida', sign: -1 }, { code: 'TR', name: 'Traspaso', sign: 0 }],
+      warehouses: [{ code: '01', name: 'México' }, { code: '12', name: 'Resguardo' }] }),
     products: async () => new Map([[productId, {
       id: productId, code: 'A', description: 'Producto A', unit: 'PZ', cost: 0, transferCost: 0, layerCost: 0, adValorem: 0,
       active: true, simple: false, peps: true, legacyOnHand: 0, legacyAssigned: 0,
@@ -178,6 +181,18 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
       { ...originalLayer, id: lotId, document: first.reception.number, initial: 2, available: 2, layerOrder: 1, cost: 50, adValorem: 0 },
       { ...nextLayer, id: otherLotId, document: second.reception.number, initial: 2, available: 2, layerOrder: 2, cost: 80, adValorem: 0 },
     ]);
+    const beforeTransfer = await readLayers();
+    const transfer = await inventory.create({
+      requestKey: crypto.randomUUID(), type: 'TR', date: '2025-12-04', warehouse: '01', destinationWarehouse: '12',
+      lines: [{ productId, quantity: 1 }],
+    });
+    expect(transfer.lines).toMatchObject([
+      { warehouse: '01', quantity: -1, cost: 65, lotId: 0 },
+      { warehouse: '12', quantity: 1, cost: 65, lotId: 0 },
+    ]);
+    await inventory.cancel(transfer.header.id);
+    expect(await readLayers()).toEqual(beforeTransfer);
+    expect(await readCost()).toEqual({ average: 65, last: 80, adValorem: 0 });
     expect(await cancel.prepare(1, first.reception.id)).toMatchObject({ canWrite: true, amount: 116 });
     const exit = await inventory.create({ requestKey: crypto.randomUUID(), type: 'SI', date: '2025-12-04', warehouse: '01',
       lines: [{ productId, quantity: 2 }] });
@@ -223,6 +238,7 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
   } finally {
     inventoryConnection.mockRestore();
     inventoryConfiguration.mockRestore();
+    openingStock.mockRestore();
     await db.close();
   }
 }, 20000);

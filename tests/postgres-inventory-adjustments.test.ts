@@ -214,6 +214,52 @@ it('registra un TR con ambas partidas y solo lo cancela si hay existencia libre 
   await request(app).delete(`${route}/${initial.body.data.header.id}`).expect(204);
 }, 30000);
 
+it('traspasa un producto PEPS entre almacenes con la cola global disponible para despachar', async () => {
+  const route = '/api/inventories/movements';
+  const app = express().use(express.json()).use(route, createMovementsModule()).use(errorHandler);
+  const productId = 62835;
+  const transfer = {
+    date: '2026-11-24', requestKey: randomUUID(), type: 'TR', warehouse: '01', destinationWarehouse: '12',
+    lines: [{ productId, quantity: 2 }],
+  };
+  const openingLayers = await adjustmentLotState(productId, true);
+  await request(app).post(route).send({ ...transfer, lines: [{ productId, quantity: 6 }] }).expect(409);
+  const { body: { data: moved } } = await request(app).post(route).send(transfer).expect(201);
+  expect(moved).toMatchObject({
+    lines: [
+      { warehouse: '01', quantity: -2, lotId: 0, cost: 175.4321 },
+      { warehouse: '12', quantity: 2, lotId: 0, cost: 175.4321 },
+    ],
+    totals: { quantity: 0, cost: 0 },
+  });
+  expect((await request(app).post(route).send(transfer).expect(201)).body.data).toEqual(moved);
+  expect(await adjustmentLotState(productId, true)).toEqual(openingLayers);
+
+  const movePath = `${route}/${moved.header.id}`;
+  const { body: { data: issued } } = await request(app).post(route).send({
+    requestKey: randomUUID(), type: 'SI', date: transfer.date, warehouse: '12', lines: [{ productId, quantity: 1 }],
+  }).expect(201);
+  expect(issued.lines).toMatchObject([{ warehouse: '12', lotWarehouse: '11', lotId: 17836, quantity: -1 }]);
+  expect((await request(app).get(movePath).expect(200)).body.data.cancellationAvailable).toBe(false);
+  await request(app).delete(movePath).expect(409);
+  await request(app).delete(`${route}/${issued.header.id}`).expect(204);
+  expect((await request(app).get(movePath).expect(200)).body.data.cancellationAvailable).toBe(true);
+  await request(app).delete(movePath).expect(204);
+  await request(app).delete(movePath).expect(204);
+  const { rows } = await db.query(`SELECT warehouse,reversal,quantity::float8 FROM tuvansa.inventory_adjustment_stock
+     WHERE adjustment_id=$1 ORDER BY reversal,warehouse`, [moved.header.id]);
+  expect(rows).toEqual([
+    { warehouse: '01', reversal: false, quantity: -2 }, { warehouse: '12', reversal: false, quantity: 2 },
+    { warehouse: '01', reversal: true, quantity: 2 }, { warehouse: '12', reversal: true, quantity: -2 },
+  ]);
+  expect((await request(app).get(movePath).expect(200)).body.data.lines).toMatchObject([
+    { warehouse: '01', type: 'K', lotId: 0, quantity: 0 }, { warehouse: '12', type: 'K', lotId: 0, quantity: 0 },
+  ]);
+  const { local, orders, deltas } = await adjustmentLotState(productId, true);
+  expect({ local, orders }).toEqual({ local: openingLayers.local, orders: openingLayers.orders });
+  expect(deltas.get(17836) ?? 0).toBe(openingLayers.deltas.get(17836) ?? 0);
+}, 30000);
+
 it('habilita el producto web desde Otros y respeta almacén, paginación y filtro XXX en su Auxiliar', async () => {
   const client = await connect();
   await migratePostgresProductCatalog(client);

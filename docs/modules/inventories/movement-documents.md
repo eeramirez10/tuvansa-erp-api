@@ -164,9 +164,16 @@ de un solo folio. El POST usa `type: "TR"`, `warehouse` para el origen y
 ambas partidas con sus almacenes. **Documentos** encuentra el TR por el
 código de ambos almacenes y **Auxiliar** refleja cada signo en su almacén.
 El costo tiene cuatro decimales y el efecto neto de cantidad y costo es cero.
-La operación aplica a existencias en unidad base, sin capas, piezas, lotes
-ni pedimento. `FTIPMV.TR` de TUVANSA tiene efecto de inventario y flags de
-Cuentas por cobrar, ventas, bancos y fiscal en cero.
+La operación aplica a productos en unidad base, incluidos los que usan
+PEPS automático en TUVANSA. El destino y el origen usan el mismo costo
+capturado o el promedio vigente más advalorem, incluida la valoración
+generada en las recepciones web. `FTIPMV.TR` tiene efecto de inventario y
+flags de Cuentas por cobrar, ventas, bancos y fiscal en cero.
+
+Para el PEPS global con `CIACOMPORTA[94]=0`, `EINV#17/402` envía las
+dos partidas con `PSOLOALM=1`. La captura web registra el saldo por
+almacén con `lotId=0` en ambas partidas. Las salidas desde el almacén
+destino usan la cola PEPS común del producto.
 
 `EINV#24/41` recorre todas las partidas del folio y aplica `MFACT/112`.
 En `TR0001` (`DSEQ=37842`) las dos partidas de `01` y `13` conservan tipo
@@ -175,3 +182,16 @@ existencias libres del destino para regresar el traspaso. Registra los dos
 deltas inversos, conserva el detalle original y muestra las partidas `K` con
 el mismo folio. El registro y la cancelación bloquean ambos almacenes en el
 mismo orden y se aplican en una sola transacción de PostgreSQL.
+
+La cancelación web invierte los asientos por almacén del TR original y
+conserva la cola PEPS. En German, `MFACT/112` llama a `MCPAR03/21` con
+las capas habilitadas al invertir las partidas. El procedimiento puede
+crear o consumir capas durante la cancelación genérica. El historial
+local contiene TR con productos sin capas y el perfil de prueba de Omnis
+bloqueó el movimiento EI necesario para preparar un producto aislado.
+
+La prueba web en PostgreSQL movió dos unidades del almacén 01 al 12
+mediante `TRW00000017`. Una salida de una unidad desde el 12 usó la capa
+histórica del producto y bloqueó la cancelación del TR por existencia
+libre insuficiente. Después de revertir la salida, se canceló el TR y
+los saldos regresaron a 5 y 0 con la misma cola PEPS.

@@ -241,9 +241,9 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         await lockWarehouseStock(client, code, productIds);
       }
       const products = await loadCatalogProducts(client, productIds, await this.references.products(warehouse, productIds));
-      const layered = new Set(productIds.filter((id) => capture.automaticPeps && type !== 'TR' && products.get(id)?.peps));
-      await lockPepsProducts(client, [...layered]);
-      for (const [productId, snapshot] of await inventoryPepsCostsOn(client, [...layered])) {
+      const pepsProducts = new Set(productIds.filter((id) => capture.automaticPeps && products.get(id)?.peps));
+      await lockPepsProducts(client, [...pepsProducts]);
+      for (const [productId, snapshot] of await inventoryPepsCostsOn(client, [...pepsProducts])) {
         const product = products.get(productId)!;
         const valuation = effectivePepsCost({
           average: Number((Number(product.transferCost) - Number(product.adValorem)).toFixed(4)),
@@ -258,15 +258,15 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         const product = products.get(productId);
         if (!product) throw new NotFoundError('Producto de inventario');
         if (!product.active) throw unsupported(`El producto ${product.code} está inactivo.`);
-        if ((!product.simple && !layered.has(productId)) || !product.unit.trim()) throw unsupported(
+        if ((!product.simple && !pepsProducts.has(productId)) || !product.unit.trim()) throw unsupported(
           product.incompatibility ?? `El producto ${product.code} requiere un flujo especial de inventario o una unidad base.`,
         );
         if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 999999999.999 || scaledStock(quantity) !== quantity) {
           throw unsupported(`La cantidad del producto ${product.code} no es válida.`);
         }
         // MCPAR03/33 y /37. La compañía descarga por PEPS y registra el costo promedio de catálogo en FAXINV.
-        const defaultCost = destinationWarehouse || (type === 'SI' && layered.has(productId)) ? product.transferCost : product.cost;
-        if (type === 'SI' && layered.has(productId) && cost !== undefined) {
+        const defaultCost = destinationWarehouse || (type === 'SI' && pepsProducts.has(productId)) ? product.transferCost : product.cost;
+        if (type === 'SI' && pepsProducts.has(productId) && cost !== undefined) {
           throw unsupported(`Deja vacío el costo de ${product.code}. La salida toma el costo que corresponde a PEPS.`);
         }
         const unitCost = adjustmentCost(cost ?? defaultCost, product);
@@ -292,8 +292,9 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       if (exists || await this.references.documentExists(number)) throw duplicateDocument();
 
       const queueChanges = new Map<number, number>();
-      const postedLines = layered.size
-        ? await this.postPepsLayers(client, sourceLines, layered, products, warehouse, number, type === 'EI', queueChanges)
+      // EINV#17/402 con [94]=0 aplica ambas partidas con PSOLOALM=1.
+      const postedLines = type !== 'TR' && pepsProducts.size
+        ? await this.postPepsLayers(client, sourceLines, pepsProducts, products, warehouse, number, type === 'EI', queueChanges)
         : sourceLines;
       const signedLines = destinationWarehouse ? postedLines.flatMap((line) => [line,
         { ...line, quantity: -line.quantity, warehouse: destinationWarehouse }]) : postedLines;

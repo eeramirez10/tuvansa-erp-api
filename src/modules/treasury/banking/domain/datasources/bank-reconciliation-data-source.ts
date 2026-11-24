@@ -23,16 +23,29 @@ export interface BankReconciliationMovement {
   amount: number;
 }
 
-export interface BankReconciliationCommand {
+interface BankReconciliationAccountCommand {
   companyId: number;
   bankAccountId: number;
+  bankOpeningBalance(lookup?: BankAccountLookup): Promise<number>;
+}
+
+export interface BankReconciliationCommand extends BankReconciliationAccountCommand {
   input: BankReconciliationInput;
   fingerprint: string;
-  bankOpeningBalance(lookup?: BankAccountLookup): Promise<number>;
+}
+
+export interface BankTransitInput {
+  movementId: number;
+  inTransit: boolean;
+}
+
+export interface BankTransitCommand extends BankReconciliationAccountCommand {
+  input: BankTransitInput;
 }
 
 export interface BankReconciliationDataSource {
   writable(): boolean;
   findRequest(companyId: number, requestKey: string, fingerprint: string): Promise<BankReconciliationResult | null>;
   commit(command: BankReconciliationCommand): Promise<BankReconciliationResult>;
+  setTransit(command: BankTransitCommand): Promise<BankTransitInput>;
 }

@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { BankAccountsDataSource } from '../../domain/datasources/bank-accounts-data-source.js';
-import type { BankReconciliationDataSource, BankReconciliationInput } from '../../domain/datasources/bank-reconciliation-data-source.js';
-import { validateReconciliationInput } from '../../domain/entities/bank-reconciliation.js';
+import type { BankReconciliationDataSource, BankReconciliationInput, BankTransitInput } from '../../domain/datasources/bank-reconciliation-data-source.js';
+import type { BankAccountLookup } from '../../domain/entities/bank-account.js';
+import { bankCanReconcile, validateReconciliationInput } from '../../domain/entities/bank-reconciliation.js';
 
 export class CaptureBankReconciliation {
   constructor(
@@ -25,16 +26,25 @@ export class CaptureBankReconciliation {
     if (existing) return existing;
     return this.storage.commit({
       companyId, bankAccountId, input, fingerprint,
-      bankOpeningBalance: async (lookup = async (id) => (await this.accounts.findById(id))?.toPrimitives() ?? null) => {
-        const account = await lookup(bankAccountId);
-        if (!account) throw new NotFoundError('Cuenta bancaria');
-        if (account.currency.id !== 1 || account.systemType !== 'bank'
-            || ![0, companyId].includes(account.control.company) || ![0, companyId].includes(account.control.multiCompany)) {
-          throw new ApplicationError('La conciliación está disponible para cuentas bancarias de México en pesos.',
-            'BANK_RECONCILIATION_INELIGIBLE_ACCOUNT', 422);
-        }
-        return Number(account.balances.bank.toFixed(2));
-      },
+      bankOpeningBalance: (lookup) => this.openingBalance(companyId, bankAccountId, lookup),
     });
+  }
+
+  setTransit(companyId: number, bankAccountId: number, input: BankTransitInput) {
+    return this.storage.setTransit({
+      companyId, bankAccountId, input,
+      bankOpeningBalance: (lookup) => this.openingBalance(companyId, bankAccountId, lookup),
+    });
+  }
+
+  private async openingBalance(companyId: number, bankAccountId: number,
+    lookup: BankAccountLookup = async (id) => (await this.accounts.findById(id))?.toPrimitives() ?? null) {
+    const account = await lookup(bankAccountId);
+    if (!account) throw new NotFoundError('Cuenta bancaria');
+    if (!bankCanReconcile(account, companyId)) {
+      throw new ApplicationError('La conciliación está disponible para cuentas bancarias de México en pesos.',
+        'BANK_RECONCILIATION_INELIGIBLE_ACCOUNT', 422);
+    }
+    return Number(account.balances.bank.toFixed(2));
   }
 }

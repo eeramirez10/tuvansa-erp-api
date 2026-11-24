@@ -1,8 +1,14 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import type { BankReconciliationInput, BankReconciliationMovement } from '../datasources/bank-reconciliation-data-source.js';
+import type { BankAccountLookup } from './bank-account.js';
 
 const mexicoDate = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
+
+export function bankCanReconcile(account: NonNullable<Awaited<ReturnType<BankAccountLookup>>>, companyId: number) {
+  return account.currency.id === 1 && account.systemType === 'bank'
+    && [0, companyId].includes(account.control.company) && [0, companyId].includes(account.control.multiCompany);
+}
 
 export function bankCents(value: number) {
   const cents = Math.round(value * 100);

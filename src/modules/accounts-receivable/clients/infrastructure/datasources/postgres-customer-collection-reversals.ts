@@ -129,6 +129,7 @@ export class PostgresCustomerCollectionReversals implements CustomerCollectionRe
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
           [id, collectionId, companyId, userId, input.requestKey, fingerprint, input.date, `RPA${suffix}`, result.policyNumber, input.reason, JSON.stringify(result)],
         );
+        await removeBankTransit(client, companyId, [collectionId]);
         await client.query('COMMIT');
         return result;
       } catch (error) {
@@ -138,3 +139,4 @@ export class PostgresCustomerCollectionReversals implements CustomerCollectionRe
     });
   }
 }
+import { removeBankTransit } from '../../../../treasury/banking/infrastructure/datasources/bank-transit-reads.js';

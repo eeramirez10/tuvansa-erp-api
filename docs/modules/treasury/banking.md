@@ -120,7 +120,7 @@ para la modalidad **Traspas**.
 
 **Concilia Automático** compara las partidas pendientes con un archivo CSV o TSV. El archivo debe contener las columnas `Fecha`, `Referencia`, `Ingresos` y `Egresos`, con fecha `AAAA-MM-DD` o `DD/MM/AAAA` y punto decimal. La vista selecciona coincidencias únicas por referencia e importe firmado. **Liga** permite resolver filas ambiguas con una partida pendiente del mismo importe y signo. Se pueden quitar coincidencias antes de registrar. La captura nativa `bank-full-24-auto-open.png` muestra la comparación de los dos auxiliares. El CSV y el TSV son formatos de intercambio de la web.
 
-La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. El cambio de estado de partidas históricas a tránsito y la operación nativa **Traspasa +** quedan pendientes.
+La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. La operación nativa **Traspasa +** queda pendiente.
 
 **Bancos → Gastos por prv.** abre el informe **Compras por proveedor**
 (`EBANCO#1/8 → EBANCO#9`). `EBANCO#9/240` carga `FBANMOV` por la cuenta
@@ -165,9 +165,44 @@ En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` 
 | --- | --- | --- |
 | Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura histórica y SQL derivado de `supplier_payments`, `customer_collections`, `bank_transfer_movements` y `bank_reconciliation_movements`. Los pagos, depósitos y traspasos web pendientes son seleccionables |
 | Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
+| Conciliar / Tránsito | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/transit` | Lectura adaptada de `FBANMOV`, `FBENC` y `FPOLIZA`. Escritura derivada en `bank_reconciliation_transit` con el mismo bloqueo por cuenta que **Registrar** |
+| Conciliar / Filtra tránsito | Operación en pantalla sobre el mismo GET | Muestra sólo las partidas con `T = *` |
 | Conciliar / Registrar | `POST /api/treasury/bank-accounts/:id/actions/reconciliation` | SQL derivado. Registra un corte en `bank_reconciliations` y las partidas en `bank_reconciliation_movements` en la misma transacción |
 | Conciliar / Cancelar | Cerrar la ventana | Descarta la selección |
 
 El saldo ingresado del estado de cuenta debe coincidir al centavo con el saldo calculado. La fecha debe ser igual o posterior al último corte web y a los movimientos elegidos. El día actual de México es el límite superior. El servidor valida el saldo previo, la cuenta, la selección y el corte bajo bloqueo. Cada movimiento pertenece a un solo registro de conciliación. Un reintento con la misma clave y datos recupera el registro original.
 
 Al registrar, los movimientos elegidos salen de **Conciliar** y **Concilia Automático**. **Auxiliar**, **Pagos** y **Depósitos** conservan los registros con marca `X` y la fecha del estado de cuenta. En Contabilidad se marca conciliada la partida bancaria de la póliza. El saldo contable, los importes de las pólizas y el saldo en tránsito se conservan.
+
+### Tránsito
+
+En German de pruebas, el 24/11/2026 se marcó el abono `BASEQ=728980` y el
+cargo `BASEQ=729058` en la cuenta `1102100001`. **Tránsito** guardó
+`FBANMOV.BAOKTRANSITO='*'` de inmediato y cambió `FBENC.BSALDOTR1` por
+−14,400.00 y +600,000.00 respectivamente. Los saldos contable y bancario y
+`BAOK` conservaron sus valores. **Filtra tránsito** dejó visible sólo el
+abono marcado. Al intentar seleccionar el cargo marcado para conciliar,
+German mostró «El documento esta en transito.». Se quitaron ambas marcas y
+se comprobó la restauración del saldo en tránsito. Evidencia visual local
+`closure-bank-transit-credit-marked-ready.png`,
+`closure-bank-transit-filter-positive.png` y
+`closure-bank-transit-charge-draft-ok.png`. La comparación de campos fue
+por lectura de MySQL.
+
+En la web, **Tránsito** guarda el estado deseado y ajusta el saldo en la
+ficha y en **Conciliar**. Las partidas marcadas quedan disponibles para
+consulta manual y salen de **Concilia Automático**. Al quitar la marca,
+una partida web vuelve a estar disponible para el corte. El corte web
+admite partidas web. El histórico admite sustituir la marca localmente
+y conserva el saldo de apertura de German como base. La API rechaza un
+corte con partidas marcadas y un cambio de marca sobre una partida ya
+conciliada. Una reversión pendiente o una desaplicación retira en la
+misma transacción la marca de la partida que deja de estar disponible.
+
+La prueba en Chromium y Neon registró un traspaso temporal de 12.34 MXN.
+Contrastó cargos y abonos web e históricos, el filtro, el saldo de la
+cuenta y la partida de póliza conciliada. Dos solicitudes concurrentes de
+marca y corte sobre el mismo cargo se serializaron. La marca ganó y el
+corte devolvió conflicto sin modificar el saldo bancario. Al quitar la
+marca, el corte se registró y un nuevo intento de marcar devolvió
+conflicto. Se retiraron los registros temporales.

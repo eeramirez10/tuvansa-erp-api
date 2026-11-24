@@ -4,6 +4,7 @@ import { CaptureBankReconciliation } from '../src/modules/treasury/banking/appli
 import { BankAccount } from '../src/modules/treasury/banking/domain/entities/bank-account.js';
 import { bankReconciliationState } from '../src/modules/treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { PostgresBankReconciliations } from '../src/modules/treasury/banking/infrastructure/datasources/postgres-bank-reconciliations.js';
+import { readBankTransitOn } from '../src/modules/treasury/banking/infrastructure/datasources/bank-transit-reads.js';
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
 
 it('reconciles applied income and expense atomically against the statement', async () => {
@@ -38,13 +39,35 @@ it('reconciles applied income and expense atomically against the statement', asy
       fiscalReports: { annualInflationAdjustment: 0, deductibleIetu: false, nonDeductibleVat: false },
       createdAt: null, ledger: { firstPeriod: [], secondPeriod: [] },
     });
-    const useCase = new CaptureBankReconciliation(new PostgresBankReconciliations(connect, () => true), {
+    const useCase = new CaptureBankReconciliation(new PostgresBankReconciliations(connect, () => true, undefined,
+      async (company, accountId, movementId) => company === 1 && accountId === 6610 && movementId === 123
+        ? { amount: -27, inTransit: true } : null,
+    ), {
       findById: async () => account,
     });
     const input = {
       requestKey: crypto.randomUUID(), movementIds: [7300000000000, 6900000000000],
       statementDate: '2025-01-31', statementBalance: 1076, expectedBankBalance: 1000,
     };
+    const pay = { movementId: 6900000000000, inTransit: true };
+    const deposit = { movementId: 7300000000000, inTransit: true };
+    const legacy = { movementId: 123, inTransit: false };
+    await expect(useCase.setTransit(1, 6610, pay)).resolves.toEqual(pay);
+    await expect(useCase.setTransit(1, 6610, pay)).resolves.toEqual(pay);
+    await useCase.setTransit(1, 6610, deposit);
+    await useCase.setTransit(1, 6610, legacy);
+    expect(await readBankTransitOn(await connect(), 1, 6610)).toEqual(expect.arrayContaining([
+      { ...pay, delta: -40 }, { ...deposit, delta: 116 }, { ...legacy, delta: 27 },
+    ]));
+    expect(await readBankTransitOn(await connect(), 1, 6610)).toHaveLength(3);
+    await expect(useCase.save(1, 6610, input)).rejects.toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_IN_TRANSIT' });
+    expect(await bankReconciliationState(await connect(), 1, 6610)).toEqual({ delta: 0, lastStatementDate: null });
+    await expect(useCase.setTransit(1, 6610, { movementId: 6900000000001, inTransit: true })).rejects
+      .toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE' });
+    await useCase.setTransit(1, 6610, { ...pay, inTransit: false });
+    await useCase.setTransit(1, 6610, { ...deposit, inTransit: false });
+    await useCase.setTransit(1, 6610, { ...legacy, inTransit: true });
+    expect(await readBankTransitOn(await connect(), 1, 6610)).toEqual([]);
     await expect(useCase.save(1, 6699, input)).rejects.toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE' });
     await expect(useCase.save(1, 6610, { ...input, statementDate: '2025-01-01' })).rejects
       .toMatchObject({ code: 'BANK_RECONCILIATION_INVALID_DATE' });
@@ -55,6 +78,7 @@ it('reconciles applied income and expense atomically against the statement', asy
     expect(before).toEqual([{ count: 0 }]);
 
     const saved = await useCase.save(1, 6610, input);
+    await expect(useCase.setTransit(1, 6610, pay)).rejects.toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE' });
     expect(saved).toMatchObject({
       movementIds: [6900000000000, 7300000000000], previousBankBalance: 1000, netMovement: 76, bankBalance: 1076,
     });

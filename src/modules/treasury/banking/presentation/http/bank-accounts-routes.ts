@@ -20,6 +20,7 @@ export const createBankAccountsRouter = (
   router.get('/:bankAccountId/actions/auxiliary', controller.panel('auxiliary'));
   router.get('/:bankAccountId/actions/reconciliation', controller.panel('reconciliation'));
   router.post('/:bankAccountId/actions/reconciliation', controller.reconcile);
+  router.patch('/:bankAccountId/actions/reconciliation/transit', controller.setTransit);
   router.get('/:bankAccountId/actions/automatic-reconciliation', controller.panel('automatic-reconciliation'));
   router.get('/:bankAccountId/actions/general-ledger', controller.panel('general-ledger'));
   router.patch('/:bankAccountId/actions/general-ledger', controller.changeBudget(false));

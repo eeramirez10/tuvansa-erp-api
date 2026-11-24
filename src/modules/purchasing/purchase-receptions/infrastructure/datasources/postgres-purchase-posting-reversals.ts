@@ -242,6 +242,7 @@ export class PostgresPurchasePostingReversals implements PostingReversalDataSour
           [id, snapshot.targetId, companyId, userId, input.requestKey, fingerprint, input.date, input.reason,
             result.policyNumber, JSON.stringify(result), ...paymentNumber],
         );
+        if (kind === 'payment') await removeBankTransit(client, companyId, [snapshot.targetId]);
         await client.query('COMMIT');
         return result;
       } catch (error) {
@@ -251,3 +252,4 @@ export class PostgresPurchasePostingReversals implements PostingReversalDataSour
     });
   }
 }
+import { removeBankTransit } from '../../../../treasury/banking/infrastructure/datasources/bank-transit-reads.js';

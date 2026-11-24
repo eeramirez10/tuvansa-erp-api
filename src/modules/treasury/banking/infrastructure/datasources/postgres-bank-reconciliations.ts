@@ -12,12 +12,14 @@ import {
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type {
-  BankReconciliationCommand, BankReconciliationDataSource, BankReconciliationMovement, BankReconciliationResult,
+  BankReconciliationCommand, BankReconciliationDataSource, BankReconciliationMovement, BankReconciliationResult, BankTransitCommand,
 } from '../../domain/datasources/bank-reconciliation-data-source.js';
 import { bankCents, reconcileMovements } from '../../domain/entities/bank-reconciliation.js';
 import { bankReconciliationsAvailable, bankReconciliationState, joinBankReconciliation } from './bank-reconciliation-reads.js';
 import { bankTransfersAvailable, isLocalBankTransferMovementId } from './postgres-bank-transfers.js';
 import type { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
+import { readBankTransitOn } from './bank-transit-reads.js';
+import { readLegacyTransitMovement } from './legacy-mysql-bank-panels-data-source.js';
 
 // Derivada: guarda el corte y relaciona el asiento bancario web con su conciliación.
 const migrations = [{
@@ -46,7 +48,30 @@ const migrations = [{
     );
     CREATE INDEX bank_reconciliation_batch ON tuvansa.bank_reconciliation_movements(reconciliation_id);
   `,
+}, {
+  id: 'bank_reconciliation_transit',
+  sql: `CREATE TABLE tuvansa.bank_reconciliation_transit (
+    company_id integer NOT NULL,
+    bank_account_id bigint NOT NULL,
+    movement_id bigint NOT NULL,
+    in_transit boolean NOT NULL,
+    amount numeric(18,2) NOT NULL,
+    PRIMARY KEY (company_id, bank_account_id, movement_id)
+  );
+  CREATE INDEX bank_transit_movement ON tuvansa.bank_reconciliation_transit(company_id,movement_id);`,
 }];
+
+const inTransit = () => new ConflictError(
+  'Hay movimientos en tránsito. Quita la marca antes de conciliarlos.', 'BANK_RECONCILIATION_MOVEMENT_IN_TRANSIT',
+);
+const movementUnavailable = () => new ConflictError(
+  'Algún movimiento ya está conciliado o no pertenece a esta cuenta.', 'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE',
+);
+
+function lockAccount(client: PostgresClient, companyId: number, bankAccountId: number) {
+  return client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:' || $1::text || ':' || $2::text,0))",
+    [companyId, bankAccountId]);
+}
 
 const unavailable = () => new ApplicationError(
   'No fue posible consultar o registrar la conciliación en PostgreSQL.', 'BANK_RECONCILIATION_POSTGRES_UNAVAILABLE', 503,
@@ -59,6 +84,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured = postgresConfigured,
     private readonly catalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>,
+    private readonly legacyTransit = readLegacyTransitMovement,
   ) {}
 
   writable() { return this.configured(); }
@@ -92,7 +118,39 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
       await bankReconciliationsAvailable(client) ? this.request(client, companyId, requestKey, fingerprint) : null);
   }
 
-  async commit(command: BankReconciliationCommand) {
+  commit(command: BankReconciliationCommand) {
+    return this.transaction((client) => this.saveInTransaction(client, command));
+  }
+
+  setTransit({ companyId, bankAccountId, input, bankOpeningBalance }: BankTransitCommand) {
+    return this.transaction(async (client) => {
+      await lockAccount(client, companyId, bankAccountId);
+      await bankOpeningBalance(this.catalog?.lookupOn(client));
+      const [local] = await this.pendingMovements(client, companyId, bankAccountId, [input.movementId]);
+      const original = local ? { amount: local.amount, inTransit: false }
+        : await this.legacyTransit(companyId, bankAccountId, input.movementId);
+      if (!original) throw movementUnavailable();
+
+      const keys = [companyId, bankAccountId, input.movementId];
+      if (original.inTransit === input.inTransit) {
+        await client.query(
+          'DELETE FROM tuvansa.bank_reconciliation_transit WHERE company_id=$1 AND bank_account_id=$2 AND movement_id=$3',
+          keys,
+        );
+      } else {
+        await client.query(
+          `INSERT INTO tuvansa.bank_reconciliation_transit(company_id,bank_account_id,movement_id,in_transit,amount)
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (company_id,bank_account_id,movement_id) DO UPDATE
+           SET in_transit=EXCLUDED.in_transit,amount=EXCLUDED.amount`,
+          [...keys, input.inTransit, bankCents(original.amount) / 100],
+        );
+      }
+      return input;
+    });
+  }
+
+  private async transaction<T>(operation: (client: PostgresClient) => Promise<T>) {
     if (!this.writable()) throw unavailable();
     this.migration ??= this.withConnection((client) => migratePostgres(client, migrations)).catch((error: unknown) => {
       delete this.migration;
@@ -102,7 +160,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     return this.withConnection(async (client) => {
       await client.query('BEGIN');
       try {
-        const result = await this.saveInTransaction(client, command);
+        const result = await operation(client);
         await client.query('COMMIT');
         return result;
       } catch (error) {
@@ -204,15 +262,14 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     const existing = await this.request(client, companyId, input.requestKey, fingerprint);
     if (existing) return existing;
 
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:' || $1::text || ':' || $2::text,0))",
-      [companyId, bankAccountId]);
+    await lockAccount(client, companyId, bankAccountId);
     const opening = await command.bankOpeningBalance(this.catalog?.lookupOn(client));
     const { delta, lastStatementDate } = await bankReconciliationState(client, companyId, bankAccountId);
     const movements = await this.pendingMovements(client, companyId, bankAccountId, input.movementIds);
-    if (movements.length !== input.movementIds.length) {
-      throw new ConflictError('Algún movimiento ya está conciliado o no pertenece a esta cuenta.',
-        'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE');
-    }
+    if (movements.length !== input.movementIds.length) throw movementUnavailable();
+    const selected = new Set(input.movementIds);
+    const marks = await readBankTransitOn(client, companyId, bankAccountId);
+    if (marks.some((mark) => mark.inTransit && selected.has(mark.movementId))) throw inTransit();
     const amount = (bankCents(opening) + bankCents(delta)) / 100;
     const balances = reconcileMovements(input, movements, amount, lastStatementDate);
     const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.bank_reconciliation_ids') AS id");

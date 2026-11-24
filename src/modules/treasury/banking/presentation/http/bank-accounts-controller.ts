@@ -34,6 +34,7 @@ const reconciliationSchema = z.strictObject({
   expectedBankBalance: z.number(),
 });
 const classifiersSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.string().trim().max(5)).length(9) });
+const transitSchema = z.strictObject({ movementId: z.int().positive(), inTransit: z.boolean() });
 const budgetsSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.number()).length(12) });
 const reviewSchema = z.strictObject({ revision: z.int().nonnegative(), movementIds: z.array(z.int().positive()).min(1) });
 const transferFields = {
@@ -120,6 +121,14 @@ export class BankAccountsController {
       const { bankAccountId } = idParamsSchema.parse(request.params);
       const data = await this.captureReconciliation.save(1, bankAccountId, reconciliationSchema.parse(request.body));
       response.status(201).json({ data });
+    } catch (error) { next(error); }
+  };
+
+  setTransit: RequestHandler = async (request, response, next) => {
+    try {
+      const { bankAccountId } = idParamsSchema.parse(request.params);
+      const data = await this.captureReconciliation.setTransit(1, bankAccountId, transitSchema.parse(request.body));
+      response.json({ data });
     } catch (error) { next(error); }
   };
 

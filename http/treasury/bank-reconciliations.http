@@ -27,3 +27,12 @@ GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}
 
 ### Consultar la marca y la fecha en los depósitos
 GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/deposits
+
+### Banco / Conciliar / Tránsito. Sustituir IDs por una partida pendiente de la cuenta de pruebas.
+PATCH {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation/transit
+Content-Type: application/json
+
+{
+  "movementId": 728980,
+  "inTransit": true
+}

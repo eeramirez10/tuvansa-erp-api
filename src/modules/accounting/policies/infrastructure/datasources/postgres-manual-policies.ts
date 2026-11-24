@@ -174,10 +174,13 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
   perform(id: number, operation: ManualPolicyOperation, input: ManualPolicyActionInput, fingerprint: string,
     validate: (current: ManualPolicyDocument) => Promise<void>) {
     return this.transaction(input.requestKey, fingerprint, operation, async (client) => {
-      await validate(await this.current(client, id, input.revision));
+      const current = await this.current(client, id, input.revision);
+      await validate(current);
+      if (operation !== 'apply') await removeBankTransit(client, 1, current.lines.map((line) => line.id));
       await client.query(`UPDATE tuvansa.manual_accounting_policies SET applied=$2,revision=revision+1,updated_at=now(),
         canceled_at=CASE WHEN $3 THEN now() ELSE NULL END WHERE id=$1`, [id, operation === 'apply', operation === 'cancel']);
       return id;
     });
   }
 }
+import { removeBankTransit } from '../../../../treasury/banking/infrastructure/datasources/bank-transit-reads.js';

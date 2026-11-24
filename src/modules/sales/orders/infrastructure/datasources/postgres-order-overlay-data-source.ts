@@ -130,17 +130,31 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
   }
 
   async cancelRemission<T>(orderId: number | null, replay: (client: PostgresClient) => Promise<T | null>,
-    cancel: (client: PostgresClient, current: OrderProps | null) => Promise<{ order: OrderProps | null; result: T }>): Promise<T> {
+    cancel: (client: PostgresClient, current: OrderProps | null) => Promise<{ order: OrderProps | null; result: T }>,
+    legacyOrder?: OrderProps): Promise<T> {
     return this.transaction(async (client) => {
       if (orderId !== null) await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [orderId]);
       const existing = await replay(client);
       if (existing !== null) return existing;
-      const { rows: [stored] } = orderId === null ? { rows: [] } : await client.query<Stored>(
-        `SELECT ${columns} FROM tuvansa.orders WHERE id=$1 AND legacy_id IS NULL AND deleted_at IS NULL FOR UPDATE`, [orderId],
+      const { rows: [stored] } = orderId === null ? { rows: [] } : await client.query<Stored & { sameBase: boolean | null }>(
+        `SELECT ${columns},base_document=$2::jsonb AS "sameBase" FROM tuvansa.orders WHERE id=$1 FOR UPDATE`,
+        [orderId, legacyOrder ? JSON.stringify(legacyOrder) : null],
       );
-      if (orderId !== null && !stored) throw new NotFoundError('Pedido local para regenerar');
-      const { order, result } = await cancel(client, stored?.document ?? null);
-      if (order && stored) await this.updateRemissionOrder(client, stored, order);
+      if (legacyOrder) {
+        if (legacyOrder.id !== orderId || (stored && (stored.deleted || !stored.sameBase))) {
+          throw new ConflictError('El pedido original cambió o fue dado de baja.', 'SALES_REMISSION_ORDER_CHANGED');
+        }
+      } else if (orderId !== null && (!stored || stored.deleted || stored.base !== null)) {
+        throw new NotFoundError('Pedido local para regenerar');
+      }
+      const { order, result } = await cancel(client, stored?.document ?? legacyOrder ?? null);
+      if (order && stored) {
+        await this.updateRemissionOrder(client, stored, order);
+      } else if (order && legacyOrder) {
+        await client.query(`INSERT INTO tuvansa.orders(id,legacy_id,number,document,base_document)
+          VALUES ($1,$1,$2,$3::jsonb,$4::jsonb)`, [order.id, order.number, JSON.stringify(order), JSON.stringify(legacyOrder)]);
+        await this.record(client, order, legacyOrder, false, 1, 'update');
+      }
       return result;
     });
   }
@@ -152,7 +166,7 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
     const nextRevision = stored.revision + 1;
     await client.query('UPDATE tuvansa.orders SET document=$2::jsonb,revision=$3,updated_at=now() WHERE id=$1',
       [order.id, JSON.stringify(order), nextRevision]);
-    await this.record(client, order, null, false, nextRevision, 'update');
+    await this.record(client, order, stored.base, false, nextRevision, 'update');
   }
   private async record(c: PostgresClient, doc: OrderProps, base: OrderProps | null, deleted: boolean, revision: number, operation: string) {
     await c.query('INSERT INTO tuvansa.order_changes(order_id,revision,operation,document) VALUES ($1,$2,$3,$4::jsonb)', [doc.id,revision,operation,JSON.stringify(doc)]);

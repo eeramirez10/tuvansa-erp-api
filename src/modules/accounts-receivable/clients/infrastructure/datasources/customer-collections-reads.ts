@@ -1,5 +1,7 @@
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
-import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
+import {
+  historicalSalesRemissionCancellationsOn, remissionCancellationSql, salesRemissionCancellationsAvailable,
+} from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from './customer-collection-reversal-reads.js';
 
 export async function customerCollectionsAvailable(client: PostgresClient): Promise<boolean> {
@@ -37,11 +39,14 @@ export async function remissionCollectionStatus(client: PostgresClient, { id, cu
 
 export async function salesRemissionsOutstanding(client: PostgresClient, companyId: number, customerId: number): Promise<number> {
   const join = joinRemissionCollections(await customerCollectionsAvailable(client), await customerCollectionReversalsAvailable(client));
-  const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+  const hasCancellations = await salesRemissionCancellationsAvailable(client);
+  const cancellation = remissionCancellationSql(hasCancellations);
   const { rows: [row] } = await client.query<{ amount: number }>(
     `SELECT coalesce(sum(remission.charge - collections.paid), 0)::float8 AS amount
      FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join}
      WHERE remission.company_id = $1 AND remission.customer_id = $2 AND NOT (${cancellation.canceled})`, [companyId, customerId],
   );
-  return row?.amount ?? 0;
+  const historical = hasCancellations && companyId === 1
+    ? await historicalSalesRemissionCancellationsOn(client, { customerIds: [customerId] }) : [];
+  return historical.reduce((balance, { amount }) => balance - amount, row?.amount ?? 0);
 }

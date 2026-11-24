@@ -179,11 +179,20 @@ Cada movimiento contiene su importe firmado, cargo o abono, saldo acumulado,
 tipo de movimiento y el documento de `fdoc` cuando existe. Conserva los filtros
 capturados de OMNIS: `fax.AMES = 1`, documento no eliminado y
 `fdoc.DMULTICIA = 1`. Los movimientos se ordenan por `fax.ASEQ`, igual que en
-la pantalla heredada.
+la pantalla heredada. El saldo acumulado suma por fecha y `fax.ASEQ` todo el
+historial aplicable hasta cada movimiento, incluso si queda fuera de la página
+o del periodo. La consulta derivada se verificó en MySQL 5.1.45.
 
 Las remisiones FA web de la empresa 1 se agregan a Saldo y Movimientos desde `tuvansa.sales_remissions`. El cargo aumenta el saldo actual y se incluye en los importes vencidos y por vencer según su fecha de vencimiento. Los movimientos muestran el pedido como referencia y contribuyen al saldo inicial, acumulado y final según su fecha. La ficha del cliente recalcula el crédito disponible y muestra la fecha de la última compra entre ambas fuentes. El cargo y la fecha de compra corresponden a `MFACT/33` y `CLIULTCOM`, respectivamente.
 
 Cada cobro PA registrado en `tuvansa.customer_collections` reduce el pendiente y libera crédito. Las remisiones liquidadas salen de **Saldo**. **Movimientos** conserva el cargo original y cada abono, con su recibo, póliza y referencia bancaria. El saldo de apertura, el acumulado de cada movimiento y el saldo de cierre incluyen los abonos según su fecha. La ficha del cliente muestra la última fecha de pago de ambas fuentes.
+
+La cancelación de una remisión histórica descuenta su cargo del saldo actual y retira de **Saldo** el documento por `fdoc.DSEQ`. **Movimientos** conserva el cargo de `fax` y agrega un abono tipo `K` fechado el día de la cancelación. El abono se incluye en los saldos inicial, acumulado y final según las fechas consultadas. La generación de una nueva remisión toma en cuenta el crédito liberado al validar el saldo del cliente.
+
+| Vista / acción | Endpoint | Evidencia y tablas |
+| --- | --- | --- |
+| Clientes / Saldo | `GET /api/accounts-receivable/clients/:clientId/balance` | Consulta derivada. El registro de `tuvansa.sales_remission_cancellations` excluye el `fdoc.DSEQ` cancelado de la página, el total filtrado y el resumen. |
+| Clientes / Movimientos | `GET /api/accounts-receivable/clients/:clientId/movements` | Consulta derivada. `fax` aporta el cargo y `tuvansa.sales_remission_cancellations` aporta el abono. `MFACT/28` y `MFACT/108` son las referencias del flujo de cancelación en el código exportado de Omnis. |
 
 ### Cobrar una remisión web
 

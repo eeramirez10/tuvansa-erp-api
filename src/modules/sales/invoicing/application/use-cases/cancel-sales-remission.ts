@@ -18,12 +18,14 @@ const money = (value: number) => Number(value.toFixed(2));
 function blockingReason(source: SalesRemissionCancellationSource) {
   const { invoice, movement, lineEffects, hasCollection, alreadyRecorded } = source;
   if (alreadyRecorded || invoice.canceled) return 'La remisión ya fue cancelada.';
+  if (source.historical?.blockedReason) return source.historical.blockedReason;
   if (invoice.cfdStatus !== '0' || invoice.folio.trim() !== '') return 'El documento tiene un estado fiscal o folio de timbrado.';
   if (invoice.movementType !== 'FA' || movement.header.type !== 'FA' || movement.header.inventoryFlag !== 1
     || invoice.currency.id !== 1 || invoice.currency.exchangeRate !== 1 || source.charge <= 0
     || !source.warehouse || !lineEffects.length || movement.lines.length !== lineEffects.length
     || invoice.lines.length !== lineEffects.length) return 'El documento requiere una cancelación distinta.';
-  if (invoice.lines.some(({ pieces }) => pieces !== 0) || movement.lines.some(({ lotId, pieces, piecesText }) => lotId !== 0 || pieces !== 0 || piecesText !== '')) {
+  if (invoice.lines.some(({ pieces }) => pieces !== 0) || movement.lines.some(({ lotId, pieces, piecesText }) =>
+    lotId !== 0 || pieces !== 0 || !/^(?:0+(?:\.0+)?)?$/.test(piecesText.trim()))) {
     return 'La remisión tiene lotes o piezas que requieren su propia cancelación.';
   }
   if (hasCollection) return 'La remisión tiene un cobro PA aplicado.';
@@ -52,9 +54,13 @@ function regenerateOrder(source: SalesRemissionCancellationSource, order: OrderP
     const fulfilled = quantity(line.fulfilled - effect.quantity);
     return { ...line, fulfilled, remaining: quantity(line.ordered - fulfilled) };
   });
-  const net = money(source.invoice.totals.subtotal - source.invoice.totals.discount);
-  const fulfilledAmount = money(order.fulfilledAmount - net);
-  if (effects.size || !Number.isFinite(fulfilledAmount) || fulfilledAmount < 0) throw changedOrder();
+  // MFACT/29 reduces historical PESURT by AIPRECIO * AICANTF with a floor of zero.
+  const net = source.historical
+    ? source.invoice.lines.reduce((total, line, index) => total + line.price * source.lineEffects[index]!.quantity, 0)
+    : money(source.invoice.totals.subtotal - source.invoice.totals.discount);
+  const remainingAmount = money(order.fulfilledAmount - net);
+  const fulfilledAmount = source.historical ? Math.max(remainingAmount, 0) : remainingAmount;
+  if (effects.size || !Number.isFinite(remainingAmount) || fulfilledAmount < 0) throw changedOrder();
   return {
     ...order, status: '', lines, fulfilledAmount,
     totals: { ...order.totals, fulfilled: quantity(lines.reduce((sum, line) => sum + line.fulfilled, 0)),
@@ -67,20 +73,22 @@ export class CancelSalesRemission {
 
   private async source(companyId: number, id: number) {
     const source = await this.dataSource.source(companyId, id);
-    if (!source) throw new NotFoundError('Remisión FAW registrada en la web');
+    if (!source) throw new NotFoundError('Remisión');
     return source;
   }
 
   async prepare(companyId: number, id: number) {
     const [source, period] = await Promise.all([this.source(companyId, id), this.fiscal.fiscalWindow(companyId)]);
     const reason = blockingReason(source) ?? periodReason(source, period);
-    let orderReason: string | null = null;
-    try {
-      if (!source.order) throw changedOrder();
-      if (!reason) regenerateOrder(source, source.order);
-    } catch (error) {
-      if (!(error instanceof ConflictError)) throw error;
-      orderReason = error.message;
+    let orderReason = source.historical?.orderReason ?? null;
+    if (!orderReason) {
+      try {
+        if (!source.order) throw changedOrder();
+        if (!reason) regenerateOrder(source, source.order);
+      } catch (error) {
+        if (!(error instanceof ConflictError)) throw error;
+        orderReason = error.message;
+      }
     }
     let date = mexicoDate.format();
     if (date < source.issuedAt) date = source.issuedAt;
@@ -113,7 +121,7 @@ export class CancelSalesRemission {
       }
     };
     validate(source);
-    if (input.regenerateOrder && !source.order) throw changedOrder();
+    if (input.regenerateOrder && (!source.order || source.historical?.orderReason)) throw changedOrder();
     return this.dataSource.commit({ companyId, userId, id, input, source, fingerprint, validate, regenerate: regenerateOrder });
   }
 }

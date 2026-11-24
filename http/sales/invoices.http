@@ -8,6 +8,9 @@
 @issuedAt = 2026-11-23
 @requestKey = 0de010c1-ad5c-4e67-8f10-fbe09ee939c2
 @clientId = 15390
+@historicalRemissionId = 346421
+@cancellationKey = generar-uuid-por-cancelacion
+@cancellationDate = copiar-fecha-del-preview
 
 ### Preparar una Remisión México desde un pedido web autorizado y asignado
 GET {{baseUrl}}/sales/invoices/from-order?orderNumber={{orderNumber}}
@@ -74,6 +77,21 @@ GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/pieces
 
 ### Acciones: Sellar, estado del documento
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/seal
+
+### Consultar una FA histórica en la copia local
+GET {{baseUrl}}/sales/invoices/{{historicalRemissionId}}/actions/cancel-remission
+
+### Confirmar en PostgreSQL de pruebas con los datos del preview
+POST {{baseUrl}}/sales/invoices/{{historicalRemissionId}}/actions/cancel-remission
+Content-Type: application/json
+
+{
+  "requestKey": "{{cancellationKey}}",
+  "date": "{{cancellationDate}}",
+  "reason": "Cancelación de remisión histórica de prueba",
+  "confirmed": true,
+  "regenerateOrder": false
+}
 
 ### Consultar la simulación de una remisión FA web
 GET {{baseUrl}}/sales/invoices/{{remissionId}}/actions/seal

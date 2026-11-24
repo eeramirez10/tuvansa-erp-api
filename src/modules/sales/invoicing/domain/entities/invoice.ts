@@ -30,6 +30,7 @@ export interface InvoiceProps {
   movementType: string;
   status: string;
   canceled: boolean;
+  cancellationAvailable?: boolean;
   cancellation?: { id: number; date: string; reason: string; regeneratedOrder: boolean };
   dates: {
     issuedAt: string | null;

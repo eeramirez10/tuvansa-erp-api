@@ -5,12 +5,15 @@ import { connectPostgres, postgresConfigured, type PostgresClient, type Postgres
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { remissionCollectionStatus } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import type { OrderProps } from '../../../orders/domain/entities/order.js';
 import { PostgresOrderOverlayDataSource } from '../../../orders/infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { lockWarehouseStock } from '../../../orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type {
-  SalesRemissionCancellationCommand, SalesRemissionCancellationDataSource, SalesRemissionCancellationResult, SalesRemissionCancellationSource,
+  HistoricalSalesRemissionCancellationSource, SalesRemissionCancellationCommand, SalesRemissionCancellationDataSource,
+  SalesRemissionCancellationResult, SalesRemissionCancellationSource,
 } from '../../domain/datasources/sales-remission-cancellation-data-source.js';
-import { isLocalSalesRemissionId, salesRemissionsAvailable } from './postgres-sales-remissions.js';
+import { historicalSalesRemissionCancellationsOn } from './historical-sales-remission-cancellation-reads.js';
+import { ensureSalesRemissionSchema, isLocalSalesRemissionId, salesRemissionsAvailable } from './postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationIdEnd, salesRemissionCancellationIdStart, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
 
 const migrations = [{ id: 'sales_remission_cancellations', sql: `
@@ -39,6 +42,19 @@ const migrations = [{ id: 'sales_remission_cancellations', sql: `
     PRIMARY KEY(cancellation_id,product_id,warehouse)
   );
   CREATE INDEX sales_remission_cancellation_inventory_product ON tuvansa.sales_remission_cancellation_inventory(product_id,warehouse);
+` }, { id: 'historical_sales_remission_cancellations', sql: `
+  ALTER TABLE tuvansa.sales_remission_cancellations
+    ALTER COLUMN remission_id DROP NOT NULL,
+    ADD COLUMN legacy_invoice_id bigint UNIQUE,
+    ADD COLUMN historical_source jsonb,
+    ADD CHECK (
+      (remission_id IS NOT NULL AND legacy_invoice_id IS NULL AND historical_source IS NULL)
+      OR (remission_id IS NULL AND legacy_invoice_id IS NOT NULL AND historical_source IS NOT NULL
+        AND jsonb_typeof(historical_source)='object')
+    );
+  CREATE INDEX sales_remission_historical_customer
+    ON tuvansa.sales_remission_cancellations (((historical_source->>'customerId')::bigint))
+    WHERE legacy_invoice_id IS NOT NULL;
 ` }];
 
 const unavailable = () => new ApplicationError('No fue posible consultar o cancelar la remisión en PostgreSQL.', 'SALES_REMISSION_CANCELLATION_POSTGRES_UNAVAILABLE', 503);
@@ -74,16 +90,19 @@ async function validateInventory(client: PostgresClient, source: SalesRemissionC
     const invoice = source.invoice.lines[index];
     if (!movement || !invoice || movement.productId !== effect.productId || invoice.productId !== effect.productId
       || movement.quantity !== -effect.quantity || invoice.fulfilledQuantity !== effect.quantity
-      || movement.warehouse !== source.warehouse || !Number.isFinite(effect.quantity) || effect.quantity <= 0) throw inconsistent();
+      || movement.warehouse !== source.warehouse || !Number.isFinite(effect.quantity) || effect.quantity <= 0
+      || Math.round(effect.quantity * 1000) / 1000 !== effect.quantity) throw inconsistent();
     const units = Math.round(effect.quantity * 1000);
     products.set(effect.productId, (products.get(effect.productId) ?? 0) + units);
   }
   await lockWarehouseStock(client, source.warehouse, [...products.keys()]);
+  if (source.historical) return products;
   const { rows } = await client.query<{ product: number; warehouse: string; quantity: number }>(
     `SELECT product_id::float8 AS product,warehouse,quantity::float8 FROM tuvansa.sales_remission_inventory WHERE remittance_id=$1`, [source.id],
   );
   if (rows.length !== products.size || rows.some(({ product, warehouse, quantity }) => warehouse !== source.warehouse
     || Math.round(-quantity * 1000) !== products.get(product))) throw inconsistent();
+  return products;
 }
 
 export class PostgresSalesRemissionCancellations implements SalesRemissionCancellationDataSource {
@@ -92,6 +111,7 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
     private readonly orders: Pick<PostgresOrderOverlayDataSource, 'cancelRemission'> = new PostgresOrderOverlayDataSource(),
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured = postgresConfigured,
+    private readonly historical?: HistoricalSalesRemissionCancellationSource,
   ) {}
 
   private async withConnection<T>(work: (client: PostgresClient) => Promise<T>) {
@@ -106,7 +126,38 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
     } finally { client?.release(); }
   }
 
-  source(companyId: number, id: number) { return this.withConnection((client) => original(client, companyId, id)); }
+  private async readHistorical(client: PostgresClient, companyId: number, id: number): Promise<SalesRemissionCancellationSource | null> {
+    if (companyId !== 1 || !this.historical) return null;
+    const [source, [saved]] = await Promise.all([
+      this.historical.read(id), historicalSalesRemissionCancellationsOn(client, { invoiceIds: [id] }),
+    ]);
+    if (!source?.historical) return null;
+    const baseOrder = source.order;
+    let order = baseOrder;
+    let orderReason = source.historical.orderReason ?? null;
+    if (baseOrder && !orderReason) {
+      const { rows: [table] } = await client.query<{ available: boolean }>(
+        "SELECT to_regclass('tuvansa.orders') IS NOT NULL AS available",
+      );
+      const { rows: [overlay] } = table?.available ? await client.query<{ document: OrderProps; valid: boolean }>(
+        `SELECT document,deleted_at IS NULL AND base_document=$2::jsonb AS valid
+         FROM tuvansa.orders WHERE id=$1`, [baseOrder.id, JSON.stringify(baseOrder)],
+      ) : { rows: [] };
+      if (overlay) {
+        order = overlay.valid ? overlay.document : null;
+        if (!order) orderReason = 'El pedido original cambió o fue dado de baja.';
+      }
+    }
+    return {
+      ...source, order, alreadyRecorded: saved?.result ?? null,
+      historical: { ...source.historical, baseOrder, orderReason },
+    };
+  }
+
+  source(companyId: number, id: number) {
+    return this.withConnection((client) => isLocalSalesRemissionId(id)
+      ? original(client, companyId, id) : this.readHistorical(client, companyId, id));
+  }
 
   findRequest(companyId: number, requestKey: string, fingerprint: string) {
     return this.withConnection(async (client) => await salesRemissionCancellationsAvailable(client)
@@ -114,22 +165,33 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
   }
 
   async commit({ companyId, userId, id, source, input, fingerprint, validate, regenerate }: SalesRemissionCancellationCommand) {
-    this.migration ??= this.withConnection((client) => migratePostgres(client, migrations)).catch((error: unknown) => {
+    this.migration ??= this.withConnection(async (client) => {
+      await migratePostgres(client);
+      await ensureSalesRemissionSchema(client);
+      await migratePostgres(client, migrations);
+    }).catch((error: unknown) => {
       delete this.migration;
       throw error;
     });
     await this.migration;
     const replay = async (client: PostgresClient) => {
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('cancel-sales-remission:'||$1::text||':'||$2::text,0))", [companyId, input.requestKey]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('cancel-sales-remission:'||$1::text||':'||$2::text,0))",
+        [companyId, input.requestKey.toLowerCase()]);
       return priorRequest(client, companyId, input.requestKey, fingerprint);
     };
     return this.orders.cancelRemission(input.regenerateOrder ? source.orderId : null, replay, async (client, order) => {
       // Collection capture takes the same credit lock before locking the remisión.
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-credit:'||$1::text||':'||$2::text,0))", [companyId, source.customerId]);
-      const current = await original(client, companyId, id, true);
-      if (!current) throw new NotFoundError('Remisión FAW registrada en la web');
+      const current = source.historical ? await this.readHistorical(client, companyId, id) : await original(client, companyId, id, true);
+      if (!current) throw new NotFoundError('Remisión');
       validate(current);
-      await validateInventory(client, current);
+      if (source.historical && source.historical.version !== current.historical?.version) {
+        throw new ConflictError('La remisión cambió en PROSCAI. Vuelve a abrir la cancelación.', 'SALES_REMISSION_SOURCE_CHANGED');
+      }
+      if (input.regenerateOrder && (!order || current.historical?.orderReason)) {
+        throw new ConflictError('El pedido original cambió o fue dado de baja.', 'SALES_REMISSION_ORDER_CHANGED');
+      }
+      const products = await validateInventory(client, current);
       const regenerated = order ? regenerate(current, order) : null;
 
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.sales_remission_cancellation_ids') AS id");
@@ -145,16 +207,21 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
         totals: { quantity: -current.movement.totals.quantity, cost: -current.movement.totals.cost },
       };
       await client.query(
-        `INSERT INTO tuvansa.sales_remission_cancellations (id,remission_id,number,company_id,user_id,request_key,fingerprint,date,reason,regenerated_order,movement,result)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb)`,
-        [cancellationId, id, number, companyId, userId, input.requestKey, fingerprint, input.date, input.reason, result.regeneratedOrder,
-          JSON.stringify(movement), JSON.stringify(result)],
+        `INSERT INTO tuvansa.sales_remission_cancellations
+           (id,remission_id,number,company_id,user_id,request_key,fingerprint,date,reason,regenerated_order,movement,result,legacy_invoice_id,historical_source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14::jsonb)`,
+        [cancellationId, current.historical ? null : id, number, companyId, userId, input.requestKey, fingerprint, input.date, input.reason,
+          result.regeneratedOrder, JSON.stringify(movement), JSON.stringify(result), current.historical ? id : null, current.historical ? JSON.stringify({
+            customerId: current.customerId, number: current.number, orderNumber: current.orderNumber, amount: current.charge,
+            issuedAt: current.issuedAt, dueAt: current.invoice.dates.dueAt, version: current.historical.version,
+          }) : null],
       );
       await client.query(
         `INSERT INTO tuvansa.sales_remission_cancellation_inventory (cancellation_id,product_id,warehouse,quantity)
-         SELECT $1,product_id,warehouse,-quantity FROM tuvansa.sales_remission_inventory WHERE remittance_id=$2`, [cancellationId, id],
+         SELECT $1,product,$2,quantity FROM unnest($3::bigint[],$4::numeric[]) AS lines(product,quantity)`,
+        [cancellationId, current.warehouse, [...products.keys()], [...products.values()].map((value) => value / 1000)],
       );
       return { order: regenerated, result };
-    });
+    }, input.regenerateOrder ? source.historical?.baseOrder ?? undefined : undefined);
   }
 }

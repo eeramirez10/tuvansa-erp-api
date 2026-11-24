@@ -1,4 +1,5 @@
 import type { InvoiceProps } from '../../../../sales/invoicing/domain/entities/invoice.js';
+import { readHistoricalSalesRemissionCancellations, type HistoricalSalesRemissionCancellation } from '../../../../sales/invoicing/infrastructure/datasources/historical-sales-remission-cancellation-reads.js';
 import { readSalesRemissions } from '../../../../sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 import type { ClientBalanceDataSource } from '../../domain/datasources/client-balance-data-source.js';
@@ -9,6 +10,7 @@ import type { ClientBalanceResult, ClientBalanceSearchCriteria } from '../../dom
 import type { ClientMovementSearchCriteria, ClientMovementsResult } from '../../domain/repositories/client-movements-repository.js';
 import { customerCollectionsAvailable, joinRemissionCollections } from './customer-collections-reads.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from './customer-collection-reversal-reads.js';
+import type { LegacyMysqlClientBalanceDataSource } from './legacy-mysql-client-balance-data-source.js';
 import type { LegacyMysqlClientMovementsDataSource } from './legacy-mysql-client-movements-data-source.js';
 import { clientCatalogRecord } from './postgres-client-catalog.js';
 
@@ -46,6 +48,7 @@ interface LocalMovement {
 const invoice = "((remission.result->'invoice') - 'lines')";
 const today = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City')::date";
 export const clientMoney = (value: number): number => Math.round(value * 100) / 100;
+const historicalCharge = (rows: HistoricalSalesRemissionCancellation[]) => rows.reduce((total, row) => total + row.amount, 0);
 
 export interface SalesRemissionCustomerTotals {
   balance: number;
@@ -53,9 +56,9 @@ export interface SalesRemissionCustomerTotals {
   lastPaymentAt: string | null;
 }
 
-export function salesRemissionCustomerTotals(customerIds: number[]): Promise<Map<number, SalesRemissionCustomerTotals>> {
-  if (customerIds.length === 0) return Promise.resolve(new Map());
-  return readSalesRemissions(new Map<number, SalesRemissionCustomerTotals>(), async (client) => {
+export async function salesRemissionCustomerTotals(customerIds: number[]): Promise<Map<number, SalesRemissionCustomerTotals>> {
+  if (customerIds.length === 0) return new Map();
+  const local = readSalesRemissions(new Map<number, SalesRemissionCustomerTotals>(), async (client) => {
     const join = joinRemissionCollections(await customerCollectionsAvailable(client), await customerCollectionReversalsAvailable(client));
     const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
     // Derivada. Completa el saldo y las fechas de compra y pago de la ficha del cliente.
@@ -68,6 +71,12 @@ export function salesRemissionCustomerTotals(customerIds: number[]): Promise<Map
     );
     return new Map(rows.map(({ id, ...totals }) => [id, totals]));
   });
+  const [totals, historical] = await Promise.all([local, readHistoricalSalesRemissionCancellations({ customerIds })]);
+  for (const { customerId, amount } of historical) {
+    const total = totals.get(customerId) ?? { balance: 0, lastPurchaseAt: null, lastPaymentAt: null };
+    totals.set(customerId, { ...total, balance: total.balance - amount });
+  }
+  return totals;
 }
 
 type BalancePage = ClientBalanceResult['summary'] & { items: BalanceCharge[]; total: number };
@@ -131,23 +140,25 @@ function balanceDocument({ invoice, remaining, issuedAt, dueAt, daysOverdue }: B
 }
 
 export class ClientBalanceWithSalesRemissionsDataSource implements ClientBalanceDataSource {
-  constructor(private readonly legacy: ClientBalanceDataSource) {}
+  constructor(private readonly legacy: LegacyMysqlClientBalanceDataSource) {}
 
   async searchByClient(criteria: ClientBalanceSearchCriteria): Promise<ClientBalanceResult | null> {
     const record = await clientCatalogRecord(criteria.clientId);
     if (record?.deleted) return null;
+    const historical = record && !record.legacy ? []
+      : await readHistoricalSalesRemissionCancellations({ customerIds: [criteria.clientId] });
     const base: ClientBalanceResult | null = record && !record.legacy ? {
       client: catalogIdentity(record.document), items: [], total: 0,
       summary: { totalBalance: 0, overdueBalance: 0, notDueBalance: 0, documentCount: 0, overdueDocumentCount: 0, notDueDocumentCount: 0 },
-    } : await this.legacy.searchByClient(criteria);
+    } : await this.legacy.searchByClient(criteria, historical.map(({ invoiceId }) => invoiceId));
     if (!base) return null;
     if (record?.legacy) base.client = catalogIdentity(record.document, base.client.currentBalance);
     const local = await balancePage(criteria, Math.max(0, criteria.offset - base.total), criteria.limit - base.items.length);
-    if (local.documentCount === 0) return base;
+    if (local.documentCount === 0 && historical.length === 0) return base;
 
     const summary = base.summary;
     return {
-      client: { ...base.client, currentBalance: clientMoney(base.client.currentBalance + local.totalBalance) },
+      client: { ...base.client, currentBalance: clientMoney(base.client.currentBalance + local.totalBalance - historicalCharge(historical)) },
       items: [...base.items, ...local.items.map(balanceDocument)], total: base.total + local.total,
       summary: {
         totalBalance: clientMoney(summary.totalBalance + local.totalBalance),
@@ -205,8 +216,21 @@ const cancellationMovements = `UNION ALL
   FROM tuvansa.sales_remission_cancellations cancellation
   JOIN remissions remission ON remission.id=cancellation.remission_id WHERE cancellation.company_id=1`;
 
-function movementPage(criteria: ClientMovementSearchCriteria, base: ClientMovementsResult): Promise<MovementPage> {
+const historicalCancellationMovements = `UNION ALL
+  SELECT entry.id,entry.invoice,entry.date,-entry.amount,0,'K',entry.invoice->>'number',
+         ''::text,0,NULL::text,entry.user_id,NULL::timestamptz,NULL::jsonb,false
+  FROM jsonb_to_recordset($7::jsonb) AS entry(id bigint,invoice jsonb,date date,amount numeric,user_id integer)`;
+
+function movementPage(
+  criteria: ClientMovementSearchCriteria,
+  base: ClientMovementsResult,
+  historical: HistoricalSalesRemissionCancellation[],
+): Promise<MovementPage> {
   const cutoffs = [...new Set(base.items.map((item) => item.toPrimitives().date.slice(0, 10)))];
+  const historicalEntries = historical.map(({ invoiceId, number, orderNumber, issuedAt, dueAt, amount, result, userId }) => ({
+    id: result.id, date: result.date, amount, user_id: userId,
+    invoice: { id: invoiceId, number, orderNumber, dates: { issuedAt, dueAt }, canceled: true, currency: { id: 1, exchangeRate: 1 } },
+  }));
   return readSalesRemissions(emptyMovements, async (client) => {
     const hasCollections = await customerCollectionsAvailable(client);
     const hasCollectionReversals = hasCollections && await customerCollectionReversalsAvailable(client);
@@ -234,6 +258,7 @@ function movementPage(criteria: ClientMovementSearchCriteria, base: ClientMoveme
          ${hasCollections ? collectionMovements(hasCollectionReversals) : ''}
          ${hasCollectionReversals ? collectionReversalMovements : ''}
          ${hasCancellations ? cancellationMovements : ''}
+         ${historicalCancellationMovements}
        ), ledger AS (
          SELECT *, sum(amount) OVER (ORDER BY movement_date, created_at, id ROWS UNBOUNDED PRECEDING) AS running_balance
          FROM entries
@@ -259,7 +284,7 @@ function movementPage(criteria: ClientMovementSearchCriteria, base: ClientMoveme
                 FROM unnest($6::date[]) AS cutoffs(date)) AS preceding
        FROM ledger`,
       [criteria.clientId, criteria.dateFrom ?? null, criteria.dateTo ?? null, Math.max(0, criteria.offset - base.summary.movementCount),
-        criteria.limit - base.items.length, cutoffs],
+        criteria.limit - base.items.length, cutoffs, JSON.stringify(historicalEntries)],
     );
     return row ?? emptyMovements;
   });
@@ -294,7 +319,9 @@ export class ClientMovementsWithSalesRemissionsDataSource implements ClientMovem
     } : await this.legacy.searchByClient(criteria);
     if (!base) return null;
     if (record?.legacy) base.client = catalogIdentity(record.document, base.client.currentBalance);
-    const local = await movementPage(criteria, base);
+    const historical = record && !record.legacy ? []
+      : await readHistoricalSalesRemissionCancellations({ customerIds: [criteria.clientId] });
+    const local = await movementPage(criteria, base, historical);
     if (local.entryCount === 0) return base;
 
     const legacyBalances = record && !record.legacy ? new Map<number | string, number>()

@@ -88,6 +88,7 @@ const toBalanceDocument = (row: BalanceDocumentRow): ClientBalanceDocument =>
 export class LegacyMysqlClientBalanceDataSource implements ClientBalanceDataSource {
   async searchByClient(
     criteria: ClientBalanceSearchCriteria,
+    canceledDocumentIds: readonly number[] = [],
   ): Promise<ClientBalanceResult | null> {
     const [clientRows] = await legacyMysqlPool.execute<ClientRow[]>(`
       SELECT
@@ -103,6 +104,12 @@ export class LegacyMysqlClientBalanceDataSource implements ClientBalanceDataSour
     const client = clientRows[0];
     if (client === undefined) return null;
 
+    const activeDocuments = `d.CLISEQ = ?
+      AND d.DEST = 0
+      AND d.DMULTICIA = 1
+      AND d.DESCXC = 1${canceledDocumentIds.length ? ` AND d.DSEQ NOT IN (${canceledDocumentIds.map(() => '?').join(', ')})` : ''}`;
+    const activeParameters = [criteria.clientId, ...canceledDocumentIds];
+
     const [summaryRows] = await legacyMysqlPool.execute<BalanceSummaryRow[]>(`
       SELECT
         COALESCE(SUM(DCANT), 0) AS totalBalance,
@@ -111,24 +118,18 @@ export class LegacyMysqlClientBalanceDataSource implements ClientBalanceDataSour
         COUNT(*) AS documentCount,
         COALESCE(SUM(DVENCE < CURDATE()), 0) AS overdueDocumentCount,
         COALESCE(SUM(DVENCE >= CURDATE()), 0) AS notDueDocumentCount
-      FROM fdoc
-      WHERE CLISEQ = ?
-        AND DEST = 0
-        AND DMULTICIA = 1
-        AND DESCXC = 1
-    `, [criteria.clientId]);
+      FROM fdoc d
+      WHERE ${activeDocuments}
+    `, activeParameters);
 
     const searchCondition = criteria.query === undefined
       ? ''
       : ' AND (d.DNUM LIKE ? OR d.DREFER LIKE ? OR d.DREFERELLOS LIKE ? OR d.DTALON LIKE ?)';
-    const where = `d.CLISEQ = ?
-      AND d.DEST = 0
-      AND d.DMULTICIA = 1
-      AND d.DESCXC = 1${dueStatusCondition(criteria.dueStatus)}${searchCondition}`;
+    const where = `${activeDocuments}${dueStatusCondition(criteria.dueStatus)}${searchCondition}`;
     const searchParameters = criteria.query === undefined
       ? []
       : Array(4).fill(`%${criteria.query}%`);
-    const parameters: Array<number | string> = [criteria.clientId, ...searchParameters];
+    const parameters: Array<number | string> = [...activeParameters, ...searchParameters];
 
     const [rows] = await legacyMysqlPool.execute<BalanceDocumentRow[]>(`
       SELECT

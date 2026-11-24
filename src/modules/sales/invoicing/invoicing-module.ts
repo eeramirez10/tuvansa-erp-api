@@ -15,6 +15,7 @@ import { InvoicePanelsWithSalesRemissionsDataSource } from './infrastructure/dat
 import { InvoicesWithSalesRemissionsDataSource, readSalesRemissionInvoice } from './infrastructure/datasources/invoices-with-sales-remissions-data-source.js';
 import { LegacyMysqlInvoicePanelsDataSource } from './infrastructure/datasources/legacy-mysql-invoice-panels-data-source.js';
 import { LegacyMysqlInvoicesDataSource } from './infrastructure/datasources/legacy-mysql-invoices-data-source.js';
+import { MysqlHistoricalSalesRemissionCancellationSource } from './infrastructure/datasources/mysql-historical-sales-remission-cancellation-source.js';
 import { MysqlInvoiceFromOrderReferences } from './infrastructure/datasources/mysql-invoice-from-order-references.js';
 import { isLocalSalesRemissionId, PostgresSalesRemissions } from './infrastructure/datasources/postgres-sales-remissions.js';
 import { PostgresSalesRemissionCancellations } from './infrastructure/datasources/postgres-sales-remission-cancellations.js';
@@ -43,7 +44,8 @@ export const createInvoicingModule = (): Router => {
     new GetInvoicePanel(panelsRepository),
     new CreateInvoiceFromOrder(new PostgresSalesRemissions(), new MysqlInvoiceFromOrderReferences()),
     stamping,
-    new CancelSalesRemission(new PostgresSalesRemissionCancellations(), new MysqlPostingReversalReferences()),
+    new CancelSalesRemission(new PostgresSalesRemissionCancellations(undefined, undefined, undefined,
+      new MysqlHistoricalSalesRemissionCancellationSource()), new MysqlPostingReversalReferences()),
   );
   return createInvoicesRouter(controller);
 };

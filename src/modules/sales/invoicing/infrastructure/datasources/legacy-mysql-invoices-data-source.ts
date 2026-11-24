@@ -18,6 +18,8 @@ interface HeaderRow extends RowDataPacket {
   customerName: string | null;
   billedCustomerName: string;
   movementType: string;
+  companyId: number;
+  documentState: number;
   status: string;
   canceled: number;
   issuedAt: string;
@@ -70,6 +72,8 @@ const selectHeader = `
   FCLI.CLINOM AS customerName,
   DCLINOM AS billedCustomerName,
   DITIPMV AS movementType,
+  FDOC.DMULTICIA AS companyId,
+  FDOC.DEST AS documentState,
   DSTATUS AS status,
   DCANCELADA AS canceled,
   DFECHA AS issuedAt,
@@ -131,6 +135,9 @@ const selectLines = `
 
 const nullableDate = (value: string): string | null => value === '1900-12-31' ? null : value;
 
+const historicalRemission = (row: HeaderRow) => row.companyId === 1 && row.documentState === 0
+  && row.movementType === 'FA' && /^FA\d/.test(row.number);
+
 const toInvoice = (row: HeaderRow, lines: InvoiceLine[]): Invoice => Invoice.create({
   id: row.id,
   number: row.number,
@@ -145,6 +152,7 @@ const toInvoice = (row: HeaderRow, lines: InvoiceLine[]): Invoice => Invoice.cre
   movementType: row.movementType,
   status: row.status,
   canceled: row.canceled === 1,
+  ...(historicalRemission(row) ? { cancellationAvailable: true } : {}),
   dates: {
     issuedAt: nullableDate(row.issuedAt),
     dueAt: nullableDate(row.dueAt),
@@ -159,7 +167,10 @@ const toInvoice = (row: HeaderRow, lines: InvoiceLine[]): Invoice => Invoice.cre
   route: row.route,
   pieces: row.pieces,
   warehouse: row.warehouse,
-  currency: { id: row.currencyId, name: row.currencyName, exchangeRate: row.exchangeRate },
+  currency: {
+    id: row.currencyId, exchangeRate: row.exchangeRate,
+    name: historicalRemission(row) && row.currencyId === 1 ? 'PESOS' : row.currencyName,
+  },
   initial: row.initial === 1,
   cfdStatus: row.cfdStatus,
   folio: row.folio,

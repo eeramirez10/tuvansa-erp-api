@@ -33,6 +33,16 @@ export interface SalesRemissionCancellationSource {
   hasCollection: boolean;
   lastCollectionReversalAt: string | null;
   alreadyRecorded: SalesRemissionCancellationResult | null;
+  historical?: {
+    version: string;
+    blockedReason: string | null;
+    orderReason?: string | null;
+    baseOrder?: OrderProps | null;
+  };
+}
+
+export interface HistoricalSalesRemissionCancellationSource {
+  read(id: number): Promise<SalesRemissionCancellationSource | null>;
 }
 
 export interface SalesRemissionCancellationCommand {

@@ -1,7 +1,9 @@
-import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
+import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
+import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
 import type { InvoicePanelsDataSource } from '../../domain/datasources/invoice-panels-data-source.js';
 import type { InvoicePanelKey, InvoicePanelResult } from '../../domain/repositories/invoice-panels-repository.js';
+import { readHistoricalSalesRemissionCancellations } from './historical-sales-remission-cancellation-reads.js';
 import { readSalesRemissionInvoice } from './invoices-with-sales-remissions-data-source.js';
 import { invoicePanelMetadata } from './legacy-mysql-invoice-panels-data-source.js';
 import { isLocalSalesRemissionId } from './postgres-sales-remissions.js';
@@ -13,7 +15,23 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
   ) {}
 
   async getPanel(id: number, key: InvoicePanelKey): Promise<InvoicePanelResult | null> {
-    if (!isLocalSalesRemissionId(id)) return this.legacy.getPanel(id, key);
+    if (!isLocalSalesRemissionId(id)) {
+      const panel = await this.legacy.getPanel(id, key);
+      if (!panel || key !== 'auxiliary' || !/^FA\d/.test(panel.invoice.number)) return panel;
+      const [cancellation] = await readHistoricalSalesRemissionCancellations({ invoiceIds: [id] });
+      if (!cancellation) return panel;
+      const { result, amount, number } = cancellation;
+      const currentCredits = Number(panel.summary?.credits ?? 0);
+      const currentBalance = Number(panel.summary?.balance ?? 0);
+      return {
+        ...panel, source: 'postgres', items: [...panel.items, {
+          id: result.id, date: result.date, movementType: 'K', reference: number,
+          charges: 0, credits: amount, amount: -amount, reason: result.reason,
+        }],
+        summary: { ...panel.summary, credits: Number((currentCredits + amount).toFixed(2)),
+          balance: Number((currentBalance - amount).toFixed(2)) },
+      };
+    }
     const record = await readSalesRemissionInvoice(id);
     if (!record) return null;
     const { invoice, charge } = record;
@@ -76,4 +94,3 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     };
   }
 }
-import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';

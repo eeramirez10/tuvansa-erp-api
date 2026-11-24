@@ -1,9 +1,12 @@
+import { postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { customerCollectionsAvailable, joinRemissionCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import type { InvoicesDataSource } from '../../domain/datasources/invoices-data-source.js';
 import { Invoice, type InvoiceProps } from '../../domain/entities/invoice.js';
 import type { InvoiceNavigationDirection, InvoiceSearchCriteria, InvoiceSearchResult } from '../../domain/repositories/invoices-repository.js';
 import type { LegacyMysqlInvoicesDataSource } from './legacy-mysql-invoices-data-source.js';
 import { isLocalSalesRemissionId, readSalesRemissions } from './postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
+import { readHistoricalSalesRemissionCancellations } from './historical-sales-remission-cancellation-reads.js';
 import { customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
 
 const invoice = "(remission.result->'invoice')";
@@ -69,23 +72,43 @@ function compare(leftNumber: string, rightNumber: string): number {
 export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource {
   constructor(private readonly legacy: LegacyMysqlInvoicesDataSource) {}
 
+  private async withHistoricalCancellations(items: Invoice[]) {
+    const configured = postgresConfigured();
+    const candidates = items.map((item) => item.toPrimitives());
+    const invoiceIds = candidates.filter(({ cancellationAvailable }) => cancellationAvailable).map(({ id }) => id);
+    if (!invoiceIds.length) return items;
+    const adjustments = configured ? await readHistoricalSalesRemissionCancellations({ invoiceIds }) : [];
+    const results = new Map(adjustments.map(({ invoiceId, result }) => [invoiceId, result]));
+    return candidates.map((invoice, index) => {
+      if (!invoice.cancellationAvailable) return items[index]!;
+      const cancellation = results.get(invoice.id);
+      return Invoice.create(cancellation ? {
+        ...invoice, canceled: true, status: 'CANCELADA', cancellation, totals: { ...invoice.totals, balance: 0 },
+      } : { ...invoice, cancellationAvailable: configured });
+    });
+  }
+
+  private async withHistoricalCancellation(invoice: Invoice | null) {
+    return invoice ? (await this.withHistoricalCancellations([invoice]))[0]! : null;
+  }
+
   async findById(id: number) {
-    if (!isLocalSalesRemissionId(id)) return this.legacy.findById(id);
+    if (!isLocalSalesRemissionId(id)) return this.withHistoricalCancellation(await this.legacy.findById(id));
     const local = await readSalesRemissionInvoice(id);
     return local ? Invoice.create(local.invoice) : null;
   }
 
   async findByNumber(number: string) {
     const local = await readLocalInvoice('number', number.toUpperCase());
-    return local ? Invoice.create(local.invoice) : this.legacy.findByNumber(number);
+    return local ? Invoice.create(local.invoice) : this.withHistoricalCancellation(await this.legacy.findByNumber(number));
   }
 
   async findFirst() {
     const [local, legacy] = await Promise.all([
       this.browseLocal(null, 'next'), this.legacy.findFirst(),
     ]);
-    if (!local) return legacy;
-    return legacy && compare(legacy.toPrimitives().number, local.number) <= 0 ? legacy : Invoice.create(local);
+    if (!local || (legacy && compare(legacy.toPrimitives().number, local.number) <= 0)) return this.withHistoricalCancellation(legacy);
+    return Invoice.create(local);
   }
 
   async findAdjacent(id: number, direction: InvoiceNavigationDirection) {
@@ -97,10 +120,10 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     const [local, legacy] = await Promise.all([
       this.browseLocal(number, direction), this.legacy.findAdjacentByNumber(number, direction),
     ]);
-    if (!local) return legacy;
+    if (!local) return this.withHistoricalCancellation(legacy);
     if (legacy) {
       const order = compare(legacy.toPrimitives().number, local.number);
-      if (direction === 'previous' ? order >= 0 : order <= 0) return legacy;
+      if (direction === 'previous' ? order >= 0 : order <= 0) return this.withHistoricalCancellation(legacy);
     }
     return Invoice.create(local);
   }
@@ -169,7 +192,10 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
   async search(criteria: InvoiceSearchCriteria): Promise<InvoiceSearchResult> {
     const { offset, limit } = criteria;
     const local = await this.searchLocal(criteria, offset + limit);
-    if (local.total === 0) return this.legacy.search(criteria);
+    if (local.total === 0) {
+      const result = await this.legacy.search(criteria);
+      return { ...result, items: await this.withHistoricalCancellations(result.items) };
+    }
 
     // Antecede a la página todo documento legacy con índice menor a offset menos el total local.
     const legacyOffset = Math.max(offset - local.total, 0);
@@ -185,12 +211,8 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
       }),
     ].sort((left, right) => compare(left.number, right.number) || left.id - right.id);
     return {
-      items: merged.slice(offset - legacyOffset, offset + limit - legacyOffset).map(({ invoice }) => invoice),
+      items: await this.withHistoricalCancellations(merged.slice(offset - legacyOffset, offset + limit - legacyOffset).map(({ invoice }) => invoice)),
       total: Number(legacy.total) + local.total,
     };
   }
 }
-import {
-  customerCollectionsAvailable, joinRemissionCollections,
-} from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
-import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';

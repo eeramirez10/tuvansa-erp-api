@@ -75,15 +75,31 @@ corresponden a la integración posterior.
 ## Cancelar una remisión
 
 `GET /api/sales/invoices/:invoiceId/actions/cancel-remission` prepara la
-cancelación de una remisión web FAW. El POST registra el motivo, la fecha,
-la confirmación y la elección de regenerar el pedido. El servidor aplica
-las reglas de `MFACT/28,29,112,113,232` para el flujo ordinario de TUVANSA.
+cancelación de una remisión web FAW o una histórica FA de TUVANSA. El POST
+registra el motivo, la fecha, la confirmación y la elección de regenerar el
+pedido. El servidor aplica las reglas de `MFACT/28,29,112,113,232` para el
+flujo ordinario de TUVANSA.
 
 El folio original conserva su historial. El documento K repone las unidades
 en el mismo almacén y se revierte el cargo de cartera. Al elegir regenerar,
-las unidades vuelven al pendiente del pedido con asignación cero. Si hay
-cobros activos, se deben revertir primero. La API requiere un periodo
-abierto y comprueba que la remisión carezca de timbre fiscal.
+las unidades vuelven al pendiente del pedido y se conserva la asignación
+vigente. Si hay cobros web activos, se deben revertir primero. La API
+requiere un periodo abierto y comprueba el estado fiscal.
+
+### Remisiones históricas de Omnis
+
+| Vista / acción | Origen de la comprobación | Efecto web |
+| --- | --- | --- |
+| Facturación / Cancelar remisión | MySQL adaptado. `FDOC` y `FTIPMV` de TUVANSA. Comprueba estado fiscal, UUID, folio, PAC y tipo de movimiento | La ficha histórica abre la consulta con `cancellationAvailable`. Al confirmar, conserva el documento original y muestra la cancelación |
+| Inventarios / Documentos | MySQL adaptado de `MFACT/112`. Cantidad, costo y almacén original de `FAXINV`. Verifica unidad, factor, lotes, cajas y capas | Registra un movimiento K con cantidades positivas al costo original |
+| Clientes / Auxiliar, Saldos y Movimientos | MySQL adaptado de `MFACT/232`. Un único cargo FA en pesos por `FAX.DSEQ`, sin cobros ni movimientos vinculados | Agrega el abono K, retira la remisión del saldo abierto y refleja el crédito liberado |
+| Pedidos / Regenerar pedido | MySQL adaptado de `MFACT/29,113`. `FAXINV.AIPED` apunta a `FPLIN.PLSEQ`. Verifica pedido, cliente, almacén, moneda, tipo de cambio y cantidad surtida | Crea o modifica el registro PostgreSQL del pedido en la misma transacción. Devuelve `AICANTF` al pendiente y reduce el importe surtido por `AIPRECIO × AICANTF` con piso de cero |
+
+Los cobros PA históricos, el timbrado, RECADV, los kits y las partidas
+con manejo especial muestran el motivo de bloqueo. La regeneración tiene
+su propia validación. Por ejemplo, la FA25675 en pesos admite cancelación
+y devuelve 12 unidades al almacén 01. Su pedido P019208 se emitió en dólares
+y queda fuera de la regeneración automática.
 
 ## Mapeo de la ficha
 

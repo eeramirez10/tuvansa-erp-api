@@ -6,11 +6,14 @@ import { salesRemissionsOutstanding } from '../src/modules/accounts-receivable/c
 import { PostgresCustomerCollections } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { PostgresCustomerCollectionReversals } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/postgres-customer-collection-reversals.js';
 import { CancelSalesRemission } from '../src/modules/sales/invoicing/application/use-cases/cancel-sales-remission.js';
-import type { SalesRemissionCancellationInput } from '../src/modules/sales/invoicing/domain/datasources/sales-remission-cancellation-data-source.js';
+import type {
+  SalesRemissionCancellationInput, SalesRemissionCancellationSource,
+} from '../src/modules/sales/invoicing/domain/datasources/sales-remission-cancellation-data-source.js';
 import { postInvoiceFromOrder } from '../src/modules/sales/invoicing/domain/entities/invoice-from-order.js';
 import { PostgresSalesRemissionCancellations } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-remission-cancellations.js';
 import { PostgresSalesRemissions } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { PostgresSalesStampingSimulations } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-stamping-simulations.js';
+import { historicalSalesRemissionCancellationsOn } from '../src/modules/sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 import type { OrderProps } from '../src/modules/sales/orders/domain/entities/order.js';
 import { PostgresOrderOverlayDataSource } from '../src/modules/sales/orders/infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { hasLocalSalesStock } from '../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
@@ -119,5 +122,90 @@ it('cancels local FAW through K, protects fiscal and PA records, and regenerates
       .toMatchObject([{ movement: { header: { type: 'K', document: 'KWV00000001', reference: number },
         lines: [{ quantity: 2, type: 'K' }], totals: { quantity: 2, cost: 50 } } }]);
     expect((await db.query('SELECT count(*)::integer AS originals FROM tuvansa.sales_remissions')).rows).toEqual([{ originals: 3 }]);
+  } finally { await db.close(); }
+}, 15000);
+
+it('regenerates a historical MXN order atomically while keeping its other fulfillment and allocations', async () => {
+  const db = new PGlite();
+  const connect: PostgresConnectionFactory = async () => ({
+    async query<T extends object>(sql: string, values?: unknown[]) {
+      if (values) return db.query<T>(sql, values);
+      const results = await db.exec(sql);
+      return { rows: (results.at(-1)?.rows ?? []) as T[] };
+    },
+    release() {},
+  });
+  const fiscal = { fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' };
+  const date = '2025-02-28';
+  const customerId = 100;
+  const productId = 7;
+  const orderLineId = 177;
+  const invoiceId = 346421;
+  const invoiceNumber = 'FA25675';
+  const order: OrderProps = {
+    id: 55, number: 'P055', customerOrderNumber: '', documentKind: 'order', status: 'SURT', fulfilledAmount: 50,
+    customer: { id: customerId, code: 'C001', name: 'Cliente' }, branch: 0, department: '',
+    dates: { orderedAt: date, from: null, dueAt: null }, attention: '', termsDays: 5, authorization: 'O.K.',
+    initial: false, warehouse: '01', currencyId: 1, exchangeRate: 1, minimumFulfillmentPercentage: 0,
+    observations: '', classifications: [],
+    totals: { quantity: 4, ordered: 4, fulfilled: 1, remaining: 3, subtotal: 200, discount: 0,
+      freight: 0, insurance: 0, other: 0, tax: 32, total: 232 },
+    lines: [{ id: orderLineId, productId, productCode: 'A', description: 'Producto A', ordered: 4,
+      fulfilled: 1, remaining: 3, unit: 'PZ', assigned: 3, branch: 0, price: 50, classCode: '', currencyId: 1,
+      piecesAssignment: '', discount: 0, publicPrice: 50, sku: '', color: '', size: '' }],
+  };
+  const posted = postInvoiceFromOrder({
+    ...order, currencyId: 0, lines: order.lines.map((line) => ({ ...line, currencyId: 0 })),
+    captureDetails: { boxes: 0, collectionCurrency: 'PESOS', commission: 0, noPartialDeliveries: false,
+      transportation: '', deliveryAddress: ['', '', ''], contact: '', additionalComments: '' },
+  }, {
+    ...fiscal, reason: null, vat: 16, customerTermsDays: 5, creditLimit: 1000, creditBalance: 0,
+    products: new Map([[productId, { id: productId, code: 'A', unit: 'PZ', package: '', family: '', cost: 25,
+      legacyOnHand: 20, legacyAssigned: 3, supported: true }]]),
+  }, { orderNumber: order.number, requestKey: crypto.randomUUID(), revision: 0, issuedAt: date,
+    lines: [{ orderLineId, quantity: 2 }] }, 1, 0);
+  const nativeOrder = { ...posted.order, currencyId: 1, lines: posted.order.lines.map((line) => ({ ...line, currencyId: 1 })) };
+  const source: SalesRemissionCancellationSource = {
+    id: invoiceId, number: invoiceNumber, orderId: order.id, orderNumber: order.number, warehouse: '01',
+    customerId, issuedAt: date, charge: posted.receivable.amount, order: nativeOrder, lineEffects: posted.lineEffects,
+    hasCollection: false, lastCollectionReversalAt: null, alreadyRecorded: null,
+    historical: { version: 'consistent', blockedReason: null },
+    invoice: { ...posted.invoice, id: invoiceId, number: invoiceNumber, lines: posted.invoice.lines.map((line) => ({ ...line, id: 333 })) },
+    movement: { ...posted.movement, header: { ...posted.movement.header, id: invoiceId, document: invoiceNumber },
+      lines: posted.movement.lines.map((line) => ({ ...line, id: 333 })) },
+  };
+  const orders = new PostgresOrderOverlayDataSource(connect, () => true);
+  let concurrentChange = false;
+  let reads = 0;
+  const storage = new PostgresSalesRemissionCancellations(orders, connect, () => true, {
+    read: async () => concurrentChange && ++reads === 2
+      ? { ...source, historical: { version: 'changed recently', blockedReason: null } } : source,
+  });
+  const cancel = new CancelSalesRemission(storage, { fiscalWindow: async () => fiscal });
+  const input: SalesRemissionCancellationInput = {
+    requestKey: 'aabb4403-d213-44ab-acd8-6bad5afd5812', date: '2025-03-03', reason: 'Remisión histórica de prueba',
+    confirmed: true, regenerateOrder: true,
+  };
+  try {
+    expect(await cancel.prepare(1, invoiceId)).toMatchObject({ canWrite: true, order: { canRegenerate: true } });
+    expect((await db.query("SELECT to_regclass('tuvansa.sales_remissions') AS present")).rows).toEqual([{ present: null }]);
+    concurrentChange = true;
+    await expect(cancel.save(1, 0, invoiceId, input)).rejects.toMatchObject({ code: 'SALES_REMISSION_SOURCE_CHANGED' });
+    expect(await orders.get(order.id)).toBeNull();
+    concurrentChange = false;
+    const saved = await cancel.save(1, 0, invoiceId, input);
+    expect(saved.regeneratedOrder).toBe(true);
+    expect(await cancel.save(1, 0, invoiceId, { ...input, requestKey: input.requestKey.toUpperCase() })).toEqual(saved);
+    expect(await cancel.prepare(1, invoiceId)).toMatchObject({ canWrite: false, alreadyRecorded: saved });
+    expect(await orders.get(order.id)).toMatchObject({ revision: 1, base: nativeOrder, document: {
+      fulfilledAmount: 50, status: '', lines: [{ fulfilled: 1, remaining: 3, assigned: 1 }] },
+    });
+    const client = await connect();
+    expect(await salesRemissionsOutstanding(client, 1, customerId)).toBe(-116);
+    expect(await historicalSalesRemissionCancellationsOn(client, { invoiceIds: [invoiceId] }))
+      .toMatchObject([{ amount: 116, invoiceId, result: saved }]);
+    expect((await db.query('SELECT ordered::float8 FROM tuvansa.order_stock_deltas')).rows).toEqual([{ ordered: 2 }]);
+    expect((await db.query('SELECT quantity::float8 FROM tuvansa.sales_remission_cancellation_inventory')).rows).toEqual([{ quantity: 2 }]);
+    expect((await db.query('SELECT * FROM tuvansa.sales_remissions')).rows).toEqual([]);
   } finally { await db.close(); }
 }, 15000);

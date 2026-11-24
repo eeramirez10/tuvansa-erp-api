@@ -189,6 +189,11 @@ las capas habilitadas al invertir las partidas. El procedimiento puede
 crear o consumir capas durante la cancelación genérica. El historial
 local contiene TR con productos sin capas y el perfil de prueba de Omnis
 bloqueó el movimiento EI necesario para preparar un producto aislado.
+En un nuevo intento con la biblioteca German, la compañía México y el
+producto PEPS `01511263` preparado en el almacén 01, el perfil también
+bloqueó el tipo `TR` al pasar del selector al folio con el mensaje
+«El T.M. no está permitido para el usuario». No se registró un traspaso
+nativo en esa sesión. Evidencia `20261124-native-transfer-tr-user-blocked.png`.
 
 La prueba web en PostgreSQL movió dos unidades del almacén 01 al 12
 mediante `TRW00000017`. Una salida de una unidad desde el 12 usó la capa

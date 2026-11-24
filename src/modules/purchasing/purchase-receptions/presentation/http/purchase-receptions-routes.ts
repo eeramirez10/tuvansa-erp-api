@@ -8,13 +8,14 @@ import type { PurchaseReceptionCommentsController } from './purchase-reception-c
 import type { PurchaseReceptionClassificationsController } from './purchase-reception-classifications-controller.js';
 import type { PurchaseReceptionDocumentationController } from './purchase-reception-documentation-controller.js';
 import type { PurchaseReceptionLabelsController } from './purchase-reception-labels-controller.js';
+import type { PurchaseReceptionPedimentoReportController } from './purchase-reception-pedimento-report-controller.js';
 import type { PurchaseReceptionSupplierChangeController } from './purchase-reception-supplier-change-controller.js';
 
 export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController, expenses: Router,
   reversals: ReversePurchasePosting, receiptCancellations: CancelPurchaseReception, pieces: PurchaseReceptionPiecesController,
   comments: PurchaseReceptionCommentsController, documentation: PurchaseReceptionDocumentationController,
   supplierChange: PurchaseReceptionSupplierChangeController, classifications: PurchaseReceptionClassificationsController,
-  labels: PurchaseReceptionLabelsController): Router => {
+  labels: PurchaseReceptionLabelsController, pedimentoReport: PurchaseReceptionPedimentoReportController): Router => {
   const router = Router();
   const cancellation = postingReversalHandlers(reversals, 'expense');
   const cancelReceipt = purchaseReceptionCancellationHandlers(receiptCancellations);
@@ -37,6 +38,7 @@ export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsCon
   router.get('/:purchaseReceptionId/actions/document', documentation.preview);
   router.post('/:purchaseReceptionId/actions/document', documentation.save);
   router.get('/:purchaseReceptionId/actions/pedimento', controller.panel('pedimento'));
+  router.get('/:purchaseReceptionId/actions/pedimento-report', pedimentoReport.get);
   router.get('/:purchaseReceptionId/actions/pieces', controller.panel('pieces'));
   router.get('/:purchaseReceptionId/actions/pieces/lines/:lineId', pieces.prepare);
   router.post('/:purchaseReceptionId/actions/pieces/lines/:lineId', pieces.add);

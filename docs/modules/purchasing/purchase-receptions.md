@@ -71,6 +71,7 @@ pertenece a la misma transacción.
 | --- | --- | --- |
 | Nueva recepción / Capturar datos de importación | `GET /create` anuncia `pedimentoAvailable`. `POST /` recibe `pedimento` con número, fecha, aduana e incrementables | Derivada de `ERECEPC#8` y `MRECEP/38,324,65`. El pedimento queda registrado en el folio web y las capas se ligan por partida |
 | Pedimento | `GET /:id/actions/pedimento` | Para RA, lee `FPEDIMENTO.PMTODOC` por folio y los pasivos `FDOC/DREFER` marcados IMPORT con su auxiliar `FAX`. Para RW, lee el pedimento del folio guardado |
+| Reporte pedimento | `GET /:id/actions/pedimento-report` | Lectura derivada de `ERECEPC#13/32` y del formato `RREPEDIM`. Usa `FPEDIMENTO`, `FDOC`, `FAXINV`, `FINV` y `FCIA` |
 | Cancelar recepción | `GET` y `POST /:id/actions/cancel-reception` | Derivada de `MRECEP/24–26`. La RW devuelve el pendiente de la orden, revierte mercancía, pasivo y póliza, y conserva el pedimento para consulta |
 
 El campo `PMTNUM` permite hasta 15 caracteres en TUVANSA y el mismo
@@ -93,6 +94,22 @@ moneda original. Por ejemplo, RA09154 contiene el cargo IMPORT RA09154A
 por 735 MXN y su pago PP, sin póliza de origen acreditada. `MRECEP/24`
 bloquea la cancelación genérica del documento IMPORT. La anulación web de
 la mercancía aplica a sus folios RW.
+
+**Reporte pedimento** abre una vista previa con los gastos desglosados,
+IVA, total, porcentaje de gastos y las partidas facturadas. Los importes
+usan los campos de gastos de `FPEDIMENTO`. Los pasivos históricos
+vinculados por `DREFER` aparecen en **Pedimento**. Las RW consultan
+los datos de importación guardados y tienen cero gastos de este formato.
+El prorrateo usa el importe de mercancía en TUVANSA
+(`CIACOMPORTA[50]=0`). La vista web muestra el folio vinculado y el
+encabezado leído de `FPEDIMENTO`. En la sesión nativa del 24/11/2026 el
+encabezado de la vista previa RA09154 salió vacío, aunque la fila de
+pedimento existe. `bank-inline-receipt-secondary-23.png` documenta la
+vista nativa y las capturas `-48`, `-50` y `-55` conservan los campos
+y cálculos del diseñador. El formato alterno al pulsar Mayús queda
+pendiente. La acción independiente **Imprimir** falló al cargar
+`QTUVANSA006` en la biblioteca alemana de pruebas (`E101201`,
+`bank-inline-receipt-secondary-36.png`).
 
 ## Gastos múltiples (GA)
 
@@ -214,6 +231,10 @@ El editor permite conservar códigos históricos fuera del catálogo.
 La revisión evita sobrescribir una clasificación o flete modificados desde otra ventana.
 La persistencia derivada guarda únicamente las modificaciones y aplica la
 misma referencia de flete en **Comentarios**, **Clasificar** y la ficha.
+
+La verificación web de RA09214 cambió Tipo de proveedor de 801 a 802,
+releyó el valor en PostgreSQL y retiró sólo la modificación de prueba
+(`ev_d7694601801c2699435e1a82b8e7443b77fef0d3f630f3551ea1b3e9e51972de`).
 Los accesos individuales al cuadro quedan en la sesión de Omnis.
 
 ## Piezas en una recepción

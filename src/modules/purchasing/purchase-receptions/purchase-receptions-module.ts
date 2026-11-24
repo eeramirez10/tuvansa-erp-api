@@ -22,6 +22,7 @@ import { MysqlHistoricalReceptionCancellationSource } from './infrastructure/dat
 import { MysqlPostingReversalReferences } from './infrastructure/datasources/mysql-posting-reversal-references.js';
 import { MysqlPurchaseExpenseReferences } from './infrastructure/datasources/mysql-purchase-expense-references.js';
 import { MysqlPurchaseReceptionLabels } from './infrastructure/datasources/mysql-purchase-reception-labels.js';
+import { MysqlPurchaseReceptionPedimentoReport } from './infrastructure/datasources/mysql-purchase-reception-pedimento-report.js';
 import { MysqlPurchaseReceptionPieceNativeSource } from './infrastructure/datasources/mysql-purchase-reception-piece-native-source.js';
 import { MysqlPurchaseReceptionCommentsSource } from './infrastructure/datasources/mysql-purchase-reception-comments-source.js';
 import { MysqlPurchaseReceptionWriteReferences } from './infrastructure/datasources/mysql-purchase-reception-write-references.js';
@@ -42,6 +43,7 @@ import { PurchaseReceptionCommentsController } from './presentation/http/purchas
 import { PurchaseReceptionClassificationsController } from './presentation/http/purchase-reception-classifications-controller.js';
 import { PurchaseReceptionDocumentationController } from './presentation/http/purchase-reception-documentation-controller.js';
 import { PurchaseReceptionLabelsController } from './presentation/http/purchase-reception-labels-controller.js';
+import { PurchaseReceptionPedimentoReportController } from './presentation/http/purchase-reception-pedimento-report-controller.js';
 import { PurchaseReceptionSupplierChangeController } from './presentation/http/purchase-reception-supplier-change-controller.js';
 import { createPurchaseReceptionsRouter } from './presentation/http/purchase-receptions-routes.js';
 
@@ -84,8 +86,9 @@ export const createPurchaseReceptionsModule = (): Router => {
   );
   const classifications = new PurchaseReceptionClassificationsController(new UpdatePurchaseReceptionClassifications(classificationStorage));
   const labels = new PurchaseReceptionLabelsController(new MysqlPurchaseReceptionLabels(repository));
+  const pedimentoReport = new PurchaseReceptionPedimentoReportController(new MysqlPurchaseReceptionPedimentoReport(repository));
   return createPurchaseReceptionsRouter(
     controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces, comments,
-    documentation, supplierChange, classifications, labels,
+    documentation, supplierChange, classifications, labels, pedimentoReport,
   );
 };

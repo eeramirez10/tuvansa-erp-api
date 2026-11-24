@@ -97,6 +97,9 @@ Content-Type: application/json
 ### Pedimento de una recepción existente y sus cargos vinculados
 GET {{baseUrl}}/purchasing/purchase-receptions/341534/actions/pedimento
 
+### Reporte pedimento desde la ficha de la recepción
+GET {{baseUrl}}/purchasing/purchase-receptions/341534/actions/pedimento-report
+
 ### Piezas registradas en una recepción existente
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/pieces
 

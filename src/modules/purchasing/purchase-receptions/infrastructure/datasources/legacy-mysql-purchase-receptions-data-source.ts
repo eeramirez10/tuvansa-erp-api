@@ -11,6 +11,7 @@ import type {
   PurchaseReceptionSearchResult,
 } from '../../domain/repositories/purchase-receptions-repository.js';
 import { readNativePurchaseReceptionPieces } from './mysql-purchase-reception-piece-native-source.js';
+import { customsReception, readPurchaseReceptionPedimento, uniqueCustomsReceiptNumber } from './mysql-purchase-reception-pedimento.js';
 import { legacyReceiptSupplierSearch } from './legacy-receipt-supplier-search.js';
 import type { ReceiptSupplierChange } from './purchase-reception-supplier-change-reads.js';
 
@@ -37,26 +38,12 @@ interface LineRow extends RowDataPacket {
 
 interface CountRow extends RowDataPacket { total: number }
 interface IdentityRow extends RowDataPacket { id: number; number: string }
-interface CustomsRow extends RowDataPacket {
-  number: string; date: string; customsOffice: string; incrementables: number;
-}
 interface ImportPayableRow extends RowDataPacket {
   id: number; number: string; supplierCode: string | null; supplierName: string | null;
   currencyId: number; charge: number; balance: number; paid: number | null; policyNumber: string | null;
 }
 
 const documentFilter = '(FDOC.DESFACT IN (2, 3) OR FDOC.DESCXC = 2) AND FDOC.DEST = 0 AND FDOC.DMULTICIA = 1';
-const customsReception = `receipt.DSEQ = ? AND receipt.DMULTICIA = 1 AND receipt.DEST = 0 AND receipt.DESFACT = 2
-  AND receipt.DITIPMV = 'RA' AND receipt.DOTROSTXT <> 'IMPORT'`;
-
-function uniqueCustomsReceiptNumber(companyOnly: boolean) {
-  return `NOT EXISTS (
-    SELECT 1 FROM FDOC other WHERE other.DNUM = receipt.DNUM AND other.DSEQ <> receipt.DSEQ
-      AND other.DEST = 0 AND other.DESFACT = 2 AND other.DITIPMV = 'RA' AND other.DOTROSTXT <> 'IMPORT'
-      ${companyOnly ? 'AND other.DMULTICIA = receipt.DMULTICIA' : ''}
-  )`;
-}
-
 const selectHeader = (supplier = legacyReceiptSupplierSearch([])) => `
   FDOC.DSEQ AS id,
   FDOC.DNUM AS number,
@@ -322,14 +309,8 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
   }
 
   private async customsPanel(identity: IdentityRow): Promise<PurchaseReceptionPanelResult> {
-    const [[[customs]], [payables]] = await Promise.all([
-      // Derivada de MRECEP/65. FPEDIMENTO vincula el folio y carece de compañía.
-      legacyMysqlPool.execute<CustomsRow[]>(
-        `SELECT p.PMTNUM AS number, p.PMTFECHA AS date, p.PMTADUANA AS customsOffice, p.PMTINCREMENTABLES AS incrementables
-         FROM FDOC receipt JOIN FPEDIMENTO p ON p.PMTODOC = receipt.DNUM
-         WHERE ${customsReception} AND ${uniqueCustomsReceiptNumber(false)}
-         ORDER BY p.PMTOSEQ DESC LIMIT 1`, [identity.id],
-      ),
+    const [{ pedimento: summary }, [payables]] = await Promise.all([
+      readPurchaseReceptionPedimento(identity.id),
       // Derivada de MRECEP/105 y de los pasivos IMPORT relacionados por DREFER.
       legacyMysqlPool.execute<ImportPayableRow[]>(
         `SELECT expense.DSEQ AS id, expense.DNUM AS number, supplier.PRVCOD AS supplierCode, supplier.PRVNOM AS supplierName,
@@ -348,12 +329,6 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
          ORDER BY expense.DSEQ`, [identity.id],
       ),
     ]);
-    const summary = customs ? {
-      number: (customs.number ?? '').trim(),
-      date: nullableDate(customs.date),
-      customsOffice: (customs.customsOffice ?? '').trim(),
-      incrementables: numeric(customs.incrementables),
-    } : undefined;
     return {
       purchaseReception: identity, key: 'pedimento', section: 'actions', button: 'Pedimento', source: 'mysql',
       items: payables.map(({ id, number, supplierCode, supplierName, currencyId, charge, balance, paid, policyNumber }) => ({
@@ -362,7 +337,7 @@ export class LegacyMysqlPurchaseReceptionsDataSource implements PurchaseReceptio
         ...(paid === null ? {} : { paid: numeric(paid) }),
         ...(policyNumber ? { policyNumber } : {}),
       })),
-      ...(summary && (summary.number || summary.date || summary.customsOffice || summary.incrementables) ? { summary } : {}),
+      ...(summary ? { summary } : {}),
     };
   }
 

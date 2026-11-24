@@ -3,9 +3,11 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type {
-  ManualPolicyActionInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine,
+  DuplicatePolicyInput, ManualPolicyActionInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine,
   ManualPolicyOperation, ManualPolicyReferences, ManualPolicySettings,
 } from '../../domain/datasources/manual-policy-data-source.js';
+import type { AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
+import type { AccountingPoliciesRepository } from '../../domain/repositories/accounting-policies-repository.js';
 
 const mexicoDate = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
 const missing = 'La configuración de pólizas de diario de TUVANSA no está disponible.';
@@ -30,8 +32,36 @@ export function policyCents(amount: number): number | null {
   return Number.isSafeInteger(cents) && cents >= 0 && cents <= 999999999999 && cents / 100 === amount ? cents : null;
 }
 
+function duplicateFields(policy: AccountingPolicyProps) {
+  const { concept, beneficiary, family, movements } = policy;
+  return { concept, beneficiary, family,
+    lines: movements.map(({ accountCode, costCenter, debit, credit, reference }) => ({ accountCode, costCenter, debit, credit, reference })),
+  };
+}
+
+function duplicateRevision(policy: AccountingPolicyProps) {
+  return fingerprint('duplicate-source', policy.id, [policy.number, policy.company, policy.date, policy.manual?.revision,
+    policy.manual?.canceled, policy.exchangeRate,
+    policy.movements.map(({ id, exchangeRate }) => [id, exchangeRate]), duplicateFields(policy)]);
+}
+
+function duplicateBlocked(policy: AccountingPolicyProps) {
+  if (policy.company !== 1 || !policy.number.startsWith('3')) return 'Sólo se pueden duplicar pólizas de diario tipo 3.';
+  if (policy.manual?.canceled) return 'La póliza ya fue dada de baja.';
+  if (![0, 1].includes(policy.exchangeRate) || policy.movements.some(({ exchangeRate }) => exchangeRate !== 1)) {
+    return 'La copia de pólizas de diario requiere partidas en pesos con tipo de cambio 1.';
+  }
+  if (policy.movements.length < 2 || policy.movements.length > 100) return 'La póliza requiere de dos a cien partidas.';
+  if (policy.concept.length > 90 || policy.beneficiary.length > 85 || policy.family.length > 20
+    || policy.movements.some(({ accountCode, reference }) => !accountCode || accountCode.length > 16 || reference.length > 45)) {
+    return 'La póliza contiene un campo que excede el espacio de captura del diario.';
+  }
+  return null;
+}
+
 export class ManageManualPolicy {
-  constructor(private readonly references: ManualPolicyReferences, private readonly dataSource: ManualPolicyDataSource) {}
+  constructor(private readonly references: ManualPolicyReferences, private readonly dataSource: ManualPolicyDataSource,
+    private readonly source?: Pick<AccountingPoliciesRepository, 'findById'>) {}
 
   async prepare() {
     const settings = await this.references.settings();
@@ -102,6 +132,46 @@ export class ManageManualPolicy {
     const settings = await this.settings();
     const lines = await this.prepareLines(input, settings);
     return this.dataSource.create(input, lines, hash, () => this.verifyReferences(lines, settings));
+  }
+
+  private async duplicateSource(id: number) {
+    const policy = await this.source?.findById(id);
+    if (!policy) throw new NotFoundError('Póliza contable');
+    return policy.toPrimitives();
+  }
+
+  async prepareDuplicate(id: number) {
+    const [policy, settings] = await Promise.all([this.duplicateSource(id), this.references.settings()]);
+    let date = mexicoDate.format();
+    if (settings) date = date < settings.fiscalStart ? settings.fiscalStart : date > settings.fiscalEnd ? settings.fiscalEnd : date;
+    let reason = duplicateBlocked(policy) ?? (!settings ? missing : this.dataSource.writable() ? null : 'La captura de pólizas requiere PostgreSQL.');
+    if (!reason && settings) {
+      try { await this.prepareLines({ ...duplicateFields(policy), date, requestKey: '' }, settings); }
+      catch (error) { if (!(error instanceof ApplicationError)) throw error; reason = error.message; }
+    }
+    return { policy: { id, number: policy.number }, date, revision: duplicateRevision(policy), canWrite: !reason, reason,
+      fiscalStart: settings?.fiscalStart ?? null, fiscalEnd: settings?.fiscalEnd ?? null };
+  }
+
+  async duplicate(id: number, raw: DuplicatePolicyInput) {
+    const requestKey = raw.requestKey.toLowerCase();
+    const hash = fingerprint('duplicate', id, { ...raw, requestKey });
+    const previous = await this.dataSource.findRequest(requestKey, hash);
+    if (previous) return previous;
+    const policy = await this.duplicateSource(id);
+    const reason = duplicateBlocked(policy);
+    if (reason) throw blocked(reason);
+    if (duplicateRevision(policy) !== raw.revision) throw blocked('La póliza original cambió. Vuelve a abrir Duplicar.');
+    const settings = await this.settings();
+    const input = { ...duplicateFields(policy), date: raw.date, requestKey };
+    const lines = await this.prepareLines(input, settings);
+    const source = policy.manual ? { id, revision: policy.manual.revision } : undefined;
+    return this.dataSource.create(input, lines, hash, async () => {
+      if (!source && duplicateRevision(await this.duplicateSource(id)) !== raw.revision) {
+        throw blocked('La póliza original cambió. Vuelve a abrir Duplicar.');
+      }
+      await this.verifyReferences(lines, settings);
+    }, source);
   }
 
   async change(id: number, raw: ManualPolicyInput & { revision: number }) {

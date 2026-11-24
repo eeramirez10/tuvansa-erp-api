@@ -28,3 +28,17 @@ GET {{baseUrl}}/accounting/policies/{{policyId}}/next
 
 ### Accion: Clasificar
 GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/classifications
+
+### Duplicar una póliza ordinaria, consultar la fecha y revisión de la fuente
+GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/duplicate
+
+### Confirmar la copia en PostgreSQL de pruebas
+POST {{baseUrl}}/accounting/policies/{{policyId}}/actions/duplicate
+Content-Type: application/json
+
+{
+  "date": "{{activeFiscalDate}}",
+  "revision": "{{duplicateRevision}}",
+  "requestKey": "{{duplicateRequestKey}}",
+  "confirmed": true
+}

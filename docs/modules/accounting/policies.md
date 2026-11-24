@@ -44,7 +44,7 @@ Los totales se calculan sumando cargos y abonos. `difference` permite comprobar 
 
 ## Acciones conservadas sin escritura
 
-La consulta histórica incluye Comentarios, Duplicar, Duplicar pasivo e Imprimir según las reglas documentadas de la ventana. La sección de diario web detalla el alcance de Aplicar y Desaplicar.
+La consulta histórica conserva Comentarios, Duplicar pasivo e Imprimir. La sección de diario web detalla el alcance de Duplicar, Aplicar y Desaplicar.
 
 La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, dos movimientos y balance de cargos/abonos.
 
@@ -78,6 +78,8 @@ periodo, pide confirmación y llama a `/98` para retirarla de los saldos.
 | Periodo, fecha propuesta y centros de costo | `GET /api/accounting/policies/capture` |
 | Buscar cuentas de detalle | `GET /api/accounting/policies/capture/accounts?q=…` |
 | Alta y aplicación | `POST /api/accounting/policies` |
+| Duplicar / Consultar fecha y revisión de la póliza de origen | `GET /api/accounting/policies/:id/actions/duplicate` |
+| Duplicar / Crear y aplicar la copia | `POST /api/accounting/policies/:id/actions/duplicate` |
 | Consultar acciones del diario | `GET /api/accounting/policies/:id/actions/manual` |
 | Cambiar una póliza desaplicada | `PATCH /api/accounting/policies/:id` |
 | Aplicar y desaplicar | `POST /api/accounting/policies/:id/actions/apply` y `…/unapply` |
@@ -93,6 +95,18 @@ Los cambios y cada acción confirman la revisión del documento. Los reintentos
 con la misma clave recuperan el resultado registrado. La baja conserva las
 partidas y el historial de revisiones para auditoría. Las acciones de diario
 operan sobre folios `3JW…`.
+
+**Duplicar** conserva el concepto, beneficiario, familia, cuentas, importes,
+referencias y centros de costo. `EPASIV#13/3 → ECIA#11D` captura una nueva fecha,
+genera el encabezado con `MPOLIZAS/24`, copia los renglones con `MPOLIZAS/25` y
+aplica con `MPASIVOS/99`. El guardado web es derivado de esos procedimientos y
+registra la copia en el diario `3JW…` de PostgreSQL. La copia ordinaria opera
+con pólizas tipo 3, partidas en pesos y las mismas cuentas válidas del diario.
+El auxiliar de CxP, los cheques y las marcas de conciliación pertenecen al
+documento original. El modo de inversión por Ctrl y **Duplicar pasivo**
+requieren sus propias reglas. La vista en Omnis se verificó con `312502-0010`
+y se cerró desde Cancelar (`bank-inline-policy-audit-33`). Las pruebas de
+escritura web se ejecutaron en una base aislada.
 
 Las partidas aplicadas alimentan los saldos de la cuenta y sus agrupadoras,
 **Mayor**, **Mayor C.C.** y el **Auxiliar** del detalle. Cada partida bancaria

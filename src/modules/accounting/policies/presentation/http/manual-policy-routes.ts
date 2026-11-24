@@ -5,6 +5,9 @@ import { policyCents, type ManageManualPolicy } from '../../application/use-case
 const params = z.object({ policyId: z.coerce.number().int().positive() });
 const amount = z.number().refine((value) => policyCents(value) !== null, 'Usa importes no negativos con hasta dos decimales.');
 const action = z.strictObject({ requestKey: z.uuid(), revision: z.int().positive(), confirmed: z.literal(true) });
+const duplicate = z.strictObject({
+  requestKey: z.uuid(), date: z.iso.date(), revision: z.string().regex(/^[0-9a-f]{64}$/), confirmed: z.literal(true),
+});
 const policy = z.strictObject({
   requestKey: z.uuid(), date: z.iso.date(), concept: z.string().trim().max(90), beneficiary: z.string().trim().max(85),
   family: z.string().trim().max(20), lines: z.array(z.strictObject({
@@ -30,6 +33,14 @@ export function createManualPolicyRouter(manual: ManageManualPolicy): Router {
   router.get('/:policyId/actions/manual', async (request, response) => {
     const { policyId } = params.parse(request.params);
     response.set('Cache-Control', 'no-store').json({ data: await manual.preview(policyId) });
+  });
+  router.get('/:policyId/actions/duplicate', async (request, response) => {
+    const { policyId } = params.parse(request.params);
+    response.set('Cache-Control', 'no-store').json({ data: await manual.prepareDuplicate(policyId) });
+  });
+  router.post('/:policyId/actions/duplicate', async (request, response) => {
+    const { policyId } = params.parse(request.params);
+    response.status(201).json({ data: await manual.duplicate(policyId, duplicate.parse(request.body)) });
   });
   router.patch('/:policyId', async (request, response) => {
     const { policyId } = params.parse(request.params);

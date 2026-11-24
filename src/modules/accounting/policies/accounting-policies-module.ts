@@ -25,5 +25,6 @@ export const createAccountingPoliciesModule = (): Router => {
     new NavigateAccountingPolicy(repository),
     new GetAccountingPolicyClassifications(repository),
   );
-  return createAccountingPoliciesRouter(controller, createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(), new PostgresManualPolicies())));
+  return createAccountingPoliciesRouter(controller,
+    createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(), new PostgresManualPolicies(), repository)));
 };

@@ -34,6 +34,7 @@ export interface ManualPolicyInput {
 }
 
 export interface ManualPolicyActionInput { requestKey: string; revision: number; confirmed: true }
+export interface DuplicatePolicyInput { requestKey: string; date: string; revision: string; confirmed: true }
 export type ManualPolicyOperation = 'apply' | 'unapply' | 'cancel';
 export type ManualPolicyLine = Omit<ManualPolicyLineInput, 'accountCode'> & { account: ManualPolicyAccount; parents: ManualPolicyAccount[] };
 
@@ -62,7 +63,8 @@ export interface ManualPolicyDataSource {
   writable(): boolean;
   find(id: number): Promise<ManualPolicyDocument | null>;
   findRequest(key: string, fingerprint: string): Promise<AccountingPolicyProps | null>;
-  create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>): Promise<AccountingPolicyProps>;
+  create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>,
+    source?: { id: number; revision: number }): Promise<AccountingPolicyProps>;
   change(id: number, input: ManualPolicyInput & { revision: number }, lines: ManualPolicyLine[], fingerprint: string, validate: (current: ManualPolicyDocument) => Promise<void>): Promise<AccountingPolicyProps>;
   perform(id: number, operation: ManualPolicyOperation, input: ManualPolicyActionInput, fingerprint: string,
     validate: (current: ManualPolicyDocument) => Promise<void>): Promise<AccountingPolicyProps>;

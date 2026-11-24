@@ -110,8 +110,15 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
     });
   }
 
-  create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>) {
+  create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>,
+    source?: { id: number; revision: number }) {
     return this.transaction(input.requestKey, fingerprint, 'create', async (client) => {
+      if (source) {
+        // Lock the original before its accounts, as in the edit and cancellation paths.
+        const { rows } = await client.query(`SELECT id FROM tuvansa.manual_accounting_policies
+          WHERE company_id=1 AND id=$1 AND revision=$2 AND canceled_at IS NULL FOR UPDATE`, [source.id, source.revision]);
+        if (!rows.length) throw new ConflictError('La póliza original cambió. Vuelve a abrir Duplicar.', 'MANUAL_POLICY_REVISION_CHANGED');
+      }
       await lockAccounts(client, lines);
       await verify();
       const { rows: [row] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.manual_policy_ids') AS id");

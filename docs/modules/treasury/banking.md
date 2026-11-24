@@ -120,7 +120,7 @@ para la modalidad **Traspas**.
 
 **Concilia Automático** compara las partidas pendientes con un archivo CSV o TSV. El archivo debe contener las columnas `Fecha`, `Referencia`, `Ingresos` y `Egresos`, con fecha `AAAA-MM-DD` o `DD/MM/AAAA` y punto decimal. La vista selecciona coincidencias únicas por referencia e importe firmado. **Liga** permite resolver filas ambiguas con una partida pendiente del mismo importe y signo. Se pueden quitar coincidencias antes de registrar. La captura nativa `bank-full-24-auto-open.png` muestra la comparación de los dos auxiliares. El CSV y el TSV son formatos de intercambio de la web.
 
-La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. La operación nativa **Traspasa +** queda pendiente.
+La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes.
 
 **Revisar** abre **Autorizar** (`EBANCO#11`). Los procedimientos `/1`,
 `/2` y `/99` consultan la partida por `FBANMOV.BASEQ` y modifican
@@ -136,6 +136,33 @@ La prueba web de `BASEQ=418562` registró `*`, abrió la póliza vinculada y
 volvió a mostrar la partida con **Filtra \***. El mismo PATCH fue
 idempotente. Una selección distinta con la revisión anterior recibió
 conflicto. Los saldos y la póliza conservaron los valores previos.
+
+**Traspasa +** (`EBANCO#11/24`) toma las partidas con `BAAUTORIZADO='+'`
+de **Autorizar**. German pide la cuenta destino y la fecha, crea una sola
+póliza de diario **TRASPASO CUENTAS** con origen `TRASPCTAS` y marca las
+partidas de origen con `*`. Para un cargo, abona origen y carga destino.
+Para un abono, carga origen y abona destino. Conserva tipo y centro de
+costo en cada par de líneas. Aplica la póliza con `MPASIVOS/99`. La
+procedencia es el procedimiento observado en
+`closure-bank-transfers-plus-proc24.png` y
+`closure-bank-transfer-plus-proc24-tail.png`.
+
+| Vista y control | Endpoint | Procedencia y efecto |
+| --- | --- | --- |
+| Revisar / A | `PATCH /api/treasury/bank-accounts/:id/actions/authorization-review` | Marca `+` o la quita en `bank_panel_settings`. Guarda la revisión para confirmar el conjunto. |
+| Revisar / Traspasa + | `POST /api/treasury/bank-accounts/:id/actions/authorization-review/transfer` | Derivada. Consume las marcas y registra la póliza aplicada en `manual_accounting_policies` y `manual_accounting_policy_lines` dentro de la misma transacción. |
+
+La ficha refleja el traslado en saldo contable. Ambas partidas bancarias
+quedan disponibles para conciliación por separado. La póliza permite
+rastrear cada renglón a la partida de origen. Un cambio del conjunto de
+marcas devuelve conflicto. Un reintento con la clave original recupera
+la póliza.
+
+La prueba en Chromium y Neon trasladó un cargo y un abono de la cuenta
+`1102100001` a `1102100002` en una póliza aplicada de cuatro renglones.
+Verificó los tipos, centros, marcas, saldos contables y partidas pendientes
+para conciliar. Una selección incompleta y una fecha de otro periodo no
+generaron póliza. Se retiraron la póliza y las marcas de prueba.
 
 **Bancos → Gastos por prv.** abre el informe **Compras por proveedor**
 (`EBANCO#1/8 → EBANCO#9`). `EBANCO#9/240` carga `FBANMOV` por la cuenta

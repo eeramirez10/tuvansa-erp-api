@@ -125,14 +125,19 @@ export class ManageManualPolicy {
     }
   }
 
+  async preparePosting(input: ManualPolicyInput) {
+    const settings = await this.settings();
+    const lines = await this.prepareLines(input, settings);
+    return { lines, verify: () => this.verifyReferences(lines, settings) };
+  }
+
   async create(raw: ManualPolicyInput) {
     const input = { ...raw, requestKey: raw.requestKey.toLowerCase() };
     const hash = fingerprint('create', null, input);
     const previous = await this.dataSource.findRequest(input.requestKey, hash);
     if (previous) return previous;
-    const settings = await this.settings();
-    const lines = await this.prepareLines(input, settings);
-    return this.dataSource.create(input, lines, hash, () => this.verifyReferences(lines, settings));
+    const { lines, verify } = await this.preparePosting(input);
+    return this.dataSource.create(input, lines, hash, verify);
   }
 
   private async sourcePolicy(id: number) {

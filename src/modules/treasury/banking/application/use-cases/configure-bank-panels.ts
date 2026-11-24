@@ -4,6 +4,7 @@ import type { BankPanelsDataSource } from '../../domain/datasources/bank-panels-
 import type { BankPanelSettingsDataSource } from '../../domain/datasources/bank-panel-settings-data-source.js';
 import type { BankPanelOptions } from '../../domain/repositories/bank-panels-repository.js';
 import { bankCents } from '../../domain/entities/bank-reconciliation.js';
+import { bankReviewMarks, type BankReviewDocument, type BankReviewMark, type BankReviewRow } from '../../domain/entities/bank-review.js';
 
 export class ConfigureBankPanels {
   constructor(
@@ -35,17 +36,19 @@ export class ConfigureBankPanels {
     return this.settings.save({ accountId, action: 'budget', scope: costCenter }, revision, values);
   }
 
-  async review(accountId: number, revision: number, ids: number[], options: BankPanelOptions) {
+  async review(accountId: number, revision: number, ids: number[], options: BankPanelOptions, mark: BankReviewMark = '*') {
     const panel = await this.panels.getPanel(accountId, 'authorization-review', options);
     if (!panel.available) throw new NotFoundError('Cuenta');
-    const movements = new Map((panel.items as { movementId: number; canReview?: boolean; reviewed?: boolean }[])
-      .map((row) => [row.movementId, row]));
-    if (ids.some((id) => !movements.get(id)?.canReview && !movements.get(id)?.reviewed)) {
+    const eligible = new Set((panel.items as BankReviewRow[]).filter((row) => row.canSetReviewMark === true && (row.reviewed !== true || mark === '*'))
+      .map((row) => row.movementId));
+    if (ids.some((id) => !eligible.has(id))) {
       throw new ApplicationError('Selecciona movimientos disponibles de esta cuenta.', 'BANK_REVIEW_MOVEMENT_INVALID', 422);
     }
     const key = { accountId, action: 'review' as const, scope: '' };
-    const previous = (await this.settings.read<number[]>(key))?.values ?? [];
-    const values = [...new Set([...previous, ...ids])].sort((left, right) => left - right);
-    return this.settings.save(key, revision, values);
+    const previous = bankReviewMarks((await this.settings.read<BankReviewDocument | number[]>(key))?.values);
+    const values = { ...previous };
+    for (const id of ids) values[id] = mark;
+    const saved = await this.settings.save(key, revision, values);
+    return { revision: saved.revision, values: Object.keys(saved.values).filter((id) => saved.values[id] === '*').map(Number) };
   }
 }

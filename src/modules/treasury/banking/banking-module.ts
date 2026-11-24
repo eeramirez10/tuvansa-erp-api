@@ -3,6 +3,7 @@ import { CaptureSupplierPayment } from '../../accounts-payable/suppliers/applica
 import { MysqlSupplierPaymentReferences } from '../../accounts-payable/suppliers/infrastructure/datasources/mysql-supplier-payment-references.js';
 import { PostgresSupplierPayments } from '../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { CaptureBankReconciliation } from './application/use-cases/capture-bank-reconciliation.js';
+import { CaptureBankReviewTransfer } from './application/use-cases/capture-bank-review-transfer.js';
 import { CaptureBankSupplierExpense } from './application/use-cases/capture-bank-supplier-expense.js';
 import { CaptureBankTransfer } from './application/use-cases/capture-bank-transfer.js';
 import { ConfigureBankPanels } from './application/use-cases/configure-bank-panels.js';
@@ -20,6 +21,7 @@ import { MysqlBankCatalogReferences } from './infrastructure/datasources/mysql-b
 import { MysqlBankTransferReferences } from './infrastructure/datasources/mysql-bank-transfer-references.js';
 import { PostgresBankCatalogDataSource } from './infrastructure/datasources/postgres-bank-catalog-data-source.js';
 import { PostgresBankReconciliations } from './infrastructure/datasources/postgres-bank-reconciliations.js';
+import { PostgresBankReviewTransfer } from './infrastructure/datasources/postgres-bank-review-transfer.js';
 import { PostgresBankPanelSettings } from './infrastructure/datasources/postgres-bank-panel-settings.js';
 import { PostgresBankSupplierExpenseReceipts } from './infrastructure/datasources/postgres-bank-supplier-expense-receipts.js';
 import { PostgresBankTransfers } from './infrastructure/datasources/postgres-bank-transfers.js';
@@ -29,6 +31,9 @@ import { BankAccountsController } from './presentation/http/bank-accounts-contro
 import { BankCatalogWritesController } from './presentation/http/bank-catalog-writes-controller.js';
 import { BankSupplierExpensesController } from './presentation/http/bank-supplier-expenses-controller.js';
 import { createBankAccountsRouter } from './presentation/http/bank-accounts-routes.js';
+import { ManageManualPolicy } from '../../accounting/policies/application/use-cases/manage-manual-policy.js';
+import { PostgresManualPolicies } from '../../accounting/policies/infrastructure/datasources/postgres-manual-policies.js';
+import { MysqlManualPolicyReferences } from '../../accounting/policies/infrastructure/datasources/mysql-manual-policy-references.js';
 
 export const createBankingModule = (): Router => {
   const accountsDataSource = new BankAccountsWithLocalPostingsDataSource();
@@ -37,6 +42,7 @@ export const createBankingModule = (): Router => {
   const settings = new PostgresBankPanelSettings();
   const panels = new BankPanelsWithActionsDataSource(accountsDataSource, settings);
   const panelsRepository = new BankPanelsRepositoryImpl(panels);
+  const manualPolicies = new PostgresManualPolicies();
   const controller = new BankAccountsController(
     new GetBankAccount(accountsRepository),
     new GetBankAccountByCode(accountsRepository),
@@ -49,6 +55,9 @@ export const createBankingModule = (): Router => {
     new CaptureBankTransfer(
       new PostgresBankTransfers(undefined, undefined, accountCatalog), new MysqlBankTransferReferences(accountsDataSource),
     ),
+    new CaptureBankReviewTransfer(accountCatalog, panels, settings,
+      new ManageManualPolicy(new MysqlManualPolicyReferences(accountCatalog), manualPolicies),
+      new PostgresBankReviewTransfer(manualPolicies, settings)),
   );
   const catalog = new BankCatalogWritesController(
     new WriteBankCatalog(new MysqlBankCatalogReferences(), new PostgresBankCatalogDataSource()), accountsDataSource,

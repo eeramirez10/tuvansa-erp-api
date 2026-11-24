@@ -69,7 +69,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     ((req.method === 'POST' && path === '/treasury/bank-accounts') ||
      (['PATCH', 'DELETE'].includes(req.method) && /^\/treasury\/bank-accounts\/[1-9]\d*$/.test(path)));
   const bankActions = env.NEON_DATABASE_URL !== '' &&
-    ((req.method === 'POST' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(transfer|supplier-expenses)$/.test(path)) ||
+    ((req.method === 'POST' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(transfer|supplier-expenses|authorization-review\/transfer)$/.test(path)) ||
      (req.method === 'PATCH' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(classifiers|general-ledger|cost-center-ledger|authorization-review)$/.test(path)));
   const writeManualPolicy = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && (path === '/accounting/policies' ||

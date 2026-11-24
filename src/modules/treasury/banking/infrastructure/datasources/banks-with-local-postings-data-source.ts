@@ -115,7 +115,7 @@ interface BankPaymentRow extends LocalBankRow {
 }
 interface BankCollectionRow extends LocalBankRow { reference: string; offset: boolean; clientId: number; reversal: PurchasePostingReversalReference | null }
 interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string; mode: 'check' | 'transfer' }
-interface ManualBankRow extends LocalBankRow { linePolicyId: string; debit: string; credit: string; reference: string; center: number }
+interface ManualBankRow extends LocalBankRow { linePolicyId: string; debit: string; credit: string; reference: string; center: number; movementType: string }
 
 const bankRow = ({ id, number, policyNumber, date, beneficiary, description, userId, statementDate }: LocalBankRow) => ({
   movementId: Number(id), policyId: Number(id), checkNumber: number,
@@ -145,7 +145,7 @@ const transferRow = (row: BankTransferRow) => ({
 });
 const manualBankRow = (row: ManualBankRow) => ({
   ...bankRow(row), policyId: Number(row.linePolicyId), bankNumber: row.reference || row.number,
-  checkNumber: '', movementType: '3', charge: Number(row.debit), credit: Number(row.credit), mode: 'journal', costCenter: row.center,
+  checkNumber: '', movementType: row.movementType, charge: Number(row.debit), credit: Number(row.credit), mode: 'journal', costCenter: row.center,
 });
 
 const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' || key === 'automatic-reconciliation';
@@ -331,7 +331,8 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       const { rows } = await client.query<ManualBankRow>(
         `SELECT l.id::text,p.id::text AS "linePolicyId",p.number,p.number AS "policyNumber",p.date::text,
           (l.debit-l.credit)::text AS amount,l.debit::text,l.credit::text,p.beneficiary,p.concept AS description,
-          l.reference,l.cost_center AS center,0 AS "userId",settlement.statement_date::text AS "statementDate"
+          l.reference,l.cost_center AS center,0 AS "userId",settlement.statement_date::text AS "statementDate",
+          coalesce(to_jsonb(l)->>'bank_movement_type','3') AS "movementType"
          ${activeManualPolicyLines} ${settlement} WHERE l.account_id=$1
            AND ($2::date IS NULL OR p.date >= $2) AND ($3::date IS NULL OR p.date <= $3)
            ${pending ? 'AND l.account_type=0 AND settlement.statement_date IS NULL' : ''}

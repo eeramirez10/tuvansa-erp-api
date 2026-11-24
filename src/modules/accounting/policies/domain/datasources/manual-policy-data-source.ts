@@ -41,7 +41,12 @@ export interface ManualPolicyCommentsInput {
   fields: AccountingPolicyCommentMetadata & Pick<ManualPolicyInput, 'date' | 'concept' | 'beneficiary' | 'family'>;
 }
 export type ManualPolicyOperation = 'apply' | 'unapply' | 'cancel';
-export type ManualPolicyLine = Omit<ManualPolicyLineInput, 'accountCode'> & { account: ManualPolicyAccount; parents: ManualPolicyAccount[] };
+export type ManualPolicyLine = Omit<ManualPolicyLineInput, 'accountCode'> & {
+  account: ManualPolicyAccount;
+  parents: ManualPolicyAccount[];
+  bankMovementType?: string;
+  bankSourceMovementId?: number;
+};
 
 export interface ManualPolicyReferences {
   settings(): Promise<ManualPolicySettings | null>;

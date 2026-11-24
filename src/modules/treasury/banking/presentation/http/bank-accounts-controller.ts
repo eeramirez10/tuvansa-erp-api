@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import type { CaptureBankReconciliation } from '../../application/use-cases/capture-bank-reconciliation.js';
+import type { CaptureBankReviewTransfer } from '../../application/use-cases/capture-bank-review-transfer.js';
 import type { ConfigureBankPanels } from '../../application/use-cases/configure-bank-panels.js';
 import type { CaptureBankTransfer } from '../../application/use-cases/capture-bank-transfer.js';
 import type { GetBankAccount } from '../../application/use-cases/get-bank-account.js';
@@ -36,7 +37,10 @@ const reconciliationSchema = z.strictObject({
 const classifiersSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.string().trim().max(5)).length(9) });
 const transitSchema = z.strictObject({ movementId: z.int().positive(), inTransit: z.boolean() });
 const budgetsSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.number()).length(12) });
-const reviewSchema = z.strictObject({ revision: z.int().nonnegative(), movementIds: z.array(z.int().positive()).min(1) });
+const reviewSchema = z.strictObject({ revision: z.int().nonnegative(), movementIds: z.array(z.int().positive()).min(1),
+  mark: z.enum(['', '+', '*']).default('*') });
+const reviewTransferSchema = z.strictObject({ revision: z.int().nonnegative(), movementIds: z.array(z.int().positive()).min(1).max(32767),
+  requestKey: z.uuid(), date: z.iso.date(), destinationBankAccountId: z.int().positive() });
 const transferFields = {
   requestKey: z.uuid(), date: z.iso.date(), amount: z.number().positive(),
   reference: z.string().trim().max(10), beneficiary: z.string().trim().max(85), description: z.string().trim().max(90),
@@ -58,6 +62,7 @@ export class BankAccountsController {
     private readonly captureReconciliation: CaptureBankReconciliation,
     private readonly configurePanels: ConfigureBankPanels,
     private readonly captureTransfer: CaptureBankTransfer,
+    private readonly captureReviewTransfer: CaptureBankReviewTransfer,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -155,8 +160,17 @@ export class BankAccountsController {
     try {
       const { bankAccountId } = idParamsSchema.parse(request.params);
       const options = panelQuerySchema.parse(request.query);
-      const { revision, movementIds } = reviewSchema.parse(request.body);
-      response.json({ data: await this.configurePanels.review(bankAccountId, revision, movementIds, options) });
+      const { revision, movementIds, mark } = reviewSchema.parse(request.body);
+      response.json({ data: await this.configurePanels.review(bankAccountId, revision, movementIds, options, mark) });
+    } catch (error) { next(error); }
+  };
+
+  transferReviewed: RequestHandler = async (request, response, next) => {
+    try {
+      const { bankAccountId } = idParamsSchema.parse(request.params);
+      const options = panelQuerySchema.parse(request.query);
+      const data = await this.captureReviewTransfer.save(bankAccountId, reviewTransferSchema.parse(request.body), options);
+      response.status(201).json({ data });
     } catch (error) { next(error); }
   };
 

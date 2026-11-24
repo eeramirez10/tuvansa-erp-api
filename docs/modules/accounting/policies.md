@@ -152,3 +152,10 @@ Al registrar la conciliación de un depósito o pago web, la partida bancaria de
 ## Reportes de la versión nueva
 
 La captura de Contabilidad → Reportes → Estado de resultados se documenta en [income-statement.md](income-statement.md). La lectura usa FCCBENC + FBENC y está disponible en GET /api/accounting/reports/income-statement, con parámetros en GET /api/accounting/reports/income-statement/options y vista imprimible en el frontend.
+### Pólizas de Traspasa +
+
+**Bancos → Revisar → Traspasa +** registra una póliza aplicada de diario
+`TRASPCTAS` con un par de renglones por movimiento marcado. Cada renglón
+conserva el centro de costo y el movimiento de origen. El alta de la póliza
+y el cambio de los movimientos a revisados se guardan en la misma
+transacción. Véase [Bancos](../treasury/banking.md#traspasos-y-conciliación-por-archivo).

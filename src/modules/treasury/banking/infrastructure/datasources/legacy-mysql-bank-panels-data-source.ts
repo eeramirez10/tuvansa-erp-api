@@ -230,7 +230,8 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
               BAAUTORIZADO AS authorized, FBANMOV.BASEQ AS movementId,
               POBENEF AS beneficiary, BANUM AS bankNumber, PONUM AS policyNumber,
               POFECHA AS policyDate, POEST AS policyStatus,
-              POCHEQUE AS checkNumber, BAOKTRANSITO AS inTransit, FBANMOV.POSEQ AS policyId
+              POCHEQUE AS checkNumber, BAOKTRANSITO AS inTransit, FBANMOV.POSEQ AS policyId,
+              BACENCOS AS costCenter
          FROM FBANMOV
          LEFT JOIN FBENC ON FBANMOV.BSEQ = FBENC.BSEQ
          LEFT JOIN FPOLIZA ON FBANMOV.POSEQ = FPOLIZA.POSEQ

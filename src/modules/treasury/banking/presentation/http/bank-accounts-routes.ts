@@ -28,6 +28,7 @@ export const createBankAccountsRouter = (
   router.patch('/:bankAccountId/actions/cost-center-ledger', controller.changeBudget(true));
   router.get('/:bankAccountId/actions/authorization-review', controller.panel('authorization-review'));
   router.patch('/:bankAccountId/actions/authorization-review', controller.review);
+  router.post('/:bankAccountId/actions/authorization-review/transfer', controller.transferReviewed);
   router.get('/:bankAccountId/actions/classifiers', controller.panel('classifiers'));
   router.patch('/:bankAccountId/actions/classifiers', controller.classify);
   router.get('/:bankAccountId/actions/supplier-expenses', controller.panel('supplier-expenses'));

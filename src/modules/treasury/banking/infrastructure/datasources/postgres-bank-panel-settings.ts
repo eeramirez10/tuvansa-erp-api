@@ -68,40 +68,47 @@ export class PostgresBankPanelSettings implements BankPanelSettingsDataSource {
     });
   }
 
-  async save<T>(key: BankPanelSettingKey, revision: number, values: T) {
+  async ensureReady() {
     if (!this.writable()) throw unavailable();
     this.migration ??= this.withClient((client) => migratePostgres(client, migrations)).catch((error: unknown) => {
       delete this.migration;
       throw error;
     });
     await this.migration;
-    const encoded = JSON.stringify(values);
+  }
+
+  async saveInTransaction<T>(client: PostgresClient, key: BankPanelSettingKey, revision: number, values: T, exactRevision = false) {
     const parameters = [key.accountId, key.action, key.scope];
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('bank-panel:' || $1::text || ':' || $2::text || ':' || $3::text,0))",
+      parameters,
+    );
+    const encoded = JSON.stringify(values);
+    const existing = await this.readRecord<T>(client, key);
+    const current = existing?.revision ?? 0;
+    const identical = existing && JSON.stringify(existing.values) === encoded;
+    if (current !== revision && (exactRevision || !identical)) {
+      throw new ConflictError('La configuración cambió. Vuelve a abrir la ventana.', 'BANK_PANEL_SETTINGS_REVISION_CHANGED');
+    }
+    if (identical) return existing;
+    await client.query(
+      `INSERT INTO tuvansa.bank_panel_settings (bank_account_id,action,scope,document,revision)
+       VALUES ($1,$2,$3,$4::jsonb,$5)
+       ON CONFLICT (bank_account_id,action,scope) DO UPDATE
+       SET document=excluded.document,revision=excluded.revision,updated_at=now()`,
+      [...parameters, encoded, current + 1],
+    );
+    return { revision: current + 1, values };
+  }
+
+  async save<T>(key: BankPanelSettingKey, revision: number, values: T) {
+    await this.ensureReady();
     return this.withClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await client.query(
-          "SELECT pg_advisory_xact_lock(hashtextextended('bank-panel:' || $1::text || ':' || $2::text || ':' || $3::text,0))",
-          parameters,
-        );
-        const existing = await this.readRecord<T>(client, key);
-        const current = existing?.revision ?? 0;
-        if (current !== revision && (!existing || JSON.stringify(existing.values) !== encoded)) {
-          throw new ConflictError('La configuración cambió. Vuelve a abrir la ventana.', 'BANK_PANEL_SETTINGS_REVISION_CHANGED');
-        }
-        if (existing && JSON.stringify(existing.values) === encoded) {
-          await client.query('COMMIT');
-          return existing;
-        }
-        await client.query(
-          `INSERT INTO tuvansa.bank_panel_settings (bank_account_id,action,scope,document,revision)
-           VALUES ($1,$2,$3,$4::jsonb,$5)
-           ON CONFLICT (bank_account_id,action,scope) DO UPDATE
-           SET document=excluded.document,revision=excluded.revision,updated_at=now()`,
-          [...parameters, encoded, current + 1],
-        );
+        const saved = await this.saveInTransaction(client, key, revision, values);
         await client.query('COMMIT');
-        return { revision: current + 1, values };
+        return saved;
       } catch (error) {
         await client.query('ROLLBACK');
         throw error;

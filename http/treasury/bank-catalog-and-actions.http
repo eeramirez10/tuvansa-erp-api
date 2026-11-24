@@ -149,6 +149,24 @@ Content-Type: application/json
 
 { "revision": {{panelRevision}}, "movementIds": [{{movementId}}] }
 
+### Revisar, marcar una partida para Traspasa +
+PATCH {{banks}}/{{bankAccountId}}/actions/authorization-review
+Content-Type: application/json
+
+{ "revision": {{panelRevision}}, "movementIds": [{{movementId}}], "mark": "+" }
+
+### Traspasa +, registrar el conjunto exacto de partidas con + y la revisión vigente
+POST {{banks}}/{{bankAccountId}}/actions/authorization-review/transfer
+Content-Type: application/json
+
+{
+  "requestKey": "cf2da36e-3383-4640-b15d-1ec607893239",
+  "revision": {{panelRevision}},
+  "movementIds": [{{movementId}}],
+  "date": "{{date}}",
+  "destinationBankAccountId": {{destinationBankId}}
+}
+
 ### Gastos por prv., consultar Compras por proveedor
 GET {{banks}}/{{bankAccountId}}/actions/supplier-expenses
 

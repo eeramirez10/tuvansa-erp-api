@@ -36,6 +36,9 @@ const migrations = [{ id: 'manual_accounting_policy', sql: `
   ALTER TABLE tuvansa.manual_accounting_policy_changes DROP CONSTRAINT manual_accounting_policy_changes_action_check,
     ADD CONSTRAINT manual_accounting_policy_changes_action_check
       CHECK (action IN ('create','change','apply','unapply','cancel','comments'));
+` }, { id: 'manual_accounting_policy_bank_review_transfer', sql: `
+  ALTER TABLE tuvansa.manual_accounting_policy_lines ADD COLUMN bank_movement_type varchar(6),
+    ADD COLUMN bank_source_movement_id bigint;
 ` }];
 
 const unavailable = () => new ApplicationError('No fue posible consultar o guardar la póliza en PostgreSQL.', 'MANUAL_POLICY_POSTGRES_UNAVAILABLE', 503);
@@ -55,9 +58,11 @@ async function lockAccounts(client: PostgresClient, lines: ManualPolicyLine[]) {
 
 async function insertLines(client: PostgresClient, id: number, lines: ManualPolicyLine[]) {
   await client.query(
-    `INSERT INTO tuvansa.manual_accounting_policy_lines(policy_id,position,account_id,account_type,account,parents,cost_center,debit,credit,reference)
+    `INSERT INTO tuvansa.manual_accounting_policy_lines(policy_id,position,account_id,account_type,account,parents,cost_center,debit,credit,reference,
+       bank_movement_type,bank_source_movement_id)
      SELECT $1,(ordinality)::int,(line #>> '{account,id}')::bigint,(line #>> '{account,type}')::int,line->'account',line->'parents',
-       (line->>'costCenter')::int,(line->>'debit')::numeric,(line->>'credit')::numeric,line->>'reference'
+       (line->>'costCenter')::int,(line->>'debit')::numeric,(line->>'credit')::numeric,line->>'reference',
+       line->>'bankMovementType',(line->>'bankSourceMovementId')::bigint
      FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY parts(line,ordinality)`, [id, JSON.stringify(lines)],
   );
 }
@@ -117,7 +122,8 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
   }
 
   create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>,
-    source?: { id: number; revision: number }) {
+    source?: { id: number; revision: number },
+    posting?: { origin: string; record: (client: PostgresClient) => Promise<void> }) {
     return this.transaction(input.requestKey, fingerprint, 'create', async (client) => {
       if (source) {
         // Lock the original before its accounts, as in the edit and cancellation paths.
@@ -127,11 +133,13 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
       }
       await lockAccounts(client, lines);
       await verify();
+      await posting?.record(client);
       const { rows: [row] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.manual_policy_ids') AS id");
       const id = Number(row!.id);
       const number = `3JW${String(id - manualPolicyIdStart + 1).padStart(8, '0')}`;
-      await client.query(`INSERT INTO tuvansa.manual_accounting_policies(id,number,company_id,date,concept,beneficiary,family,revision,applied)
-        VALUES($1,$2,1,$3,$4,$5,$6,1,true)`, [id, number, input.date, input.concept, input.beneficiary, input.family]);
+      await client.query(`INSERT INTO tuvansa.manual_accounting_policies(id,number,company_id,date,concept,beneficiary,family,revision,applied,comment_metadata)
+        VALUES($1,$2,1,$3,$4,$5,$6,1,true,$7::jsonb)`, [id, number, input.date, input.concept, input.beneficiary, input.family,
+        posting ? JSON.stringify({ origin: posting.origin }) : null]);
       await insertLines(client, id, lines);
       return id;
     });

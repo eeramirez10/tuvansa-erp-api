@@ -6,6 +6,7 @@ import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../do
 import { BankPanelsWithLocalPostingsDataSource } from './banks-with-local-postings-data-source.js';
 import { bankLedgerWithWebPostings } from './bank-ledger-postings.js';
 import { readBankTransit } from './bank-transit-reads.js';
+import { bankReviewMarks, type BankReviewDocument } from '../../domain/entities/bank-review.js';
 
 const classifierColumns = Array.from({ length: 9 }, (_, index) => `BPAR${index + 1}`);
 type ClassifierGroup = { type: string; items: { code: string; description: string; parent: string }[] };
@@ -64,17 +65,18 @@ export class BankPanelsWithActionsDataSource extends BankPanelsWithLocalPostings
 
   private async review(id: number, panel: BankPanelResponse) {
     const [stored, transit] = await Promise.all([
-      this.settings.read<number[]>({ accountId: id, action: 'review', scope: '' }),
+      this.settings.read<BankReviewDocument | number[]>({ accountId: id, action: 'review', scope: '' }),
       readBankTransit(1, id),
     ]);
-    const reviewed = new Set(stored?.values ?? []);
+    const marks = bankReviewMarks(stored?.values);
     const transitMarks = new Map(transit.map((mark) => [mark.movementId, mark.inTransit]));
     const items = (panel.items as Record<string, unknown>[]).map((row) => {
       if (typeof row.movementId !== 'number' || row.policyStatus !== 0 || (row.mode && row.applied !== 1)) return row;
-      const marked = reviewed.has(row.movementId);
+      const authorized = marks[row.movementId] ?? row.authorized;
+      const reviewed = authorized === '*';
       const inTransit = transitMarks.get(row.movementId) ?? row.inTransit === '*';
-      return { ...row, canReview: !marked && this.settings.writable(), reviewed: marked,
-        authorized: marked ? '*' : row.authorized, inTransit: inTransit ? '*' : '' };
+      return { ...row, canReview: !reviewed && this.settings.writable(), canSetReviewMark: this.settings.writable(), reviewed,
+        authorized, inTransit: inTransit ? '*' : '' };
     });
     return {
       ...panel, items, readOnly: !items.some((row) => row.canReview === true),

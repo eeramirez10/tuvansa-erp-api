@@ -1,6 +1,7 @@
 import {
   paymentDocumentIdSql, readPurchasePayables,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
+import { readHistoricalReceptionCancellations } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
 import { supplierPaymentReversalSql, type PurchasePostingReversalReference } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
 import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { supplierPaymentsAvailable } from './postgres-supplier-payments.js';
@@ -10,7 +11,7 @@ const paymentScope = `WHERE ${paymentDocumentIdSql('payment')} = receipt.id AND 
 
 export async function purchaseReceptionSupplierBalances(supplierIds: number[]): Promise<Map<number, number>> {
   if (supplierIds.length === 0) return new Map();
-  return readPurchasePayables(new Map<number, number>(), async (client, source) => {
+  const localBalances = readPurchasePayables(new Map<number, number>(), async (client, source) => {
     const hasPayments = await supplierPaymentsAvailable(client);
     const reversal = supplierPaymentReversalSql(hasPayments && await supplierPaymentReversalsAvailable(client));
     const paid = hasPayments ? `coalesce((SELECT ${reversal.paid}
@@ -24,6 +25,11 @@ export async function purchaseReceptionSupplierBalances(supplierIds: number[]): 
     );
     return new Map(rows.map(({ supplierId, balance }) => [supplierId, balance]));
   });
+  const [balances, historical] = await Promise.all([localBalances, readHistoricalReceptionCancellations({ supplierIds })]);
+  for (const { supplierId, amount } of historical) {
+    balances.set(supplierId, (balances.get(supplierId) ?? 0) - amount);
+  }
+  return balances;
 }
 
 export interface SupplierPurchaseReceptionPayment {

@@ -4,14 +4,16 @@ import { NotFoundError } from '../../../../../shared/domain/errors/not-found-err
 import { connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
-import { assertWarehouseStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
+import { assertWarehouseStock, lockWarehouseStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { PostgresPurchaseOrderEdits } from '../../../purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import type { PostingReversalResult } from '../../domain/datasources/purchase-posting-reversal-data-source.js';
 import type {
-  PurchaseReceptionCancellationDataSource, ReceiptCancellationCommand, ReceiptCancellationSource, ReceiptCancellationStock,
+  HistoricalReceiptCancellationSource, PurchaseReceptionCancellationDataSource,
+  ReceiptCancellationCommand, ReceiptCancellationSource, ReceiptCancellationStock,
 } from '../../domain/datasources/purchase-reception-cancellation-data-source.js';
+import { historicalReceptionCancellationsOn } from './historical-purchase-reception-cancellation-reads.js';
 import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.js';
-import { isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
+import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
 const firstId = purchaseReceptionCancellationIdStart;
@@ -42,6 +44,19 @@ const migrations = [{ id: 'purchase_reception_cancellations', sql: `
     PRIMARY KEY(cancellation_id,product_id,warehouse)
   );
   CREATE INDEX purchase_reception_cancellation_inventory_product ON tuvansa.purchase_reception_cancellation_inventory(product_id,warehouse);
+` }, { id: 'historical_purchase_reception_cancellations', sql: `
+  ALTER TABLE tuvansa.purchase_reception_cancellations
+    ALTER COLUMN receipt_id DROP NOT NULL,
+    ADD COLUMN legacy_receipt_id bigint UNIQUE,
+    ADD COLUMN historical_source jsonb,
+    ADD CHECK (
+      (receipt_id IS NOT NULL AND legacy_receipt_id IS NULL AND historical_source IS NULL)
+      OR (receipt_id IS NULL AND legacy_receipt_id IS NOT NULL AND historical_source IS NOT NULL
+        AND jsonb_typeof(historical_source)='object')
+    );
+  CREATE INDEX purchase_reception_historical_supplier
+    ON tuvansa.purchase_reception_cancellations (((historical_source->>'supplierId')::bigint))
+    WHERE legacy_receipt_id IS NOT NULL;
 ` }];
 
 const unavailable = () => new ApplicationError('No fue posible consultar o cancelar la recepción en PostgreSQL.', 'PURCHASE_RECEPTION_CANCELLATION_POSTGRES_UNAVAILABLE', 503);
@@ -88,6 +103,7 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
     private readonly orders: Pick<PostgresPurchaseOrderEdits, 'postReceipt'>,
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured = postgresConfigured,
+    private readonly historical?: HistoricalReceiptCancellationSource,
   ) {}
 
   private async withConnection<T>(work: (client: PostgresClient) => Promise<T>) {
@@ -102,7 +118,18 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
     } finally { client?.release(); }
   }
 
-  source(companyId: number, receiptId: number) { return this.withConnection((client) => original(client, companyId, receiptId)); }
+  private async readHistorical(client: PostgresClient, companyId: number, receiptId: number) {
+    if (companyId !== 1 || !this.historical) return null;
+    const [source, [saved]] = await Promise.all([
+      this.historical.read(receiptId), historicalReceptionCancellationsOn(client, { receiptIds: [receiptId] }),
+    ]);
+    return source ? { ...source, alreadyRecorded: saved?.result ?? null } : null;
+  }
+
+  source(companyId: number, receiptId: number) {
+    return this.withConnection((client) => isLocalPurchaseReceptionId(receiptId)
+      ? original(client, companyId, receiptId) : this.readHistorical(client, companyId, receiptId));
+  }
 
   findRequest(companyId: number, requestKey: string, fingerprint: string) {
     return this.withConnection(async (client) => await purchaseReceptionCancellationsAvailable(client)
@@ -112,20 +139,41 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
   checkStock(stock: ReceiptCancellationStock) { return this.withConnection((client) => verifyWarehouse(client, stock, false)); }
 
   async commit({ actor, input, fingerprint, source, order, pending, supplierRevision, stock, validate }: ReceiptCancellationCommand) {
-    this.migration ??= this.withConnection((client) => migratePostgres(client, migrations)).catch((error: unknown) => {
+    this.migration ??= this.withConnection(async (client) => {
+      await ensurePurchaseReceptionSchema(client);
+      await migratePostgres(client, migrations);
+    }).catch((error: unknown) => {
       delete this.migration;
       throw error;
     });
     await this.migration;
     const { companyId, userId } = actor;
     const replay = async (client: PostgresClient) => {
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('cancel-purchase-reception:'||$1::text||':'||$2::text,0))", [companyId, input.requestKey]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('cancel-purchase-reception:'||$1::text||':'||$2::text,0))", [companyId, input.requestKey.toLowerCase()]);
       return requestResult(client, companyId, input.requestKey, fingerprint);
     };
     const verify = async (client: PostgresClient) => {
-      const current = await original(client, companyId, source.id, true);
-      if (!current) throw new NotFoundError('Recepción RW registrada en la web');
+      const current = source.historical
+        ? await this.readHistorical(client, companyId, source.id) : await original(client, companyId, source.id, true);
+      if (!current) throw new NotFoundError('Recepción de compra');
       validate(current);
+      if (source.historical && this.historical) {
+        if (current.historical?.version !== source.historical.version) {
+          throw new ConflictError('La recepción cambió en PROSCAI. Vuelve a abrir la cancelación.', 'PURCHASE_RECEPTION_SOURCE_CHANGED');
+        }
+        const ids = stock.requests.map((row) => row.productId);
+        await lockWarehouseStock(client, stock.warehouse, ids);
+        const inventory = await this.historical.inventory(stock.warehouse, ids);
+        const requests = stock.requests.map(({ productId, quantity }) => {
+          const row = inventory.get(productId);
+          if (!row || ![Number(row.onHand), Number(row.assigned)].every(Number.isFinite)) {
+            throw new ConflictError('El registro de inventario cambió en PROSCAI.', 'PURCHASE_RECEPTION_SOURCE_CHANGED');
+          }
+          return { productId, quantity, legacyOnHand: Number(row.onHand), legacyAssigned: Number(row.assigned) };
+        });
+        await verifyWarehouse(client, { warehouse: stock.warehouse, requests }, false);
+        return;
+      }
       const { rows } = await client.query<{ productId: number; warehouse: string; quantity: number }>(
         `SELECT product_id::float8 AS "productId",warehouse,quantity::float8 FROM tuvansa.purchase_reception_inventory WHERE receipt_id=$1`, [source.id],
       );
@@ -157,14 +205,21 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
       };
       await client.query(
         `INSERT INTO tuvansa.purchase_reception_cancellations
-          (id,receipt_id,company_id,user_id,request_key,fingerprint,date,reason,number,policy_number,movement,accounting,result)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13::jsonb)`,
-        [id, source.id, companyId, userId, input.requestKey, fingerprint, input.date, input.reason, number, policyNumber,
-          JSON.stringify(movement), JSON.stringify(accounting), JSON.stringify(result)],
+          (id,receipt_id,company_id,user_id,request_key,fingerprint,date,reason,number,policy_number,movement,accounting,result,
+           legacy_receipt_id,historical_source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15::jsonb)`,
+        [id, source.historical ? null : source.id, companyId, userId, input.requestKey, fingerprint, input.date, input.reason, number, policyNumber,
+          JSON.stringify(movement), JSON.stringify(accounting), JSON.stringify(result), source.historical ? source.id : null,
+          source.historical ? JSON.stringify({
+            supplierId: source.receipt.supplier.id, supplierName: source.receipt.supplier.name, number: source.receipt.number,
+            supplierReference: source.receipt.supplierReference, amount: source.payable!.amount,
+            policyNumber: source.accounting!.number, version: source.historical.version,
+          }) : null],
       );
       await client.query(
         `INSERT INTO tuvansa.purchase_reception_cancellation_inventory (cancellation_id,product_id,warehouse,quantity)
-         SELECT $1,product_id,warehouse,-quantity FROM tuvansa.purchase_reception_inventory WHERE receipt_id=$2`, [id, source.id],
+         SELECT $1,product,$2,-quantity FROM unnest($3::bigint[],$4::numeric[]) AS lines(product,quantity)`,
+        [id, stock.warehouse, stock.requests.map(({ productId }) => productId), stock.requests.map(({ quantity }) => quantity)],
       );
       return result;
     }, verify);

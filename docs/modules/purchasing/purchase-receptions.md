@@ -89,9 +89,11 @@ de Recepciones.
 ## Cancelar una recepción de orden
 
 `GET /api/purchasing/purchase-receptions/:id/actions/cancel-reception`
-prepara la baja de una recepción web RW y explica los bloqueos. El POST
-registra la cancelación con fecha, motivo, confirmación y clave de reintento.
-El flujo se contrastó con `MRECEP/25,111,136–138` en la biblioteca de pruebas.
+prepara la baja de una recepción web RW o una RA histórica de TUVANSA y
+explica los bloqueos. El POST registra fecha, motivo, confirmación y clave de
+reintento. La ficha RA muestra la acción mediante `cancellationAvailable`.
+El flujo se contrastó con `MRECEP/25–26,111,136–138` y `MBASE/124` en la
+biblioteca German de pruebas.
 
 La transacción conserva el folio, expone sus partidas K, resta las unidades
 recibidas del almacén, devuelve las cantidades al pendiente de la orden
@@ -99,6 +101,33 @@ y revierte el pasivo y las contrapartidas contables de la recepción,
 incluido el IVA. Respeta los pagos vigentes, el periodo abierto y la
 existencia libre. Una segunda recepción de la misma orden conserva sus
 propios efectos.
+
+### Recepciones RA de Omnis
+
+| Vista / acción | Origen de la comprobación | Efecto web |
+| --- | --- | --- |
+| Recepciones / Cancelar recepción | MySQL adaptado. `FDOC` y `FAX` por `DSEQ`. Un único cargo RA pendiente en pesos, dentro del periodo abierto | La ficha mantiene las partidas, muestra el estado cancelado y deja saldo cero. El Auxiliar agrega la contrapartida K |
+| Orden de compra vinculada | MySQL adaptado. `FDOC.DREFER`, `FPENC.PENUM`, `FAXINV.AIPED` y `FPLIN.PLSEQ` | Resta `AICANTF` del surtido y conserva la asignación y el importe histórico `PESURT` |
+| Inventarios / Existencias y Documentos | MySQL adaptado. `FAXINV.AICANT`, unidad y almacén originales, `FINV`, `FALM` y `FCAJAS` | Registra la salida inversa K por el mismo costo y almacén con referencia al folio original |
+| Proveedores / Saldos y Movimientos | MySQL adaptado. Cargo RA de `FAX`, sin pagos PP ni compensaciones previas | Retira el saldo abierto y agrega el abono K junto al cargo histórico, con enlace a su póliza |
+| Contabilidad / Pólizas | MySQL adaptado. `FAX.APOLIZA`, `FPOLIZA`, `FBANMOV`, `FBENC` y cuentas de `FCIA` | Registra póliza aplicada e inversa con las mismas cuentas y centros verificados de inventario, IVA y proveedor |
+
+La operación se guarda en una transacción de PostgreSQL independiente del
+registro de origen. Los efectos requieren una orden vigente con partidas
+vinculadas, unidades base con factor uno y cantidades libres suficientes.
+La aplicación verifica otra vez la recepción y las existencias bajo los
+bloqueos de escritura. Los pagos históricos, costos estándar, impuestos
+especiales, capas, cajas, piezas físicas o lotes quedan fuera de este flujo.
+Para la RA histórica, `FDOC.DPZAS` puede contar las unidades ordinarias.
+El control de piezas físicas usa `FCAJAS` y las partidas de `FAXINV`.
+
+En Omnis, los ejemplos históricos RA09168 y RA09189 tienen K y póliza inversa
+aplicados el 7 de febrero de 2025. La fecha elegida en la web corresponde a
+esa fecha de compensación. La prueba web con RA09214 y la orden OA05036
+devolvió seis unidades al pendiente. Las otras recepciones conservaron sus
+efectos. El cargo de 1,013.03 y el IVA de 139.73 se compensaron y se
+retiraron los registros temporales. RA09260 sirve para verificar el bloqueo
+por pago PP y RA09280 el bloqueo por existencia insuficiente.
 
 ## Acciones de lectura verificadas
 

@@ -60,8 +60,9 @@ const receiptFields = `
     created_at AS "auditAt", coalesce((payable->>'exchangeRate')::numeric, 1)::float8 AS "exchangeRate"`;
 const receiptCancellationFields = `
     cancellation.id,cancellation.policy_number AS number,cancellation.company_id AS company,cancellation.user_id AS "userId",
-    cancellation.date::text AS date,r.number AS cheque,r.result #>> '{reception,supplier,name}' AS beneficiary,'COMPRAS CANC'::text AS family,
-    concat('Cancelación de recepción ', r.number, ' · ', cancellation.reason) AS concept,
+    cancellation.date::text AS date,coalesce(r.number,to_jsonb(cancellation)#>>'{historical_source,number}') AS cheque,
+    coalesce(r.result #>> '{reception,supplier,name}',to_jsonb(cancellation)#>>'{historical_source,supplierName}') AS beneficiary,'COMPRAS CANC'::text AS family,
+    concat('Cancelación de recepción ', coalesce(r.number,to_jsonb(cancellation)#>>'{historical_source,number}'), ' · ', cancellation.reason) AS concept,
     cancellation.created_at AS "auditAt",1::float8 AS "exchangeRate"`;
 const paymentFields = `
     posting.id, posting.policy_number AS number, posting.company_id AS company, posting.user_id AS "userId",
@@ -177,7 +178,7 @@ async function readLocalPolicies<T>(
     if (tables?.receipts && await purchaseReceptionCancellationsAvailable(client)) views.push(
       `SELECT ${receiptCancellationFields}, ${withLines("cancellation.accounting->'lines'")} AS lines
        FROM tuvansa.purchase_reception_cancellations cancellation
-       JOIN tuvansa.purchase_receptions r ON r.id=cancellation.receipt_id AND r.company_id=cancellation.company_id
+       LEFT JOIN tuvansa.purchase_receptions r ON r.id=cancellation.receipt_id AND r.company_id=cancellation.company_id
        WHERE cancellation.company_id=1`,
     );
     if (tables?.expenses) views.push(

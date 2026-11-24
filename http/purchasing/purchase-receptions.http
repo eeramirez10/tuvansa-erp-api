@@ -9,6 +9,9 @@
 @warehouse = 01
 @orderLineId = copiar-orderLineId-del-get
 @receptionId = copiar-id-del-post
+@historicalReceptionId = 343646
+@cancellationKey = generar-uuid-por-cancelacion
+@cancellationDate = copiar-fecha-del-preview
 
 ### Ultimas recepciones
 GET {{baseUrl}}/purchasing/purchase-receptions?page=1&pageSize=25
@@ -62,3 +65,17 @@ GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/auxiliary
 
 ### Entrada de Inventarios
 GET {{baseUrl}}/inventories/movements/{{receptionId}}
+
+### Consultar elegibilidad de una RA histórica en la copia local
+GET {{baseUrl}}/purchasing/purchase-receptions/{{historicalReceptionId}}/actions/cancel-reception
+
+### Confirmar la baja de la RA en PostgreSQL de pruebas
+POST {{baseUrl}}/purchasing/purchase-receptions/{{historicalReceptionId}}/actions/cancel-reception
+Content-Type: application/json
+
+{
+  "requestKey": "{{cancellationKey}}",
+  "date": "{{cancellationDate}}",
+  "reason": "Cancelación de recepción histórica de prueba",
+  "confirmed": true
+}

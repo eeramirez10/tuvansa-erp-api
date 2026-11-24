@@ -2,7 +2,7 @@ import type { MovementDocument } from '../../../../inventories/movements/domain/
 import type { PurchaseOrderProps } from '../../../purchase-orders/domain/entities/purchase-order.js';
 import type { PurchaseOrderEditSnapshot } from '../../../purchase-orders/domain/datasources/purchase-order-edit-data-source.js';
 import type { PurchaseReceptionProps } from '../entities/purchase-reception.js';
-import type { PurchaseOrderReceiptLineEffect } from '../entities/purchase-reception-order-effect.js';
+import type { ReceiptCancellationLine } from '../entities/purchase-reception-cancellation.js';
 import type { PostingReversalInput, PostingReversalResult } from './purchase-posting-reversal-data-source.js';
 import type { PurchaseReceptionActor, PurchaseReceptionPosting } from './purchase-reception-write-data-source.js';
 
@@ -11,7 +11,7 @@ export interface ReceiptCancellationSource {
   orderId: number;
   orderNumber: string;
   receipt: PurchaseReceptionProps;
-  orderLineEffects: PurchaseOrderReceiptLineEffect[];
+  orderLineEffects: ReceiptCancellationLine[];
   movement: MovementDocument;
   accounting: (NonNullable<PurchaseReceptionPosting['accounting']> & { number: string }) | null;
   payable: PurchaseReceptionPosting['payable'];
@@ -19,6 +19,12 @@ export interface ReceiptCancellationSource {
   paymentActive: boolean;
   lastReversalDate: string | null;
   alreadyRecorded: PostingReversalResult | null;
+  historical?: { version: string; blockedReason: string | null };
+}
+
+export interface HistoricalReceiptCancellationSource {
+  read(receiptId: number): Promise<ReceiptCancellationSource | null>;
+  inventory(warehouse: string, productIds: number[]): Promise<Map<number, { onHand: number; assigned: number }>>;
 }
 
 export interface ReceiptCancellationOrder {

@@ -3,8 +3,10 @@ import { expect, it } from 'vitest';
 import { PurchaseOrder, type PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 import { PostgresPurchaseOrderEdits } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/postgres-purchase-order-edits.js';
 import { CancelPurchaseReception } from '../src/modules/purchasing/purchase-receptions/application/use-cases/cancel-purchase-reception.js';
+import type { ReceiptCancellationSource } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-cancellation-data-source.js';
 import type { PurchaseReceptionPosting } from '../src/modules/purchasing/purchase-receptions/domain/datasources/purchase-reception-write-data-source.js';
 import { applyPurchaseOrderReceipt } from '../src/modules/purchasing/purchase-receptions/domain/entities/purchase-reception-order-effect.js';
+import { historicalReceptionCancellationsOn } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
 import { localPurchasePayablesSql } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { PostgresPurchaseReceptionCancellations } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionWrites } from '../src/modules/purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
@@ -107,5 +109,99 @@ it('reopens an older RW without changing the other receipt or restoring purchase
       .toEqual([{ id, principal: 116, cancelled: true }, { id: second.reception.id, principal: 116, cancelled: false }]);
     expect((await db.query('SELECT quantity::float8 AS quantity FROM tuvansa.purchase_reception_cancellation_inventory')).rows).toEqual([{ quantity: -2 }]);
     expect((await db.query('SELECT sum(quantity)::float8 AS quantity FROM tuvansa.purchase_reception_inventory')).rows).toEqual([{ quantity: 4 }]);
+  } finally { await db.close(); }
+}, 15000);
+
+it('records a historical RA without a receipt copy and rejects a native change before committing', async () => {
+  const db = new PGlite();
+  const connect: PostgresConnectionFactory = async () => ({
+    async query<T extends object>(sql: string, values?: unknown[]) {
+      if (values) return db.query<T>(sql, values);
+      const results = await db.exec(sql);
+      return { rows: (results.at(-1)?.rows ?? []) as T[] };
+    },
+    release() {},
+  });
+  const date = '2025-02-08';
+  const supplier = { id: 3523, code: '003523', name: 'Proveedor' };
+  const orderNumber = 'OA05036';
+  const orderId = 176729;
+  const lineId = 687908;
+  const productId = 62752;
+  const receiptId = 343646;
+  const product = { productId, productCode: 'PZ-1', description: 'Producto' };
+  const received = { quantity: 3495.2, pieces: 9 };
+  const order: PurchaseOrderProps = {
+    id: orderId, number: orderNumber, supplierOrderNumber: '', supplier, documentKind: 'order', status: 'SURT',
+    branch: 0, department: '', warehouse: '01', received, dates: { orderedAt: date, from: null, dueAt: null }, initial: false,
+    taxPercentage: 16, discountPercentages: [0, 0, 0], otherLabel: '', classifications: [],
+    totals: { ordered: 12, fulfilled: 9, remaining: 3, assigned: 2, subtotal: 1746.6, discount: 0, exciseTax: 0,
+      freight: 0, insurance: 0, other: 0, tax: 279.46, total: 2026.06 },
+    lines: [{ ...product, id: lineId, ordered: 12, fulfilled: 9, remaining: 3, assigned: 2, confirmed: true, factor: 1, unit: 'PZ',
+      branch: 0, classCode: '', price: 145.55, discount: 0, currencyId: 1, currencyName: 'MXN', observations: '',
+      piecesAssignment: '', supplierProductCode: '' }],
+  };
+  const source: ReceiptCancellationSource = {
+    id: receiptId, orderId, orderNumber, alreadyRecorded: null, orderRetired: false, paymentActive: false, lastReversalDate: null,
+    historical: { version: 'stable', blockedReason: null },
+    orderLineEffects: [{ orderLineId: lineId, productId, baseQuantity: 6, factor: 1, netAmount: 0 }],
+    receipt: {
+      id: receiptId, number: 'RA09214', supplier, orderNumber, supplierReference: 'FACTURA', department: '01', warehouse: '01',
+      branch: 0, status: '', cancelled: false, dates: { receivedAt: date, dueAt: date, orderedAt: date },
+      delayDays: 0, classifications: [], discountPercentages: [],
+      totals: { units: 6, pieces: 6, subtotal: 873.3, discount: 0, freight: 0, insurance: 0, other: 0,
+        otherLabel: '', exciseTax: 0, taxPercentage: 16, tax: 139.73, withholdingTax: 0, total: 1013.03, balance: 1013.03 },
+      lines: [{ ...product, id: 612907, unit: 'PZ', quantity: 6, invoicedQuantity: 6, price: 145.55, grossPrice: 145.55,
+        discount: 0, amount: 873.3, pieces: '', costCenter: 1, branch: 0, lotId: 0, inventoryCreatedAt: null }],
+    },
+    movement: {
+      header: { id: receiptId, document: 'RA09214', date, reference: orderNumber, reference2: 'FACTURA',
+        warehouse: '01', supplierCode: supplier.code, customerCode: '', customerName: '', type: 'RA', status: 0,
+        company: 1, userId: 0, inventoryFlag: 1, billingFlag: 2 },
+      lines: [{ ...product, id: 612907, quantity: 6, unit: 'PZ', cost: 145.55, pieces: 0, piecesText: '',
+        warehouse: '01', type: 'RA', lotId: 0, userId: 0 }],
+      totals: { quantity: 6, cost: 873.3 },
+    },
+    payable: { amount: 1013.03, currencyId: 1, exchangeRate: 1, dueAt: date },
+    accounting: { type: '3', number: '312502-0107', lines: [
+      { account: '1115001', department: '1', debit: 873.3, credit: 0 },
+      { account: '1119001', department: '0', debit: 139.73, credit: 0 },
+      { account: '2001001', department: '1', debit: 0, credit: 1013.03 },
+    ] },
+  };
+  const inventory = async () => new Map([[productId, { onHand: 51, assigned: 0 }]]);
+  const edits = new PostgresPurchaseOrderEdits(connect, () => true);
+  let beforeCommitChange = false;
+  let reads = 0;
+  const historical = {
+    read: async () => beforeCommitChange && ++reads === 2
+      ? { ...source, historical: { version: 'changed', blockedReason: null } } : source,
+    inventory,
+  };
+  const service = new CancelPurchaseReception(new PostgresPurchaseReceptionCancellations(edits, connect, () => true, historical), {
+    cancellationOrder: async () => ({ order, revision: 0, legacyVersion: '2'.repeat(64), supplierRevision: 0, amountInWords: null, stale: false }),
+    inventory,
+  }, { fiscalWindow: async () => ({ fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' }) });
+  const actor = { companyId: 1, userId: 0 };
+  const input = { requestKey: 'a7117c90-b018-4f78-819d-16e94a1d2751', date, reason: 'Prueba RA parcial', confirmed: true as const };
+
+  try {
+    expect(await service.prepare(1, receiptId)).toMatchObject({ canWrite: true, policyNumber: '312502-0107' });
+    expect((await db.query("SELECT to_regclass('tuvansa.purchase_receptions') AS present")).rows).toEqual([{ present: null }]);
+    beforeCommitChange = true;
+    await expect(service.save(actor, receiptId, input)).rejects.toMatchObject({ code: 'PURCHASE_RECEPTION_SOURCE_CHANGED' });
+    expect(await edits.find([orderId])).toEqual([]);
+    beforeCommitChange = false;
+    const saved = await service.save(actor, receiptId, input);
+    expect(await service.save(actor, receiptId, { ...input, requestKey: input.requestKey.toUpperCase() })).toEqual(saved);
+    expect(await service.prepare(1, receiptId)).toMatchObject({ canWrite: false, alreadyRecorded: saved });
+    expect((await edits.find([orderId]))[0]).toMatchObject({
+      revision: 1, receiving: { received: { pieces: 3, quantity: 3495.2 } },
+      lines: [{ id: lineId, assigned: 2, fulfilled: 3, remaining: 9 }],
+    });
+    expect(await historicalReceptionCancellationsOn(await connect(), { supplierIds: [supplier.id] }))
+      .toMatchObject([{ receiptId, amount: 1013.03, result: saved }]);
+    expect((await db.query('SELECT * FROM tuvansa.purchase_receptions')).rows).toEqual([]);
+    expect((await db.query('SELECT quantity::float8 FROM tuvansa.purchase_reception_cancellation_inventory')).rows).toEqual([{ quantity: -6 }]);
   } finally { await db.close(); }
 }, 15000);

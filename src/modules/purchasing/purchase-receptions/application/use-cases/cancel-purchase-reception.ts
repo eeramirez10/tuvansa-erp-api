@@ -18,6 +18,7 @@ const invalidDate = (reason: string) => new ApplicationError(reason, 'PURCHASE_R
 function blockedSource(source: ReceiptCancellationSource) {
   const { header, lines } = source.movement;
   if (source.alreadyRecorded || source.receipt.cancelled) return 'La recepción ya fue cancelada.';
+  if (source.historical?.blockedReason) return source.historical.blockedReason;
   if (source.orderRetired) return 'La orden de esta recepción fue dada de baja.';
   if (header.type !== 'RA' || header.inventoryFlag !== 1 || !lines.length || !header.warehouse || !source.receipt.dates.receivedAt) {
     return 'El documento original requiere una cancelación distinta.';
@@ -26,7 +27,7 @@ function blockedSource(source: ReceiptCancellationSource) {
     || source.accounting?.type !== '3' || !source.accounting.lines.length) {
     return 'La cancelación requiere una recepción en pesos con cargo y póliza registrados.';
   }
-  if (source.receipt.totals.pieces !== 0 || source.receipt.lines.some((line) => line.lotId !== 0 || nonzeroPieces(line.pieces))
+  if ((!source.historical && source.receipt.totals.pieces !== 0) || source.receipt.lines.some((line) => line.lotId !== 0 || nonzeroPieces(line.pieces))
     || lines.some((line) => line.lotId !== 0 || line.pieces !== 0 || nonzeroPieces(line.piecesText))) {
     return 'La recepción contiene lotes o piezas que requieren su propia cancelación.';
   }
@@ -56,13 +57,13 @@ export class CancelPurchaseReception {
 
   private async checkSource(companyId: number, receiptId: number) {
     const source = await this.dataSource.source(companyId, receiptId);
-    if (!source) throw new NotFoundError('Recepción RW registrada en la web');
+    if (!source) throw new NotFoundError('Recepción de compra');
     return source;
   }
 
   private async changes(source: ReceiptCancellationSource) {
     const order = await this.references.cancellationOrder(source.orderId);
-    if (!order || order.stale || order.revision <= 0 || order.order.number !== source.orderNumber) {
+    if (!order || order.stale || (!source.historical && order.revision <= 0) || order.order.number !== source.orderNumber) {
       throw block('La orden original cambió o dejó de estar disponible.');
     }
     const effect = undoPurchaseOrderReceipt(order.order, source.orderLineEffects);

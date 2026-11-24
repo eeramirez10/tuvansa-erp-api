@@ -13,6 +13,7 @@ import { ReversePurchasePosting } from './application/use-cases/reverse-purchase
 import { SearchPurchaseReceptions } from './application/use-cases/search-purchase-receptions.js';
 import { LegacyMysqlPurchaseReceptionsDataSource } from './infrastructure/datasources/legacy-mysql-purchase-receptions-data-source.js';
 import { HybridPurchaseReceptionsDataSource } from './infrastructure/datasources/hybrid-purchase-receptions-data-source.js';
+import { MysqlHistoricalReceptionCancellationSource } from './infrastructure/datasources/mysql-historical-reception-cancellation-source.js';
 import { MysqlPostingReversalReferences } from './infrastructure/datasources/mysql-posting-reversal-references.js';
 import { MysqlPurchaseExpenseReferences } from './infrastructure/datasources/mysql-purchase-expense-references.js';
 import { MysqlPurchaseReceptionWriteReferences } from './infrastructure/datasources/mysql-purchase-reception-write-references.js';
@@ -26,7 +27,8 @@ import { createPurchaseExpenseRouter } from './presentation/http/purchase-expens
 import { createPurchaseReceptionsRouter } from './presentation/http/purchase-receptions-routes.js';
 
 export const createPurchaseReceptionsModule = (): Router => {
-  const repository = new PurchaseReceptionsRepositoryImpl(new HybridPurchaseReceptionsDataSource(new LegacyMysqlPurchaseReceptionsDataSource()));
+  const legacyReceptions = new LegacyMysqlPurchaseReceptionsDataSource();
+  const repository = new PurchaseReceptionsRepositoryImpl(new HybridPurchaseReceptionsDataSource(legacyReceptions));
   const legacyOrders = new LegacyMysqlPurchaseOrdersDataSource();
   const edits = new PostgresPurchaseOrderEdits();
   const capture = new LegacyMysqlPurchaseOrderEditDataSource(legacyOrders);
@@ -43,6 +45,9 @@ export const createPurchaseReceptionsModule = (): Router => {
   const expenses = new CreatePurchaseExpenses(new MysqlPurchaseExpenseReferences(), new PostgresPurchaseExpenses());
   const fiscal = new MysqlPostingReversalReferences();
   const reversals = new ReversePurchasePosting(new PostgresPurchasePostingReversals(), fiscal);
-  const receiptCancellations = new CancelPurchaseReception(new PostgresPurchaseReceptionCancellations(edits), receptionReferences, fiscal);
+  const historical = new MysqlHistoricalReceptionCancellationSource(legacyReceptions);
+  const receiptCancellations = new CancelPurchaseReception(
+    new PostgresPurchaseReceptionCancellations(edits, undefined, undefined, historical), receptionReferences, fiscal,
+  );
   return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations);
 };

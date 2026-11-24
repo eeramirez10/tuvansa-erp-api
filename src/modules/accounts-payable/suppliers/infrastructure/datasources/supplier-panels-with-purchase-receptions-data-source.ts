@@ -1,4 +1,5 @@
 import type { SupplierPanelKey, SupplierPanelResult } from '../../domain/repositories/supplier-panels-repository.js';
+import { readHistoricalReceptionCancellations, type HistoricalReceiptCancellation } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
 import { LegacyMysqlSupplierPanelsDataSource } from './legacy-mysql-supplier-panels-data-source.js';
 import { supplierCatalogRecord } from './postgres-supplier-catalog-data-source.js';
 import {
@@ -63,6 +64,24 @@ function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
     .map(({ row }) => row);
 }
 
+function historicalCancellationRow(
+  { receiptId, number, supplierReference, amount, result, userId }: HistoricalReceiptCancellation,
+  original?: Record<string, unknown>,
+) {
+  return {
+    id: result.id, receiptId, company: original?.company ?? 1, date: result.date, document: number,
+    amount: -amount, movementType: 'K', paymentReference: result.reason, userId, exchangeDifference: 0,
+    exchangeRate: original?.exchangeRate ?? 1, policy: result.policyNumber, policyId: result.id,
+    documentReference: supplierReference, accountType: original?.accountType ?? 2, currency: original?.currency ?? 1,
+  };
+}
+
+function historicalCancellationMovements(cancellations: HistoricalReceiptCancellation[], items: SupplierPanelResult['items']) {
+  const originalCharges = new Map(items.filter(({ movementType }) => movementType === 'RA')
+    .map((item) => [Number(item.receiptId), item]));
+  return cancellations.map((cancellation) => historicalCancellationRow(cancellation, originalCharges.get(cancellation.receiptId)));
+}
+
 export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlSupplierPanelsDataSource {
   override async findPanel(supplierId: number, key: SupplierPanelKey) {
     const local = await supplierCatalogRecord(supplierId);
@@ -80,19 +99,29 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
       } } : {}),
     } : base;
     if (!result || (key !== 'balance' && key !== 'movements')) return result;
-    const charges = await purchaseReceptionSupplierCharges(supplierId);
-    if (charges.length === 0) return result;
+    const [charges, historical] = await Promise.all([
+      purchaseReceptionSupplierCharges(supplierId), readHistoricalReceptionCancellations({ supplierIds: [supplierId] }),
+    ]);
+    if (charges.length === 0 && historical.length === 0) return result;
 
     const balance = charges.reduce((total, charge) => total + charge.remaining, 0);
-    const supplier = { ...result.supplier, currentBalance: money(result.supplier.currentBalance + balance) };
-    if (key === 'movements') return { ...result, supplier, items: [...result.items, ...localMovements(charges)] };
+    const reversed = historical.reduce((total, cancellation) => total + cancellation.amount, 0);
+    const supplier = { ...result.supplier, currentBalance: money(result.supplier.currentBalance + balance - reversed) };
+    if (key === 'movements') return {
+      ...result, supplier,
+      items: [...result.items, ...localMovements(charges), ...historicalCancellationMovements(historical, result.items)],
+    };
 
     const open = charges.filter(({ remaining }) => remaining > 0).map(balanceRow);
+    const canceledIds = new Set(historical.map(({ receiptId }) => receiptId));
+    const visible = result.items.filter(({ id }) => !canceledIds.has(Number(id)));
+    const removed = result.items.filter(({ id }) => canceledIds.has(Number(id)));
     const summary = {
       ...result.summary,
-      amount: money(Number(result.summary?.amount ?? 0) + balance),
-      originalAmount: money(Number(result.summary?.originalAmount ?? 0) + open.reduce((total, { originalAmount }) => total + originalAmount, 0)),
+      amount: money(Number(result.summary?.amount ?? 0) + balance - removed.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)),
+      originalAmount: money(Number(result.summary?.originalAmount ?? 0) + open.reduce((total, row) => total + row.originalAmount, 0)
+        - removed.reduce((sum, row) => sum + Number(row.originalAmount ?? 0), 0)),
     };
-    return { ...result, supplier, items: [...result.items, ...open], summary };
+    return { ...result, supplier, items: [...visible, ...open], summary };
   }
 }

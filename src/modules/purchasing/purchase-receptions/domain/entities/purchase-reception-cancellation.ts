@@ -6,7 +6,10 @@ const quantity = (value: number) => Number(value.toFixed(3));
 const money = (value: number) => Number(value.toFixed(2));
 const changed = () => new ConflictError('Las partidas de la orden ya no coinciden con la recepción registrada.', 'PURCHASE_RECEPTION_ORDER_CHANGED');
 
-export function undoPurchaseOrderReceipt(order: PurchaseOrderProps, receipt: PurchaseOrderReceiptLineEffect[]) {
+export type ReceiptCancellationLine = Pick<PurchaseOrderReceiptLineEffect,
+  'orderLineId' | 'productId' | 'baseQuantity' | 'factor' | 'netAmount'>;
+
+export function undoPurchaseOrderReceipt(order: PurchaseOrderProps, receipt: ReceiptCancellationLine[]) {
   if (order.documentKind !== 'order' || !receipt.length) throw changed();
   const effects = new Map(receipt.map((line) => [line.orderLineId, line]));
   if (effects.size !== receipt.length) throw changed();

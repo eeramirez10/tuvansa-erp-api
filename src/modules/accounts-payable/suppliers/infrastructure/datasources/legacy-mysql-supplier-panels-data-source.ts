@@ -147,7 +147,7 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
         `, [supplierId]);
       case 'movements':
         return legacyMysqlPool.execute<RowDataPacket[]>(`
-          SELECT FAX.ASEQ AS id, 0 AS company, DATE(AFECHA) AS date, DNUM AS document,
+          SELECT FAX.ASEQ AS id, FDOC.DSEQ AS receiptId, 0 AS company, DATE(AFECHA) AS date, DNUM AS document,
                  ACANT AS amount, ATIPMV AS movementType, AREFPAG AS paymentReference,
                  AUSEQ AS userId, ADIFCAMBIAR AS exchangeDifference,
                  ATIPOC AS exchangeRate, APOLIZA AS policy,

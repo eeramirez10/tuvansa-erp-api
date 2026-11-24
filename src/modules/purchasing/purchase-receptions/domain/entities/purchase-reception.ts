@@ -29,6 +29,7 @@ export interface PurchaseReceptionProps {
   branch: number;
   status: string;
   cancelled: boolean;
+  cancellationAvailable?: boolean;
   cancellation?: { id: number; policyNumber: string; date: string; reason: string } | null;
   dates: { receivedAt: string | null; dueAt: string | null; orderedAt: string | null };
   delayDays: number;

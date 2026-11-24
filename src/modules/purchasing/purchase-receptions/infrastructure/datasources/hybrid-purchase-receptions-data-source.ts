@@ -1,3 +1,4 @@
+import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { PurchaseReceptionsDataSource } from '../../domain/datasources/purchase-receptions-data-source.js';
 import { readSupplierPayments } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { PurchaseReception, type PurchaseReceptionProps } from '../../domain/entities/purchase-reception.js';
@@ -10,6 +11,7 @@ import { isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes
 import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.js';
 import { paymentDocumentIdSql } from './postgres-purchase-payables.js';
 import { readLocalReceptionView, type LocalReceptionViewRecord } from './local-purchase-reception-view.js';
+import { readHistoricalReceptionCancellations } from './historical-purchase-reception-cancellation-reads.js';
 import { supplierPaymentReversalSql, type PurchasePostingReversalReference } from './purchase-posting-reversal-reads.js';
 import { supplierPaymentReversalsAvailable } from './purchase-posting-reversal-tables.js';
 
@@ -17,6 +19,7 @@ const reception = 'reception';
 const empty = { items: [], total: 0 };
 const money = (value: number) => Number(value.toFixed(2));
 const isLocalDocument = (id: number) => isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseDocumentId(id);
+const isHistoricalRA = (number: string) => /^RA\d/.test(number);
 
 export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDataSource {
   constructor(private readonly legacy: LegacyMysqlPurchaseReceptionsDataSource) {}
@@ -33,7 +36,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
   }
 
   async findById(id: number) {
-    if (!isLocalDocument(id)) return this.legacy.findById(id);
+    if (!isLocalDocument(id)) return this.withHistoricalCancellation(await this.legacy.findById(id));
     const local = await this.record('id', id);
     if (!local) return null;
     return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
@@ -41,8 +44,30 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
-    if (!local) return this.legacy.findByNumber(number);
+    if (!local) return this.withHistoricalCancellation(await this.legacy.findByNumber(number));
     return (await this.withBalances([PurchaseReception.create(local.reception)]))[0]!;
+  }
+
+  private async withHistoricalCancellations(items: PurchaseReception[]) {
+    if (!postgresConfigured() || !items.length) return items;
+    const receipts = items.map((item) => item.toPrimitives());
+    const cancellationRows = await readHistoricalReceptionCancellations({
+      receiptIds: receipts.filter(({ number }) => isHistoricalRA(number)).map(({ id }) => id),
+    });
+    const cancellations = new Map(cancellationRows.map(({ receiptId, result }) => [receiptId, result]));
+    return items.map((item, index) => {
+      const receipt = receipts[index]!;
+      if (!isHistoricalRA(receipt.number)) return item;
+      const cancellation = cancellations.get(receipt.id);
+      return PurchaseReception.create(cancellation ? {
+        ...receipt, cancellationAvailable: true, cancelled: true, status: 'C', cancellation,
+        totals: { ...receipt.totals, balance: 0 },
+      } : { ...receipt, cancellationAvailable: true });
+    });
+  }
+
+  private async withHistoricalCancellation(receipt: PurchaseReception | null) {
+    return receipt ? (await this.withHistoricalCancellations([receipt]))[0]! : null;
   }
 
   private async withBalances(items: PurchaseReception[]) {
@@ -75,7 +100,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const legacy = await this.legacy.search({
       ...criteria, offset: Math.max(0, criteria.offset - local.total), limit: required,
     });
-    return { items: [...local.items, ...legacy.items], total: local.total + legacy.total };
+    return { items: [...local.items, ...await this.withHistoricalCancellations(legacy.items)], total: local.total + legacy.total };
   }
 
   private searchLocal({ query, documentNumber, receivedAt, orderNumber, supplierReference, deliveryNote, folio, supplierCode, warehouse, offset, limit }: PurchaseReceptionSearchCriteria) {
@@ -129,14 +154,29 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       }),
       this.legacy.findAdjacentByNumber(number, direction),
     ]);
-    if (!local) return legacy;
+    if (!local) return this.withHistoricalCancellation(legacy);
     const compare = legacy ? local.number.localeCompare(legacy.toPrimitives().number, 'en') : 0;
-    if (legacy && (previous ? compare < 0 : compare > 0)) return legacy;
+    if (legacy && (previous ? compare < 0 : compare > 0)) return this.withHistoricalCancellation(legacy);
     return (await this.withBalances([PurchaseReception.create(local)]))[0]!;
   }
 
   async getPanel(id: number, key: PurchaseReceptionPanelKey): Promise<PurchaseReceptionPanelResult | null> {
-    if (!isLocalDocument(id)) return this.legacy.getPanel(id, key);
+    if (!isLocalDocument(id)) {
+      const panel = await this.legacy.getPanel(id, key);
+      if (!panel || key !== 'auxiliary' || !isHistoricalRA(panel.purchaseReception.number)) return panel;
+      const [cancellation] = await readHistoricalReceptionCancellations({ receiptIds: [id] });
+      if (!cancellation) return panel;
+      const { result, amount, number } = cancellation;
+      const movement = {
+        id: result.id, date: result.date, transactionType: 'K', reference: result.reason,
+        relatedDocumentId: id, charges: 0, payments: amount, signedAmount: -amount, relatedDocument: number,
+        policyId: result.id, policyNumber: result.policyNumber,
+      };
+      return {
+        ...panel, source: 'postgres', items: [...panel.items, movement],
+        summary: { ...panel.summary, total: money(Number(panel.summary?.total ?? 0) - amount) },
+      };
+    }
     const local = await this.record('id', id);
     if (!local) return null;
     const { number, dates, orderNumber, supplierReference, classifications, cancellation } = local.reception;

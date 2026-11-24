@@ -1,7 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
-import { AccountingPolicy, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
+import { AccountingPolicy, type AccountingPolicyCommentLines, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
 import type {
   AccountingPolicyClassificationsResult,
   AccountingPolicyNavigationDirection,
@@ -109,6 +109,19 @@ const toPolicy = (row: HeaderRow, movements: AccountingPolicyMovement[]): Accoun
 };
 
 export class LegacyMysqlAccountingPoliciesDataSource implements AccountingPoliciesDataSource {
+  async commentLines(id: number): Promise<AccountingPolicyCommentLines> {
+    // Derivada de MPASIVOS/80 y /85. #40 se inicializa con POSEQ.
+    // Los documentos reutilizan el mismo vínculo numérico de FCOMENT.
+    const [[row]] = await legacyMysqlPool.execute<RowDataPacket[]>(
+      `SELECT c.COML1,c.COML2,c.COML3,c.COML4,c.COML5,c.COMLETRA
+       FROM FCOMENT c WHERE c.COMSEQFACT=?
+         AND NOT EXISTS (SELECT 1 FROM FDOC d WHERE d.DSEQ=c.COMSEQFACT)
+       ORDER BY c.COMSEQ LIMIT 1`, [id],
+    );
+    return [row?.COML1 ?? '', row?.COML2 ?? '', row?.COML3 ?? '', row?.COML4 ?? '',
+      row?.COML5 ?? '', row?.COMLETRA ?? ''];
+  }
+
   private async movements(id: number): Promise<AccountingPolicyMovement[]> {
     const [rows] = await legacyMysqlPool.execute<MovementRow[]>(
       `SELECT ${selectMovements}

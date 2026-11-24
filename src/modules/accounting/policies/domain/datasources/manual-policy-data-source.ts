@@ -1,4 +1,4 @@
-import type { AccountingPolicyProps } from '../entities/accounting-policy.js';
+import type { AccountingPolicyCommentMetadata, AccountingPolicyProps } from '../entities/accounting-policy.js';
 
 export interface ManualPolicyAccount {
   id: number;
@@ -35,6 +35,11 @@ export interface ManualPolicyInput {
 
 export interface ManualPolicyActionInput { requestKey: string; revision: number; confirmed: true }
 export interface DuplicatePolicyInput { requestKey: string; date: string; revision: string; confirmed: true }
+export interface ManualPolicyCommentsInput {
+  requestKey: string;
+  revision: number;
+  fields: AccountingPolicyCommentMetadata & Pick<ManualPolicyInput, 'date' | 'concept' | 'beneficiary' | 'family'>;
+}
 export type ManualPolicyOperation = 'apply' | 'unapply' | 'cancel';
 export type ManualPolicyLine = Omit<ManualPolicyLineInput, 'accountCode'> & { account: ManualPolicyAccount; parents: ManualPolicyAccount[] };
 
@@ -56,6 +61,7 @@ export interface ManualPolicyDocument {
   canceled: boolean;
   reconciled: boolean;
   updatedAt: string;
+  commentMetadata: AccountingPolicyCommentMetadata | null;
   lines: (ManualPolicyLine & { id: number; reconciled: boolean })[];
 }
 
@@ -66,6 +72,8 @@ export interface ManualPolicyDataSource {
   create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>,
     source?: { id: number; revision: number }): Promise<AccountingPolicyProps>;
   change(id: number, input: ManualPolicyInput & { revision: number }, lines: ManualPolicyLine[], fingerprint: string, validate: (current: ManualPolicyDocument) => Promise<void>): Promise<AccountingPolicyProps>;
+  changeComments(id: number, input: ManualPolicyCommentsInput, fingerprint: string,
+    validate: (current: ManualPolicyDocument) => void): Promise<AccountingPolicyProps>;
   perform(id: number, operation: ManualPolicyOperation, input: ManualPolicyActionInput, fingerprint: string,
     validate: (current: ManualPolicyDocument) => Promise<void>): Promise<AccountingPolicyProps>;
 }

@@ -15,9 +15,8 @@ import { createAccountingPoliciesRouter } from './presentation/http/accounting-p
 import { createManualPolicyRouter } from './presentation/http/manual-policy-routes.js';
 
 export const createAccountingPoliciesModule = (): Router => {
-  const repository = new AccountingPoliciesRepositoryImpl(
-    new AccountingPoliciesWithLocalPostingsDataSource(new LegacyMysqlAccountingPoliciesDataSource()),
-  );
+  const legacy = new LegacyMysqlAccountingPoliciesDataSource();
+  const repository = new AccountingPoliciesRepositoryImpl(new AccountingPoliciesWithLocalPostingsDataSource(legacy));
   const controller = new AccountingPoliciesController(
     new GetAccountingPolicy(repository),
     new GetAccountingPolicyByNumber(repository),
@@ -26,5 +25,6 @@ export const createAccountingPoliciesModule = (): Router => {
     new GetAccountingPolicyClassifications(repository),
   );
   return createAccountingPoliciesRouter(controller,
-    createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(), new PostgresManualPolicies(), repository)));
+    createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(), new PostgresManualPolicies(), repository,
+      (id) => legacy.commentLines(id))));
 };

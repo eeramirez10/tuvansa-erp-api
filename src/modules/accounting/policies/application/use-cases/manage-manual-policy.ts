@@ -3,10 +3,10 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type {
-  DuplicatePolicyInput, ManualPolicyActionInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine,
+  DuplicatePolicyInput, ManualPolicyActionInput, ManualPolicyCommentsInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine,
   ManualPolicyOperation, ManualPolicyReferences, ManualPolicySettings,
 } from '../../domain/datasources/manual-policy-data-source.js';
-import type { AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
+import type { AccountingPolicyCommentLines, AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
 import type { AccountingPoliciesRepository } from '../../domain/repositories/accounting-policies-repository.js';
 
 const mexicoDate = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
@@ -19,11 +19,11 @@ function dateAllowed(date: string, settings: ManualPolicySettings) {
   return date >= settings.fiscalStart && date <= settings.fiscalEnd && [settings.periodYear, settings.periodYear + 1].includes(Number(date.slice(0, 4)));
 }
 
-function blockReason(current: ManualPolicyDocument, settings: ManualPolicySettings | null) {
+function blockReason(current: Pick<ManualPolicyDocument, 'canceled' | 'reconciled'> & { date: string | null }, settings: ManualPolicySettings | null) {
   if (current.canceled) return 'La póliza ya fue dada de baja.';
   if (current.reconciled) return 'La póliza contiene una partida conciliada en Bancos.';
   if (!settings) return missing;
-  if (!dateAllowed(current.date, settings)) return 'La fecha de la póliza queda fuera del periodo activo.';
+  if (!current.date || !dateAllowed(current.date, settings)) return 'La fecha de la póliza queda fuera del periodo activo.';
   return null;
 }
 
@@ -61,7 +61,8 @@ function duplicateBlocked(policy: AccountingPolicyProps) {
 
 export class ManageManualPolicy {
   constructor(private readonly references: ManualPolicyReferences, private readonly dataSource: ManualPolicyDataSource,
-    private readonly source?: Pick<AccountingPoliciesRepository, 'findById'>) {}
+    private readonly source?: Pick<AccountingPoliciesRepository, 'findById'>,
+    private readonly readHistoricalComments?: (id: number) => Promise<AccountingPolicyCommentLines>) {}
 
   async prepare() {
     const settings = await this.references.settings();
@@ -134,14 +135,14 @@ export class ManageManualPolicy {
     return this.dataSource.create(input, lines, hash, () => this.verifyReferences(lines, settings));
   }
 
-  private async duplicateSource(id: number) {
+  private async sourcePolicy(id: number) {
     const policy = await this.source?.findById(id);
     if (!policy) throw new NotFoundError('Póliza contable');
     return policy.toPrimitives();
   }
 
   async prepareDuplicate(id: number) {
-    const [policy, settings] = await Promise.all([this.duplicateSource(id), this.references.settings()]);
+    const [policy, settings] = await Promise.all([this.sourcePolicy(id), this.references.settings()]);
     let date = mexicoDate.format();
     if (settings) date = date < settings.fiscalStart ? settings.fiscalStart : date > settings.fiscalEnd ? settings.fiscalEnd : date;
     let reason = duplicateBlocked(policy) ?? (!settings ? missing : this.dataSource.writable() ? null : 'La captura de pólizas requiere PostgreSQL.');
@@ -158,7 +159,7 @@ export class ManageManualPolicy {
     const hash = fingerprint('duplicate', id, { ...raw, requestKey });
     const previous = await this.dataSource.findRequest(requestKey, hash);
     if (previous) return previous;
-    const policy = await this.duplicateSource(id);
+    const policy = await this.sourcePolicy(id);
     const reason = duplicateBlocked(policy);
     if (reason) throw blocked(reason);
     if (duplicateRevision(policy) !== raw.revision) throw blocked('La póliza original cambió. Vuelve a abrir Duplicar.');
@@ -167,11 +168,43 @@ export class ManageManualPolicy {
     const lines = await this.prepareLines(input, settings);
     const source = policy.manual ? { id, revision: policy.manual.revision } : undefined;
     return this.dataSource.create(input, lines, hash, async () => {
-      if (!source && duplicateRevision(await this.duplicateSource(id)) !== raw.revision) {
+      if (!source && duplicateRevision(await this.sourcePolicy(id)) !== raw.revision) {
         throw blocked('La póliza original cambió. Vuelve a abrir Duplicar.');
       }
       await this.verifyReferences(lines, settings);
     }, source);
+  }
+
+  async prepareComments(id: number) {
+    const policy = await this.sourcePolicy(id);
+    const { number, date, cheque, report, postDate, origin, beneficiary, family, concept, amountInWords,
+      userId, auditAt, exchangeRate, manual } = policy;
+    let reason: string | null;
+    if (policy.applied) reason = 'Desaplica la póliza para cambiar sus comentarios.';
+    else if (!manual) reason = 'Los comentarios de esta póliza histórica están disponibles en consulta.';
+    else reason = blockReason({ ...manual, date }, await this.references.settings());
+    const historical = !policy.applied && !manual ? await this.readHistoricalComments?.(id) : undefined;
+    const comments: AccountingPolicyCommentLines = policy.comments ?? historical ?? ['', '', '', '', '', ''];
+    return {
+      policy: { id, number }, revision: manual?.revision ?? null, canWrite: !reason, reason, applied: policy.applied,
+      fields: { date, cheque, report, postDate, origin, beneficiary, family, concept, amountInWords, comments },
+      userId, auditAt, exchangeRate,
+    };
+  }
+
+  async changeComments(id: number, raw: ManualPolicyCommentsInput) {
+    const input = { ...raw, requestKey: raw.requestKey.toLowerCase() };
+    const hash = fingerprint('comments', id, input);
+    const previous = await this.dataSource.findRequest(input.requestKey, hash);
+    if (previous) return previous;
+    const settings = await this.settings();
+    return this.dataSource.changeComments(id, input, hash, (current) => {
+      const reason = blockReason(current, settings);
+      if (reason) throw blocked(reason);
+      if (current.applied) throw blocked('Desaplica la póliza para cambiar sus comentarios.');
+      if (input.fields.date.slice(5, 7) !== current.date.slice(5, 7)) throw invalid('El mes de la póliza no puede ser modificado.');
+      if (!dateAllowed(input.fields.date, settings)) throw invalid('La fecha de la póliza queda fuera del periodo activo.');
+    });
   }
 
   async change(id: number, raw: ManualPolicyInput & { revision: number }) {

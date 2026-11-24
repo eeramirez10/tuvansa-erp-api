@@ -12,6 +12,17 @@ export interface AccountingPolicyMovement {
   accountType: number;
 }
 
+export type AccountingPolicyCommentLines = [string, string, string, string, string, string];
+
+export interface AccountingPolicyCommentMetadata {
+  cheque: string;
+  report: string;
+  postDate: string | null;
+  origin: string;
+  amountInWords: string;
+  comments: AccountingPolicyCommentLines;
+}
+
 export interface AccountingPolicyProps {
   id: number;
   number: string;
@@ -33,6 +44,7 @@ export interface AccountingPolicyProps {
   usedAt: string | null;
   totals: { debit: number; credit: number; difference: number };
   movements: AccountingPolicyMovement[];
+  comments?: AccountingPolicyCommentLines;
   manual?: { revision: number; canceled: boolean; reconciled: boolean };
 }
 

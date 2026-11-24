@@ -2,7 +2,7 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { bankReconciliationsAvailable } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import type { ManualPolicyDocument } from '../../domain/datasources/manual-policy-data-source.js';
-import type { AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
+import type { AccountingPolicyCommentMetadata, AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
 
 export const manualPolicyIdStart = 7990000000000;
 export const manualPolicyLineIdStart = 8000000000000;
@@ -42,7 +42,8 @@ export function manualLineSettlement(available: boolean) {
 export async function getManualPolicy(client: PostgresClient, id: number) {
   const { rows: [header] } = await client.query<Omit<ManualPolicyDocument, 'lines' | 'reconciled'>>(
     `SELECT id::float8,number,date::text,concept,beneficiary,family,revision,applied,(canceled_at IS NOT NULL) AS canceled,
-       updated_at::text AS "updatedAt" FROM tuvansa.manual_accounting_policies WHERE id=$1 AND company_id=1`, [id],
+       updated_at::text AS "updatedAt",to_jsonb(policy)->'comment_metadata' AS "commentMetadata"
+     FROM tuvansa.manual_accounting_policies policy WHERE id=$1 AND company_id=1`, [id],
   );
   if (!header) return null;
   const settlement = manualLineSettlement(await bankReconciliationsAvailable(client));
@@ -54,13 +55,21 @@ export async function getManualPolicy(client: PostgresClient, id: number) {
   return { ...header, lines, reconciled: lines.some(({ reconciled }) => reconciled) };
 }
 
+export function manualPolicyCommentFields(metadata?: AccountingPolicyCommentMetadata | null) {
+  return {
+    cheque: metadata?.cheque ?? '', origin: metadata?.origin ?? 'DIARIO', report: metadata?.report ?? '',
+    amountInWords: metadata?.amountInWords ?? '', postDate: metadata?.postDate ?? null,
+    ...(metadata ? { comments: metadata.comments } : {}),
+  };
+}
+
 export function manualPolicyProps(policy: ManualPolicyDocument): AccountingPolicyProps {
   const debit = Number(policy.lines.reduce((sum, line) => sum + Math.round(line.debit * 100), 0)) / 100;
   const credit = Number(policy.lines.reduce((sum, line) => sum + Math.round(line.credit * 100), 0)) / 100;
   return {
     id: policy.id, number: policy.number, date: policy.date, concept: policy.concept, beneficiary: policy.beneficiary, family: policy.family,
-    cheque: '', company: 1, origin: 'DIARIO', applied: policy.applied, amountInWords: '', report: '', userId: 0,
-    auditAt: policy.updatedAt, postDate: null, classifications: ['', ''], exchangeRate: 1, usedAt: null,
+    ...manualPolicyCommentFields(policy.commentMetadata), company: 1, applied: policy.applied, userId: 0,
+    auditAt: policy.updatedAt, classifications: ['', ''], exchangeRate: 1, usedAt: null,
     totals: { debit, credit, difference: Number((debit - credit).toFixed(2)) },
     manual: { revision: policy.revision, canceled: policy.canceled, reconciled: policy.reconciled },
     movements: policy.lines.map((line) => ({ id: line.id, accountId: line.account.id, accountCode: line.account.code,

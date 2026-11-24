@@ -15,12 +15,12 @@ import {
 import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
-import { AccountingPolicy, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
+import { AccountingPolicy, type AccountingPolicyCommentMetadata, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
 import type {
   AccountingPolicyNavigationDirection, AccountingPolicySearchCriteria, AccountingPolicySearchResult,
 } from '../../domain/repositories/accounting-policies-repository.js';
 import type { LegacyMysqlAccountingPoliciesDataSource } from './legacy-mysql-accounting-policies-data-source.js';
-import { isManualPolicyId, manualLineSettlement, manualPoliciesAvailable } from './manual-policy-reads.js';
+import { isManualPolicyId, manualLineSettlement, manualPoliciesAvailable, manualPolicyCommentFields } from './manual-policy-reads.js';
 
 interface LocalPolicyHeader {
   id: number;
@@ -36,6 +36,7 @@ interface LocalPolicyHeader {
   exchangeRate: number;
   applied?: boolean;
   manual?: { revision: number; canceled: boolean; reconciled: boolean } | null;
+  commentMetadata?: AccountingPolicyCommentMetadata | null;
 }
 
 interface LocalPolicyRecord extends LocalPolicyHeader {
@@ -225,13 +226,16 @@ async function readLocalPolicies<T>(
       `SELECT ${transferFields}, ${withLines(transferLines(settlements))} AS lines
        FROM tuvansa.bank_transfers AS transfer WHERE transfer.company_id=1`,
     );
-    const projections = views.length ? [`SELECT postings.*,true AS applied,NULL::jsonb AS manual FROM (${views.join(' UNION ALL ')}) postings`] : [];
+    const projections = views.length ? [`SELECT postings.*,true AS applied,NULL::jsonb AS manual,NULL::jsonb AS "commentMetadata"
+      FROM (${views.join(' UNION ALL ')}) postings`] : [];
     if (await manualPoliciesAvailable(client)) {
       const reconciled = manualLineSettlement(await bankReconciliationsAvailable(client));
-      projections.push(`SELECT p.id,p.number,p.company_id AS company,0 AS "userId",p.date::text AS date,''::text AS cheque,
+      projections.push(`SELECT p.id,p.number,p.company_id AS company,0 AS "userId",p.date::text AS date,
+        coalesce(to_jsonb(p)#>>'{comment_metadata,cheque}','') AS cheque,
         p.beneficiary,p.family,p.concept,p.updated_at AS "auditAt",1::float8 AS "exchangeRate",
         ${detail ? 'lineInfo.lines' : "'[]'::jsonb"} AS lines,p.applied,
-        jsonb_build_object('revision',p.revision,'canceled',p.canceled_at IS NOT NULL,'reconciled',lineInfo.reconciled) AS manual
+        jsonb_build_object('revision',p.revision,'canceled',p.canceled_at IS NOT NULL,'reconciled',lineInfo.reconciled) AS manual,
+        to_jsonb(p)->'comment_metadata' AS "commentMetadata"
         FROM tuvansa.manual_accounting_policies p CROSS JOIN LATERAL (
           SELECT coalesce(bool_or(settlement.statement_date IS NOT NULL),false) AS reconciled,
             ${detail ? `coalesce(jsonb_agg(jsonb_build_object('id',l.id,'account',l.account->>'code','accountId',l.account_id,
@@ -257,7 +261,7 @@ function localPolicy(header: LocalPolicyHeader, movements: AccountingPolicyMovem
     id, number, date, cheque, company, userId, origin: header.manual ? 'DIARIO' : family, applied: header.applied ?? true, beneficiary, family, concept,
     amountInWords: '', report: '', auditAt, postDate: null, classifications: ['', ''], exchangeRate, usedAt: null,
     totals: { debit, credit, difference: money(debit - credit) }, movements,
-    ...(header.manual ? { manual: header.manual } : {}),
+    ...(header.manual ? { manual: header.manual, ...manualPolicyCommentFields(header.commentMetadata) } : {}),
   });
 }
 

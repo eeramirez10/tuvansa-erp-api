@@ -42,3 +42,26 @@ Content-Type: application/json
   "requestKey": "{{duplicateRequestKey}}",
   "confirmed": true
 }
+### Comentarios de una póliza
+GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/comments
+
+### Guardar la cabecera y comentarios de una póliza web desaplicada
+PATCH {{baseUrl}}/accounting/policies/{{manualPolicyId}}/actions/comments
+Content-Type: application/json
+
+{
+  "requestKey": "{{commentsRequestKey}}",
+  "revision": {{manualPolicyRevision}},
+  "fields": {
+    "date": "2025-02-15",
+    "cheque": "REF-1",
+    "report": "",
+    "postDate": null,
+    "origin": "DIARIO",
+    "beneficiary": "TUVANSA",
+    "family": "DIARIO",
+    "concept": "Comentarios de diario",
+    "amountInWords": "",
+    "comments": ["Nota de prueba", "", "", "", "", ""]
+  }
+}

@@ -73,7 +73,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const writeManualPolicy = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && (path === '/accounting/policies' ||
        /^\/accounting\/policies\/[1-9]\d*\/actions\/(apply|unapply|duplicate)$/.test(path))) ||
-     (['PATCH','DELETE'].includes(req.method) && /^\/accounting\/policies\/[1-9]\d*$/.test(path)));
+     (['PATCH','DELETE'].includes(req.method) && /^\/accounting\/policies\/[1-9]\d*$/.test(path)) ||
+     (req.method === 'PATCH' && /^\/accounting\/policies\/[1-9]\d*\/actions\/comments$/.test(path)));
   if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeReceptionPiece || editReception || documentReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || createBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

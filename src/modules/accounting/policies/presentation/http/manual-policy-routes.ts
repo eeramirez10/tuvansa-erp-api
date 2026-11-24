@@ -16,6 +16,15 @@ const policy = z.strictObject({
   })).min(2).max(100),
 });
 const change = policy.extend({ revision: z.int().positive() });
+const text = (length: number) => z.string().max(length).refine(value => !value.includes('\0'), 'El campo contiene caracteres inválidos.');
+const comments = z.strictObject({
+  requestKey: z.uuid(), revision: z.int().positive(),
+  fields: z.strictObject({
+    date: z.iso.date(), cheque: text(13), report: text(15), postDate: z.iso.date().nullable(), origin: text(10),
+    beneficiary: text(85), family: text(20), concept: text(90), amountInWords: text(111),
+    comments: z.tuple([text(100), text(100), text(100), text(140), text(3000), text(350)]),
+  }),
+});
 
 export function createManualPolicyRouter(manual: ManageManualPolicy): Router {
   const router = Router();
@@ -41,6 +50,14 @@ export function createManualPolicyRouter(manual: ManageManualPolicy): Router {
   router.post('/:policyId/actions/duplicate', async (request, response) => {
     const { policyId } = params.parse(request.params);
     response.status(201).json({ data: await manual.duplicate(policyId, duplicate.parse(request.body)) });
+  });
+  router.get('/:policyId/actions/comments', async (request, response) => {
+    const { policyId } = params.parse(request.params);
+    response.set('Cache-Control', 'no-store').json({ data: await manual.prepareComments(policyId) });
+  });
+  router.patch('/:policyId/actions/comments', async (request, response) => {
+    const { policyId } = params.parse(request.params);
+    response.json({ data: await manual.changeComments(policyId, comments.parse(request.body)) });
   });
   router.patch('/:policyId', async (request, response) => {
     const { policyId } = params.parse(request.params);

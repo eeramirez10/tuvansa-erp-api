@@ -15,6 +15,73 @@ import type { PostgresConnectionFactory } from '../src/shared/infrastructure/dat
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgres-write-boundary.js';
 
+it('saves policy comments on an unapplied journal without replacing ledger lines', async () => {
+  const db = new PGlite();
+  const connect: PostgresConnectionFactory = async () => ({
+    async query<T extends object>(sql: string, values?: unknown[]) {
+      if (values) return db.query<T>(sql, values);
+      return { rows: ((await db.exec(sql)).at(-1)?.rows ?? []) as T[] };
+    },
+    release() {},
+  });
+  const storage = new PostgresManualPolicies(connect, () => true);
+  const references: ManualPolicyReferences = {
+    settings: async () => ({ fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31', periodYear: 2025, levels: [], costCenters: [] }),
+    search: async () => [],
+    accounts: async () => new Map(),
+  };
+  const previousUrl = env.NEON_DATABASE_URL;
+  env.NEON_DATABASE_URL = 'postgres://fixture@127.0.0.1:1/never-connect';
+  try {
+    const account = { id: 10, code: '1115001', name: 'Inventario', type: 2, nature: 0 };
+    const created = await storage.create(
+      { requestKey: randomUUID(), date: '2025-02-02', concept: 'Concepto anterior', beneficiary: '', family: '', lines: [] },
+      [
+        { account, parents: [], debit: 20, credit: 0, costCenter: 0, reference: 'Entrada' },
+        { account: { ...account, id: 11, code: '2001001' }, parents: [], debit: 0, credit: 20, costCenter: 0, reference: 'Contrapartida' },
+      ],
+      '0'.repeat(64), async () => undefined,
+    );
+    const manual = new ManageManualPolicy(references, storage, {
+      findById: async (id) => {
+        if (id === 42) {
+          const historical = { ...created, id, applied: false };
+          delete historical.manual;
+          return AccountingPolicy.create(historical);
+        }
+        const local = await storage.find(id);
+        return local && AccountingPolicy.create(manualPolicyProps(local));
+      },
+    }, async () => ['Nota histórica', '', '', '', '', '']);
+    const app = express().use(express.json()).use(postgresWriteBoundary)
+      .use('/accounting/policies', createManualPolicyRouter(manual)).use(errorHandler);
+    const path = `/accounting/policies/${created.id}/actions`;
+    const preview = (await request(app).get(`${path}/comments`).expect(200)).body.data;
+    expect(preview).toMatchObject({ applied: true, canWrite: false, revision: 1 });
+    const fields = { ...preview.fields, date: '2025-02-18', concept: 'Concepto editado', cheque: 'REF-1',
+      postDate: '2025-02-20', comments: ['Nota nueva', '', '', '', 'Línea A\nLínea B', ''] };
+    const input = { requestKey: randomUUID(), revision: 1, fields };
+    await request(app).patch(`${path}/comments`).send(input).expect(409);
+    await request(app).post(`${path}/unapply`).send({ requestKey: randomUUID(), confirmed: true, revision: 1 }).expect(200);
+    await request(app).patch(`${path}/comments`).send(input).expect(409);
+    expect((await request(app).get(`${path}/comments`).expect(200)).body.data).toMatchObject({ canWrite: true, revision: 2 });
+    const update = { ...input, revision: 2 };
+    await request(app).patch(`${path}/comments`).send({ ...update, fields: { ...fields, date: '2025-03-01' } }).expect(422);
+    const saved = (await request(app).patch(`${path}/comments`).send(update).expect(200)).body.data;
+    expect(saved).toMatchObject({ ...fields, applied: false, manual: { revision: 3 }, movements: created.movements });
+    expect((await request(app).patch(`${path}/comments`).send(update).expect(200)).body.data).toEqual(saved);
+    expect((await request(app).get(`${path}/comments`).expect(200)).body.data).toMatchObject({ fields, revision: 3 });
+    expect((await request(app).get('/accounting/policies/42/actions/comments').expect(200)).body.data).toMatchObject({
+      canWrite: false, fields: { comments: ['Nota histórica', '', '', '', '', ''] },
+    });
+    expect((await db.query(`SELECT revision,action FROM tuvansa.manual_accounting_policy_changes ORDER BY revision`)).rows)
+      .toEqual([{ revision: 1, action: 'create' }, { revision: 2, action: 'unapply' }, { revision: 3, action: 'comments' }]);
+  } finally {
+    env.NEON_DATABASE_URL = previousUrl;
+    await db.close();
+  }
+}, 30000);
+
 it('applies, unapplies, edits, reapplies and cancels manual journals, preserving reconciled lines and history', async () => {
   const db = new PGlite();
   const connect: PostgresConnectionFactory = async () => ({

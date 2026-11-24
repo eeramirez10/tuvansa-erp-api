@@ -4,7 +4,7 @@ import { NotFoundError } from '../../../../../shared/domain/errors/not-found-err
 import { connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type {
-  ManualPolicyActionInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine, ManualPolicyOperation,
+  ManualPolicyActionInput, ManualPolicyCommentsInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine, ManualPolicyOperation,
 } from '../../domain/datasources/manual-policy-data-source.js';
 import type { AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
 import { getManualPolicy, isManualPolicyId, manualPoliciesAvailable, manualPolicyIdStart, manualPolicyLineIdStart, manualPolicyProps } from './manual-policy-reads.js';
@@ -30,6 +30,12 @@ const migrations = [{ id: 'manual_accounting_policy', sql: `
     fingerprint char(64) NOT NULL,action text NOT NULL CHECK (action IN ('create','change','apply','unapply','cancel')),
     result jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(policy_id,revision)
   );
+` }, { id: 'manual_accounting_policy_comments', sql: `
+  ALTER TABLE tuvansa.manual_accounting_policies ADD COLUMN comment_metadata jsonb
+    CHECK (comment_metadata IS NULL OR jsonb_typeof(comment_metadata)='object');
+  ALTER TABLE tuvansa.manual_accounting_policy_changes DROP CONSTRAINT manual_accounting_policy_changes_action_check,
+    ADD CONSTRAINT manual_accounting_policy_changes_action_check
+      CHECK (action IN ('create','change','apply','unapply','cancel','comments'));
 ` }];
 
 const unavailable = () => new ApplicationError('No fue posible consultar o guardar la póliza en PostgreSQL.', 'MANUAL_POLICY_POSTGRES_UNAVAILABLE', 503);
@@ -149,6 +155,18 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
       await insertLines(client, id, lines);
       await client.query(`UPDATE tuvansa.manual_accounting_policies SET date=$2,concept=$3,beneficiary=$4,family=$5,
         revision=revision+1,updated_at=now() WHERE id=$1`, [id, input.date, input.concept, input.beneficiary, input.family]);
+      return id;
+    });
+  }
+
+  changeComments(id: number, input: ManualPolicyCommentsInput, fingerprint: string,
+    validate: (current: ManualPolicyDocument) => void) {
+    return this.transaction(input.requestKey, fingerprint, 'comments', async (client) => {
+      validate(await this.current(client, id, input.revision));
+      const { date, concept, beneficiary, family, ...metadata } = input.fields;
+      await client.query(`UPDATE tuvansa.manual_accounting_policies SET date=$2,concept=$3,beneficiary=$4,family=$5,
+        comment_metadata=$6::jsonb,revision=revision+1,updated_at=now() WHERE id=$1`,
+      [id, date, concept, beneficiary, family, JSON.stringify(metadata)]);
       return id;
     });
   }

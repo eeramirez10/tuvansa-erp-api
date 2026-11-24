@@ -44,7 +44,8 @@ Los totales se calculan sumando cargos y abonos. `difference` permite comprobar 
 
 ## Acciones conservadas sin escritura
 
-La consulta histórica conserva Comentarios, Duplicar pasivo e Imprimir. La sección de diario web detalla el alcance de Duplicar, Aplicar y Desaplicar.
+La consulta histórica conserva Duplicar pasivo e Imprimir. La sección de
+diario web detalla el alcance de Comentarios, Duplicar, Aplicar y Desaplicar.
 
 La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, dos movimientos y balance de cargos/abonos.
 
@@ -80,6 +81,8 @@ periodo, pide confirmación y llama a `/98` para retirarla de los saldos.
 | Alta y aplicación | `POST /api/accounting/policies` |
 | Duplicar / Consultar fecha y revisión de la póliza de origen | `GET /api/accounting/policies/:id/actions/duplicate` |
 | Duplicar / Crear y aplicar la copia | `POST /api/accounting/policies/:id/actions/duplicate` |
+| Comentarios / Abrir | `GET /api/accounting/policies/:id/actions/comments` |
+| Comentarios / OK | `PATCH /api/accounting/policies/:id/actions/comments` |
 | Consultar acciones del diario | `GET /api/accounting/policies/:id/actions/manual` |
 | Cambiar una póliza desaplicada | `PATCH /api/accounting/policies/:id` |
 | Aplicar y desaplicar | `POST /api/accounting/policies/:id/actions/apply` y `…/unapply` |
@@ -107,6 +110,32 @@ documento original. El modo de inversión por Ctrl y **Duplicar pasivo**
 requieren sus propias reglas. La vista en Omnis se verificó con `312502-0010`
 y se cerró desde Cancelar (`bank-inline-policy-audit-33`). Las pruebas de
 escritura web se ejecutaron en una base aislada.
+
+**Comentarios** abre **Comentarios de recepción** (`EPASIV#13/2 →
+MPASIVOS/85 → EPASIV#6`). La biblioteca German abrió la ventana en la póliza
+desaplicada `312512-0002`. `MPASIVOS/80` carga `#40` con `FPOLIZA.POSEQ`.
+El GET usa las cabeceras de `FPOLIZA` y la lectura derivada de
+`FCOMENT.COMSEQFACT` para las seis líneas `COML1–5` y `COMLETRA`.
+La lectura requiere que el identificador no coincida con un `FDOC.DSEQ`.
+`MPASIVOS/85` comprueba que la póliza esté desaplicada, conserva el mes
+de la póliza y prepara los cambios de `FCOMENT` y `FPOLIZA`. En TUVANSA,
+el Número, Usr, Captura y Cambio se muestran en consulta.
+
+El PATCH guarda la fecha, cheque, reporte, fecha post, origen, beneficiario,
+familia, concepto, importe con letra y seis líneas en una póliza web
+`3JW…` desaplicada. La escritura derivada usa el diario y su bitácora
+de PostgreSQL. Verifica la revisión, el mes, el periodo activo y el estado
+de conciliación. La operación de Comentarios conserva los identificadores
+y valores de las partidas. La búsqueda usa el cheque y los datos de
+cabecera guardados. Los folios históricos se consultan en el mismo diálogo.
+Evidencia `20261124-EPASIV6-COMMENTS.png`,
+`20261124-EPASIV6-COMMENTS-FIELDS.png`, `20261124-MPASIVOS80-POSEQ.png` y
+`20261124-MPASIVOS85-SAVE.png`.
+La prueba de navegador en PostgreSQL abrió, descartó un borrador con
+**Cancelar**, volvió a abrir y guardó una nota y el cheque con **OK**.
+El folio apareció en la búsqueda por cheque y conservó las partidas.
+Se retiró la póliza temporal al terminar.
+Evidencia `ev_156e17ba7c98a88aad92de813a7ee46b4e66e4555dae549822eef4c9629b363b`.
 
 Las partidas aplicadas alimentan los saldos de la cuenta y sus agrupadoras,
 **Mayor**, **Mayor C.C.** y el **Auxiliar** del detalle. Cada partida bancaria

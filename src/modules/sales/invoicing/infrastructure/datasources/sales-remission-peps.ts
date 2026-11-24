@@ -81,13 +81,7 @@ export async function allocateSalesRemissionLayers(
   };
 }
 
-export async function restoreSalesRemissionLayers(
-  client: PostgresClient, id: number, lines: MovementLine[], references: SalesRemissionLayerReferences,
-) {
-  const tracked = lines.filter(({ lotId }) => lotId > 0);
-  if (!tracked.length) return;
-  const ids = [...new Set(tracked.map(({ productId }) => productId))];
-  await lockPepsProducts(client, ids);
+async function verifyPostedLayers(client: PostgresClient, id: number, tracked: MovementLine[]) {
   const { rows } = await client.query<{ id: number; product: number; warehouse: string; quantity: number }>(
     `SELECT layer_id::float8 AS id,product_id::float8 AS product,warehouse,quantity::float8
      FROM tuvansa.inventory_adjustment_layer_stock WHERE remission_id=$1 AND NOT reversal`, [id],
@@ -99,11 +93,26 @@ export async function restoreSalesRemissionLayers(
     row.quantity = scaledStock(row.quantity - quantity);
   }
   if (rows.some(({ quantity }) => quantity !== 0)) throw inconsistentLayer();
-
-  const queueChanges = reversePepsOrders(tracked, await currentAdjustmentLayers(client, ids, await references.layers(ids)));
-  await writeLayerStock(client, 'remission_id', id, tracked, true, queueChanges);
 }
 
 function inconsistentLayer() {
   return new ConflictError('Las capas PEPS ya no coinciden con la salida original.', 'SALES_REMISSION_CANCELLATION_LAYER_CHANGED');
+}
+
+export async function restoreSalesRemissionLayers(
+  client: PostgresClient, origin: { remissionId: number } | { historicalCancellationId: number },
+  lines: MovementLine[], references: SalesRemissionLayerReferences,
+) {
+  const tracked = lines.filter(({ lotId }) => lotId > 0);
+  if (!tracked.length) return;
+  const ids = [...new Set(tracked.map(({ productId }) => productId))];
+  await lockPepsProducts(client, ids);
+  if ('remissionId' in origin) await verifyPostedLayers(client, origin.remissionId, tracked);
+  const queueChanges = reversePepsOrders(tracked, await currentAdjustmentLayers(client, ids, await references.layers(ids)));
+  if ('remissionId' in origin) {
+    await writeLayerStock(client, 'remission_id', origin.remissionId, tracked, true, queueChanges);
+  } else {
+    // La salida histórica ya forma parte de la apertura de FLOTES.
+    await writeLayerStock(client, 'remission_cancellation_id', origin.historicalCancellationId, tracked, true, queueChanges);
+  }
 }

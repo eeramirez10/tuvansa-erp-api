@@ -223,7 +223,8 @@ export async function currentAdjustmentLayers(
 }
 
 export async function writeLayerStock(
-  client: PostgresClient, origin: 'adjustment_id' | 'receipt_id' | 'remission_id', id: number, lines: LayerLine[], reversal: boolean,
+  client: PostgresClient, origin: 'adjustment_id' | 'receipt_id' | 'remission_id' | 'remission_cancellation_id',
+  id: number, lines: LayerLine[], reversal: boolean,
   queueChanges?: ReadonlyMap<number, number>,
 ) {
   const byLayer = new Map<number, LayerLine>();

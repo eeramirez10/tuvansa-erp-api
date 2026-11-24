@@ -131,9 +131,32 @@ requiere un periodo abierto y comprueba el estado fiscal.
 | Vista / acción | Origen de la comprobación | Efecto web |
 | --- | --- | --- |
 | Facturación / Cancelar remisión | MySQL adaptado. `FDOC` y `FTIPMV` de TUVANSA. Comprueba estado fiscal, UUID, folio, PAC y tipo de movimiento | La ficha histórica abre la consulta con `cancellationAvailable`. Al confirmar, conserva el documento original y muestra la cancelación |
-| Inventarios / Documentos | MySQL adaptado de `MFACT/112`. Cantidad, costo y almacén original de `FAXINV`. Verifica unidad, factor, lotes, cajas y capas | Registra un movimiento K con cantidades positivas al costo original |
+| Inventarios / Documentos | MySQL adaptado de `MFACT/112` y `MCPAR03/21, /35`. Cantidad, costo, almacén y `LOSEQ` de `FAXINV`, con la capa correspondiente en `FLOTES` | Registra un K con cantidades positivas al costo original y abona cada capa por separado en `inventory_adjustment_layer_stock` |
 | Clientes / Auxiliar, Saldos y Movimientos | MySQL adaptado de `MFACT/232`. Un único cargo FA en pesos por `FAX.DSEQ`, sin cobros ni movimientos vinculados | Agrega el abono K, retira la remisión del saldo abierto y refleja el crédito liberado |
-| Pedidos / Regenerar pedido | MySQL adaptado de `MFACT/29,113`. `FAXINV.AIPED` apunta a `FPLIN.PLSEQ`. Verifica pedido, cliente, almacén, moneda, tipo de cambio y cantidad surtida | Crea o modifica el registro PostgreSQL del pedido en la misma transacción. Devuelve `AICANTF` al pendiente y reduce el importe surtido por `AIPRECIO × AICANTF` con piso de cero |
+| Pedidos / Regenerar pedido | MySQL adaptado de `MFACT/29,113`. `FAXINV.AIPED` apunta a `FPLIN.PLSEQ`. Verifica pedido, cliente, almacén, moneda, tipo de cambio y cantidad surtida | Suma `AICANTF` por renglón de pedido cuando se surtió desde varias capas. Devuelve el total al pendiente y reduce el importe surtido por `AIPRECIO × AICANTF` con piso de cero |
+
+**PEPS histórico.** La acción **Cancelar remisión** acepta FA ordinarias de
+México en pesos, dentro del periodo abierto, con el cargo íntegro y sin
+timbrado ni cobros. Comprueba que cada capa pertenezca al producto y conserva
+el almacén de cada capa aunque difiera del almacén de la remisión. La salida
+original ya está reflejada en la apertura de MySQL. PostgreSQL registra la
+reposición con la cancelación, la devolución de existencias, el abono y la
+regeneración elegida en una sola transacción. Al reactivar una capa agotada,
+conserva el mismo `LOSEQ` y lo devuelve al final de la cola.
+
+`FA24192` de German documenta el surtido parcial. Los dos renglones de
+`FAXINV`, con 1 y 18 piezas, comparten la partida `FPLIN.PLSEQ=595115`
+y conservan las capas `14484` y `14556`. El folio corresponde a 2024.
+La copia de pruebas contiene dos FA activas con capas en el periodo 2025,
+ambas en dólares. El caso de dos capas en pesos se reproduce con datos
+sintéticos de prueba.
+
+En PostgreSQL de pruebas, la cancelación del caso sintético repuso dos
+unidades, cambió los saldos de las capas de 0 y 4 a 1 y 5, devolvió los
+tres pendientes del pedido y abonó 116 MXN. Dos solicitudes simultáneas
+con la misma clave registraron una sola reversión. Se retiraron los
+datos temporales. La consulta de `FA25374` verificó el bloqueo por
+periodo contable y la de `FA25587`, el bloqueo por moneda.
 
 Los cobros PA históricos, el timbrado, RECADV, los kits y las partidas
 con manejo especial muestran el motivo de bloqueo. La regeneración tiene

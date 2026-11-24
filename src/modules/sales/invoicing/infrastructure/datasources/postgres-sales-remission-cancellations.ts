@@ -57,6 +57,14 @@ const migrations = [{ id: 'sales_remission_cancellations', sql: `
   CREATE INDEX sales_remission_historical_customer
     ON tuvansa.sales_remission_cancellations (((historical_source->>'customerId')::bigint))
     WHERE legacy_invoice_id IS NOT NULL;
+` }, { id: 'historical_sales_remission_peps', sql: `
+  ALTER TABLE tuvansa.inventory_adjustment_layer_stock
+    DROP CONSTRAINT inventory_layer_stock_origin,
+    ADD COLUMN remission_cancellation_id bigint REFERENCES tuvansa.sales_remission_cancellations(id),
+    ADD UNIQUE(remission_cancellation_id,layer_id,reversal),
+    ADD CHECK (remission_cancellation_id IS NULL OR reversal),
+    ADD CONSTRAINT inventory_layer_stock_origin
+      CHECK (num_nonnulls(adjustment_id,receipt_id,remission_id,remission_cancellation_id)=1);
 ` }];
 
 const unavailable = () => new ApplicationError('No fue posible consultar o cancelar la remisión en PostgreSQL.', 'SALES_REMISSION_CANCELLATION_POSTGRES_UNAVAILABLE', 503);
@@ -196,7 +204,6 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
       }
       const products = await validateInventory(client, current);
       const regenerated = order ? regenerate(current, order) : null;
-      if (!current.historical) await restoreSalesRemissionLayers(client, id, current.movement.lines, this.layers);
 
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.sales_remission_cancellation_ids') AS id");
       const cancellationId = Number(allocation!.id);
@@ -225,6 +232,8 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
          SELECT $1,product,$2,quantity FROM unnest($3::bigint[],$4::numeric[]) AS lines(product,quantity)`,
         [cancellationId, current.warehouse, [...products.keys()], [...products.values()].map((value) => value / 1000)],
       );
+      const layerOrigin = current.historical ? { historicalCancellationId: cancellationId } : { remissionId: id };
+      await restoreSalesRemissionLayers(client, layerOrigin, current.movement.lines, this.layers);
       return { order: regenerated, result };
     }, input.regenerateOrder ? source.historical?.baseOrder ?? undefined : undefined);
   }

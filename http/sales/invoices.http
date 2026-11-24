@@ -81,7 +81,7 @@ GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/pieces
 ### Acciones: Sellar, estado del documento
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/seal
 
-### Consultar una FA histórica en la copia local
+### Consultar una FA histórica. Para probar PEPS, usar un folio en pesos con capas conciliadas dentro del periodo abierto.
 GET {{baseUrl}}/sales/invoices/{{historicalRemissionId}}/actions/cancel-remission
 
 ### Confirmar en PostgreSQL de pruebas con los datos del preview

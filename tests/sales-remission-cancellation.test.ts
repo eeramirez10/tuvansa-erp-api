@@ -1,23 +1,28 @@
 import { PGlite } from '@electric-sql/pglite';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { CaptureCustomerCollection } from '../src/modules/accounts-receivable/clients/application/use-cases/capture-customer-collection.js';
 import { ReverseCustomerCollection } from '../src/modules/accounts-receivable/clients/application/use-cases/reverse-customer-collection.js';
 import { salesRemissionsOutstanding } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import { PostgresCustomerCollections } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { PostgresCustomerCollectionReversals } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/postgres-customer-collection-reversals.js';
 import { currentAdjustmentLayers, inactivePepsOrder, type AdjustmentLayer } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
+import { LegacyMysqlMovementsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/legacy-mysql-movements-data-source.js';
+import { MysqlInventoryAdjustmentReferences } from '../src/modules/inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js';
 import { CancelSalesRemission } from '../src/modules/sales/invoicing/application/use-cases/cancel-sales-remission.js';
-import type {
-  SalesRemissionCancellationInput, SalesRemissionCancellationSource,
-} from '../src/modules/sales/invoicing/domain/datasources/sales-remission-cancellation-data-source.js';
+import type { SalesRemissionCancellationInput } from '../src/modules/sales/invoicing/domain/datasources/sales-remission-cancellation-data-source.js';
+import { Invoice } from '../src/modules/sales/invoicing/domain/entities/invoice.js';
 import { postInvoiceFromOrder } from '../src/modules/sales/invoicing/domain/entities/invoice-from-order.js';
+import { LegacyMysqlInvoicesDataSource } from '../src/modules/sales/invoicing/infrastructure/datasources/legacy-mysql-invoices-data-source.js';
+import { MysqlHistoricalSalesRemissionCancellationSource } from '../src/modules/sales/invoicing/infrastructure/datasources/mysql-historical-sales-remission-cancellation-source.js';
 import { PostgresSalesRemissionCancellations } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-remission-cancellations.js';
 import { PostgresSalesRemissions } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { PostgresSalesStampingSimulations } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-stamping-simulations.js';
 import { historicalSalesRemissionCancellationsOn } from '../src/modules/sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
-import type { OrderProps } from '../src/modules/sales/orders/domain/entities/order.js';
+import { Order, type OrderProps } from '../src/modules/sales/orders/domain/entities/order.js';
+import { LegacyMysqlOrdersDataSource } from '../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-orders-data-source.js';
 import { PostgresOrderOverlayDataSource } from '../src/modules/sales/orders/infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { hasLocalSalesStock } from '../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
+import { legacyMysqlPool } from '../src/shared/infrastructure/database/legacy-mysql-pool.js';
 import type { PostgresConnectionFactory } from '../src/shared/infrastructure/database/postgres-pool.js';
 
 it('cancels local FAW through K, protects fiscal and PA records, and regenerates the pedido only by choice', async () => {
@@ -187,7 +192,7 @@ it('cancels local FAW through K, protects fiscal and PA records, and regenerates
   } finally { await db.close(); }
 }, 15000);
 
-it('regenerates a historical MXN order atomically while keeping its other fulfillment and allocations', async () => {
+it.each([false, true])('reverses a historical MXN remission and regenerates the original order (PEPS: %s)', async (peps) => {
   const db = new PGlite();
   const connect: PostgresConnectionFactory = async () => ({
     async query<T extends object>(sql: string, values?: unknown[]) {
@@ -227,34 +232,87 @@ it('regenerates a historical MXN order atomically while keeping its other fulfil
   }, { orderNumber: order.number, requestKey: crypto.randomUUID(), revision: 0, issuedAt: date,
     lines: [{ orderLineId, quantity: 2 }] }, 1, 0);
   const nativeOrder = { ...posted.order, currencyId: 1, lines: posted.order.lines.map((line) => ({ ...line, currencyId: 1 })) };
-  const source: SalesRemissionCancellationSource = {
-    id: invoiceId, number: invoiceNumber, orderId: order.id, orderNumber: order.number, warehouse: '01',
-    customerId, issuedAt: date, charge: posted.receivable.amount, order: nativeOrder, lineEffects: posted.lineEffects,
-    hasCollection: false, lastCollectionReversalAt: null, alreadyRecorded: null,
-    historical: { version: 'consistent', blockedReason: null },
-    invoice: { ...posted.invoice, id: invoiceId, number: invoiceNumber, lines: posted.invoice.lines.map((line) => ({ ...line, id: 333 })) },
-    movement: { ...posted.movement, header: { ...posted.movement.header, id: invoiceId, document: invoiceNumber },
-      lines: posted.movement.lines.map((line) => ({ ...line, id: 333 })) },
+  const layer = { productId, date: null, cost: 24, adValorem: 0, document: 'RA123', customsEntry: '',
+    customsOffice: '', expiresAt: null, lot: '', number: '', location: '' };
+  const opened: AdjustmentLayer[] = [
+    { ...layer, id: 14484, warehouse: '01', initial: 1, available: 0, layerOrder: inactivePepsOrder },
+    { ...layer, id: 14556, warehouse: '12', initial: 5, available: 4, layerOrder: 2 },
+  ];
+  const inventory = (peps ? opened.map(({ id }) => ({ lotId: id, units: 1 })) : [{ lotId: 0, units: 2 }])
+    .map(({ lotId, units }, index) => ({
+      id: 333 + index, type: 'FA', productId, warehouse: '01', unit: 'PZ', factor: 1, quantity: -units,
+      invoiced: units, price: 50, cost: 25, lotId, pieces: '', productType: 1, productUnit: 'PZ', piecesControl: 0,
+      noLayers: peps ? 0 : 1, orderLineId, orderedProduct: productId, orderedUnit: 'PZ', orderedFactor: 1,
+      orderId: order.id, orderNumber: order.number, orderCustomerId: customerId,
+    }));
+  const header = {
+    number: invoiceNumber, type: 'FA', issuedAt: date, customerId, orderNumber: order.number, warehouse: '01',
+    currencyId: 1, exchangeRate: 1, total: 116, balance: 116, billed: 1, inventoried: 1, receivable: 1,
+    canceled: 0, fiscalStatus: 0, fiscalEvidence: 0, specialAccounting: 0, multiplePages: 0, hasPieces: 0,
+    hasRecadv: 0, hasLinkedAccounting: 0, ordinaryMovement: 1, multiWarehouse: '1', automaticPeps: Number(peps),
   };
+  const charge = { id: 1, type: 'FA', amount: 116, date, reference: order.number,
+    exchangeRate: 1, customerId, supplierId: 0, specialPosting: 0 };
+  const queries = vi.spyOn(legacyMysqlPool, 'execute').mockImplementation(async (sql) => {
+    const statement = String(sql);
+    const rows = statement.includes('FROM FDOC D JOIN FCIA c') ? [header]
+      : statement.includes('FROM FAX WHERE') ? [charge]
+        : statement.includes('FROM FAXINV A LEFT JOIN FINV I') ? inventory : null;
+    if (!rows) throw new Error('Unexpected native query: ' + statement);
+    return [rows, []] as unknown as Awaited<ReturnType<typeof legacyMysqlPool.execute>>;
+  });
+  const invoices = vi.spyOn(LegacyMysqlInvoicesDataSource.prototype, 'findById').mockResolvedValue(Invoice.create({
+    ...posted.invoice, id: invoiceId, number: invoiceNumber, lines: inventory.map(({ id, quantity, invoiced }) => ({
+      ...posted.invoice.lines[0]!, id, quantity, fulfilledQuantity: invoiced, amount: 50 * invoiced,
+    })),
+  }));
+  const movements = vi.spyOn(LegacyMysqlMovementsDataSource.prototype, 'findById').mockResolvedValue({
+    ...posted.movement, header: { ...posted.movement.header, id: invoiceId, document: invoiceNumber },
+    lines: inventory.map(({ id, quantity, lotId }) => ({ ...posted.movement.lines[0]!, id, quantity, lotId })),
+  });
+  const nativeOrders = vi.spyOn(LegacyMysqlOrdersDataSource.prototype, 'findById').mockResolvedValue(Order.create(nativeOrder));
+  const layerReference = vi.spyOn(MysqlInventoryAdjustmentReferences.prototype, 'layers')
+    .mockImplementation(async (ids) => opened.filter(({ productId }) => ids.includes(productId)));
   const orders = new PostgresOrderOverlayDataSource(connect, () => true);
+  const native = new MysqlHistoricalSalesRemissionCancellationSource();
   let concurrentChange = false;
   let reads = 0;
+  let missingDuringWrite = false;
   const storage = new PostgresSalesRemissionCancellations(orders, connect, () => true, {
-    read: async () => concurrentChange && ++reads === 2
-      ? { ...source, historical: { version: 'changed recently', blockedReason: null } } : source,
-  });
+    read: async (id) => {
+      const source = await native.read(id);
+      if (source?.historical && concurrentChange && ++reads === 2) source.historical.version = 'changed recently';
+      return source;
+    },
+  }, { layers: async () => missingDuringWrite ? opened.slice(1) : opened });
   const cancel = new CancelSalesRemission(storage, { fiscalWindow: async () => fiscal });
   const input: SalesRemissionCancellationInput = {
     requestKey: 'aabb4403-d213-44ab-acd8-6bad5afd5812', date: '2025-03-03', reason: 'Remisión histórica de prueba',
     confirmed: true, regenerateOrder: true,
   };
   try {
+    if (peps) {
+      header.automaticPeps = 0;
+      expect(await cancel.prepare(1, invoiceId)).toMatchObject({ canWrite: false, reason: expect.stringContaining('capas PEPS') });
+      header.automaticPeps = 1;
+      nativeOrders.mockResolvedValueOnce(Order.create({ ...nativeOrder, lines: [{ ...nativeOrder.lines[0]!, fulfilled: 1 }] }));
+      expect(await cancel.prepare(1, invoiceId)).toMatchObject({ canWrite: true, order: { canRegenerate: false } });
+    }
     expect(await cancel.prepare(1, invoiceId)).toMatchObject({ canWrite: true, order: { canRegenerate: true } });
     expect((await db.query("SELECT to_regclass('tuvansa.sales_remissions') AS present")).rows).toEqual([{ present: null }]);
     concurrentChange = true;
     await expect(cancel.save(1, 0, invoiceId, input)).rejects.toMatchObject({ code: 'SALES_REMISSION_SOURCE_CHANGED' });
     expect(await orders.get(order.id)).toBeNull();
     concurrentChange = false;
+    const client = await connect();
+    if (peps) {
+      missingDuringWrite = true;
+      await expect(cancel.save(1, 0, invoiceId, input)).rejects.toMatchObject({ code: 'INVENTORY_ADJUSTMENT_LAYER_MISSING' });
+      expect(await orders.get(order.id)).toBeNull();
+      expect(await salesRemissionsOutstanding(client, 1, customerId)).toBe(0);
+      expect(await currentAdjustmentLayers(client, [productId], opened)).toEqual(opened);
+      missingDuringWrite = false;
+    }
     const saved = await cancel.save(1, 0, invoiceId, input);
     expect(saved.regeneratedOrder).toBe(true);
     expect(await cancel.save(1, 0, invoiceId, { ...input, requestKey: input.requestKey.toUpperCase() })).toEqual(saved);
@@ -262,12 +320,31 @@ it('regenerates a historical MXN order atomically while keeping its other fulfil
     expect(await orders.get(order.id)).toMatchObject({ revision: 1, base: nativeOrder, document: {
       fulfilledAmount: 50, status: '', lines: [{ fulfilled: 1, remaining: 3, assigned: 1 }] },
     });
-    const client = await connect();
     expect(await salesRemissionsOutstanding(client, 1, customerId)).toBe(-116);
     expect(await historicalSalesRemissionCancellationsOn(client, { invoiceIds: [invoiceId] }))
       .toMatchObject([{ amount: 116, invoiceId, result: saved }]);
     expect((await db.query('SELECT ordered::float8 FROM tuvansa.order_stock_deltas')).rows).toEqual([{ ordered: 2 }]);
     expect((await db.query('SELECT quantity::float8 FROM tuvansa.sales_remission_cancellation_inventory')).rows).toEqual([{ quantity: 2 }]);
     expect((await db.query('SELECT * FROM tuvansa.sales_remissions')).rows).toEqual([]);
-  } finally { await db.close(); }
+    if (peps) {
+      expect(await currentAdjustmentLayers(client, [productId], opened)).toMatchObject([
+        { id: 14484, initial: 1, available: 1, layerOrder: 3 }, { id: 14556, initial: 5, available: 5, layerOrder: 2 },
+      ]);
+      expect((await db.query(`SELECT layer_id::float8 AS id,warehouse,reversal,quantity::float8
+        FROM tuvansa.inventory_adjustment_layer_stock WHERE remission_cancellation_id=$1 ORDER BY layer_id`, [saved.id])).rows)
+        .toEqual([{ id: 14484, warehouse: '01', reversal: true, quantity: 1 }, { id: 14556, warehouse: '12', reversal: true, quantity: 1 }]);
+      expect((await db.query('SELECT movement FROM tuvansa.sales_remission_cancellations WHERE id=$1', [saved.id])).rows)
+        .toMatchObject([{ movement: { lines: [
+          { quantity: 1, type: 'K', lotId: 14484, warehouse: '01', lotWarehouse: '01' },
+          { quantity: 1, type: 'K', lotId: 14556, warehouse: '01', lotWarehouse: '12' },
+        ] } }]);
+    }
+  } finally {
+    queries.mockRestore();
+    invoices.mockRestore();
+    movements.mockRestore();
+    nativeOrders.mockRestore();
+    layerReference.mockRestore();
+    await db.close();
+  }
 }, 15000);

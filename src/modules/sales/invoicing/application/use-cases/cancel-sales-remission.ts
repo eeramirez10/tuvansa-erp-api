@@ -26,7 +26,7 @@ function blockingReason(source: SalesRemissionCancellationSource) {
     || invoice.lines.length !== lineEffects.length) return 'El documento requiere una cancelación distinta.';
   if (invoice.lines.some(({ pieces }) => pieces !== 0) || movement.lines.some(({ lotId, lotWarehouse, pieces, piecesText }, index) => {
     const layer = invoice.lines[index]?.inventoryLayer;
-    const validLayer = lotId === 0 ? !layer : !source.historical && Number.isSafeInteger(lotId) && lotId > 0
+    const validLayer = lotId === 0 ? !layer : Number.isSafeInteger(lotId) && lotId > 0
       && lotWarehouse && layer?.id === lotId && layer.warehouse === lotWarehouse;
     return !validLayer || pieces !== 0 || !/^(?:0+(?:\.0+)?)?$/.test(piecesText.trim());
   })) {
@@ -45,16 +45,17 @@ function periodReason(source: SalesRemissionCancellationSource, period: PostingR
 
 function regenerateOrder(source: SalesRemissionCancellationSource, order: OrderProps): OrderProps {
   if (order.id !== source.orderId || order.number !== source.orderNumber || order.documentKind !== 'order') throw changedOrder();
-  const effects = new Map<number, { productId: number; quantity: number; unit: string }>();
+  const effects = new Map<number, { productId: number; quantity: number; unit: string; layered: boolean }>();
   for (const [index, effect] of source.lineEffects.entries()) {
     const invoice = source.invoice.lines[index];
     if (!invoice || !Number.isFinite(effect.quantity) || effect.quantity <= 0) throw changedOrder();
     const unit = invoice.unit.trim();
     const previous = effects.get(effect.orderLineId);
-    if (previous && (source.historical || !invoice.inventoryLayer || previous.unit !== unit || previous.productId !== effect.productId)) {
+    const layered = invoice.inventoryLayer !== undefined;
+    if (previous && (!previous.layered || !layered || previous.unit !== unit || previous.productId !== effect.productId)) {
       throw changedOrder();
     }
-    effects.set(effect.orderLineId, { productId: effect.productId, unit, quantity: quantity((previous?.quantity ?? 0) + effect.quantity) });
+    effects.set(effect.orderLineId, { productId: effect.productId, unit, layered, quantity: quantity((previous?.quantity ?? 0) + effect.quantity) });
   }
   const lines = order.lines.map((line) => {
     const effect = effects.get(line.id);

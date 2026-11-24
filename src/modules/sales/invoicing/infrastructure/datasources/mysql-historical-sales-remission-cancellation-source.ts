@@ -3,6 +3,8 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { LegacyMysqlMovementsDataSource } from '../../../../inventories/movements/infrastructure/datasources/legacy-mysql-movements-data-source.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import type { AdjustmentLayer } from '../../../../inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
+import { mexicoGlobalPepsCondition, MysqlInventoryAdjustmentReferences } from '../../../../inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js';
 import type { OrderProps } from '../../../orders/domain/entities/order.js';
 import { LegacyMysqlOrdersDataSource } from '../../../orders/infrastructure/datasources/legacy-mysql-orders-data-source.js';
 import type {
@@ -35,6 +37,7 @@ interface RemissionRow extends RowDataPacket {
   hasLinkedAccounting: number;
   ordinaryMovement: number;
   multiWarehouse: string;
+  automaticPeps: number;
 }
 
 interface LedgerRow extends RowDataPacket {
@@ -80,7 +83,7 @@ const cents = (value: number) => Math.round((value + Number.EPSILON) * 100);
 const quantity = (value: number) => Number(value.toFixed(3));
 const text = (value: string | null) => value?.trim() ?? '';
 
-function orderReason(header: RemissionRow, rows: InventoryRow[], order: OrderProps | null) {
+function orderReason(header: RemissionRow, rows: InventoryRow[], order: OrderProps | null, invoice: InvoiceProps) {
   if (!order || order.number !== header.orderNumber || order.customer.id !== header.customerId || order.documentKind !== 'order') {
     return 'No se encontró el pedido original de la remisión para regenerarlo.';
   }
@@ -90,16 +93,20 @@ function orderReason(header: RemissionRow, rows: InventoryRow[], order: OrderPro
   if (order.warehouse !== header.warehouse) return 'El pedido original pertenece a otro almacén.';
 
   const lines = new Map(order.lines.map((line) => [line.id, line]));
-  const seen = new Set<number>();
-  for (const row of rows) {
+  const shipped = new Map<number, { quantity: number; layered: boolean }>();
+  for (const [index, row] of rows.entries()) {
     const line = lines.get(row.orderLineId);
-    if (!row.orderLineId || seen.has(row.orderLineId) || !line || row.orderId !== order.id || row.orderNumber !== order.number
+    const previous = shipped.get(row.orderLineId);
+    const layered = invoice.lines[index]?.inventoryLayer !== undefined;
+    const total = quantity((previous?.quantity ?? 0) + row.invoiced);
+    if (!row.orderLineId || (previous && (!previous.layered || !layered))
+      || !line || row.orderId !== order.id || row.orderNumber !== order.number
       || row.orderCustomerId !== order.customer.id || row.orderedProduct !== row.productId || line.productId !== row.productId
       || row.orderedFactor !== 1 || row.orderedUnit !== row.unit || line.unit.trim() !== row.unit
-      || quantity(line.fulfilled - row.invoiced) < 0) {
+      || quantity(line.fulfilled - total) < 0) {
       return 'Las partidas de la remisión ya no se pueden vincular con las cantidades surtidas del pedido.';
     }
-    seen.add(row.orderLineId);
+    shipped.set(row.orderLineId, { quantity: total, layered });
   }
   const net = rows.reduce((sum, row) => sum + row.price * row.invoiced, 0);
   if (cents(net) > cents(order.fulfilledAmount)) return 'El importe surtido del pedido ya no cubre el importe de la remisión.';
@@ -113,11 +120,12 @@ function inventoryReason(header: RemissionRow, rows: InventoryRow[], invoice: In
     return 'No se pudieron verificar todas las partidas y el almacén de la remisión.';
   }
   for (const [index, row] of rows.entries()) {
-    if (row.lotId !== 0 || text(row.pieces) || row.piecesControl !== 0 || row.noLayers !== 1) {
-      return 'La remisión utiliza lotes, piezas o capas que requieren su propia cancelación.';
-    }
     const line = invoice.lines[index]!;
     const stock = movement.lines[index]!;
+    if (text(row.pieces) || row.piecesControl !== 0) return 'La remisión utiliza piezas que requieren su propia cancelación.';
+    if (stock.lotId !== row.lotId || (row.lotId === 0 ? row.noLayers !== 1 : !line.inventoryLayer)) {
+      return 'La remisión tiene capas PEPS que no se pudieron conciliar con su salida original.';
+    }
     // MFACT/112 restaura AICANT con signo contrario. MFACT/29 utiliza AICANTF del pedido.
     if (row.type !== 'FA' || (row.productType !== 0 && row.productType !== 1) || row.factor !== 1
       || !row.unit || row.unit !== row.productUnit || row.warehouse !== header.warehouse
@@ -164,6 +172,7 @@ export class MysqlHistoricalSalesRemissionCancellationSource implements Historic
   private readonly invoices = new LegacyMysqlInvoicesDataSource();
   private readonly movements = new LegacyMysqlMovementsDataSource();
   private readonly orders = new LegacyMysqlOrdersDataSource();
+  private readonly layers = new MysqlInventoryAdjustmentReferences();
 
   async read(id: number): Promise<SalesRemissionCancellationSource | null> {
     const [[header]] = await legacyMysqlPool.execute<RemissionRow[]>(
@@ -184,8 +193,8 @@ export class MysqlHistoricalSalesRemissionCancellationSource implements Historic
            WHERE B.BADNUM=D.DNUM AND (P.POCIA=1 OR P.POSEQ IS NULL)) AS hasLinkedAccounting,
          EXISTS(SELECT 1 FROM FTIPMV T WHERE T.TICLA=D.DITIPMV AND T.TIMULTICIA=D.DMULTICIA AND T.TIMODULO=4
            AND T.TIFISCAL=0 AND T.TIAFINV=-1 AND T.TIAFCXC=1 AND T.TIAFVTS=1 AND T.TIAFBCS=0) AS ordinaryMovement,
-         SUBSTRING(C.CIACOMPORTA,37,1) AS multiWarehouse
-       FROM FDOC D JOIN FCIA C ON C.CIASEQ=D.DMULTICIA AND C.CIAALIAS='TUVANSA'
+         SUBSTRING(c.CIACOMPORTA,37,1) AS multiWarehouse, (${mexicoGlobalPepsCondition}) AS automaticPeps
+       FROM FDOC D JOIN FCIA c ON c.CIASEQ=D.DMULTICIA AND c.CIAALIAS='TUVANSA'
        WHERE D.DSEQ=? AND D.DMULTICIA=1 AND D.DEST=0 AND D.DITIPMV IN ('FA','FE')`, [id],
     );
     if (!header) return null;
@@ -213,21 +222,40 @@ export class MysqlHistoricalSalesRemissionCancellationSource implements Historic
       ),
     ]);
     if (!document || !recordedMovement) return null;
+    const layerProducts = header.automaticPeps ? [...new Set(rows.filter(({ lotId }) => lotId > 0).map(({ productId }) => productId))] : [];
+    const layers = new Map((await this.layers.layers(layerProducts)).map((layer) => [layer.id, layer]));
+    const matched = new Map<number, AdjustmentLayer>();
+    for (const row of rows) {
+      const layer = layers.get(row.lotId);
+      if (row.noLayers !== null && row.noLayers !== 1 && layer?.productId === row.productId && layer.warehouse) {
+        matched.set(row.id, layer);
+      }
+    }
     const movement: MovementDocument = {
       ...recordedMovement, header: { ...recordedMovement.header, date: String(recordedMovement.header.date) },
+      lines: recordedMovement.lines.map((line) => {
+        const layer = matched.get(line.id);
+        return layer ? { ...line, lotWarehouse: layer.warehouse, customsEntry: layer.customsEntry } : line;
+      }),
     };
     const data = document.toPrimitives();
     const invoice: InvoiceProps = {
       ...data, cfdStatus: String(header.fiscalStatus),
       currency: header.currencyId === 1 ? { ...data.currency, name: 'PESOS' } : data.currency,
-      lines: data.lines.map((line) => ({ ...line, pieces: Number(line.pieces) })),
+      lines: data.lines.map((line) => {
+        const layer = matched.get(line.id);
+        const base = { ...line, pieces: Number(line.pieces) };
+        if (!layer) return base;
+        const { id, warehouse, date, lot, customsEntry, customsOffice, number, expiresAt } = layer;
+        return { ...base, inventoryLayer: { id, warehouse, date, lot, customsEntry, customsOffice, number, expiresAt } };
+      }),
     };
     const orderIds = new Set(rows.filter((row) => row.orderNumber === header.orderNumber
       && row.orderCustomerId === header.customerId).map(({ orderId }) => orderId));
     const orderId = orderIds.size === 1 ? [...orderIds][0] ?? 0 : 0;
     const order = orderId ? (await this.orders.findById(orderId))?.toPrimitives() ?? null : null;
     const reason = blockedReason(header, ledger, invoice, movement, rows);
-    const regenerationReason = orderReason(header, rows, order);
+    const regenerationReason = orderReason(header, rows, order, invoice);
     const version = createHash('sha256').update(JSON.stringify([header, ledger, rows, invoice, movement, order])).digest('hex');
     return {
       id, number: header.number, issuedAt: header.issuedAt, customerId: header.customerId,

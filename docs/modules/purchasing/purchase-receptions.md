@@ -242,9 +242,31 @@ almacén de la partida y el pedimento de la recepción. La entrada original
 ya registró la existencia, el pasivo y la póliza. Una pieza entra en
 **Inventarios → Piezas surtidas** cuando tiene una factura vinculada.
 
+## Comentarios y Documenta
+
+| Acción | Endpoint | Procedimiento y datos |
+| --- | --- | --- |
+| Comentarios | `GET /:id/actions/comments` | Derivada de `ERECEPC#13/25 → MRECEP/85 → ERECEPC#6`. Lee `FCOMENT.COMSEQFACT = FDOC.DSEQ` y los campos del encabezado. Los títulos de comentario provienen de `FTIPMV` por el primer carácter del folio |
+| Comentarios / OK | `PATCH /:id/actions/comments` | Guarda la revisión, observaciones y campos de encabezado en PostgreSQL. La ficha presenta los datos capturados y los movimientos y las pólizas leen los datos originales del registro |
+| Documenta | `GET /:id/actions/document` | `ERECEPC#13/27 → ERECEP#100`. La ventana acepta cuatro pares de documento e importe y presenta la diferencia |
+| Documenta / OK | `POST /:id/actions/document` | Derivada de `MBASE/34,35`. Liquida el cargo original en el auxiliar con DO y genera un cargo por cada documento, para el mismo proveedor, con la fecha original y el vencimiento vigente de la ficha |
+
+En Comentarios, el formulario conserva el folio y el proveedor como campos de consulta.
+La quinta línea admite saltos de línea, incluidos los comentarios históricos con retornos de carro.
+**Cancelar** descarta el borrador. El guardado verifica la revisión antes de actualizar los campos.
+La búsqueda de folios web usa la referencia, la orden y el almacén editados.
+Las búsquedas de folios históricos consultan los datos de MySQL y su ficha muestra los cambios guardados en la web.
+
+En Documenta, TUVANSA tiene el tipo DO configurado. La ventana nativa comprobada en
+`RA09214` mostró una diferencia inicial de 1,013.03. La web requiere una recepción
+vigente en pesos con saldo completo, de uno a cuatro folios distintos con importe
+positivo y una diferencia de 0.00. La recepción original queda saldada y sus documentos
+se consultan como cargos pagables del proveedor. El traspaso corresponde a Cuentas por Pagar.
+La documentación bloquea la cancelación de la recepción.
+
 ## Botones conservados sin mutacion
 
-La vista conserva Cambia Prv, Comentarios, Etiquetas, Documenta, Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
+La vista conserva Cambia Prv, Etiquetas, Imprimir, Tiket > Factura, Traspaso y Reporte pedimento.
 
 Estas acciones secundarias se muestran con un aviso de sólo lectura.
 

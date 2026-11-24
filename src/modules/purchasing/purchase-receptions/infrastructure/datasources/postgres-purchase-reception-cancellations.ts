@@ -17,6 +17,7 @@ import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { verifyReceiptLayerStock } from './purchase-reception-peps.js';
 import { lockPurchaseReceptionPieces, receiptHasInvoicedPieces, retirePurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { purchaseReceptionDocumentationsOn } from './purchase-reception-documentation-reads.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
 const firstId = purchaseReceptionCancellationIdStart;
@@ -94,6 +95,7 @@ async function original(client: PostgresClient, companyId: number, receiptId: nu
   return {
     ...row, paymentActive: active, lastReversalDate, alreadyRecorded: cancellation?.result ?? null,
     piecesInvoiced: await receiptHasInvoicedPieces(client, companyId, receiptId),
+    documented: (await purchaseReceptionDocumentationsOn(client, { sourceIds: [receiptId] })).length > 0,
   };
 }
 
@@ -126,10 +128,11 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
 
   private async readHistorical(client: PostgresClient, companyId: number, receiptId: number) {
     if (companyId !== 1 || !this.historical) return null;
-    const [source, [saved]] = await Promise.all([
+    const [source, [saved], documentations] = await Promise.all([
       this.historical.read(receiptId), historicalReceptionCancellationsOn(client, { receiptIds: [receiptId] }),
+      purchaseReceptionDocumentationsOn(client, { sourceIds: [receiptId] }),
     ]);
-    return source ? { ...source, alreadyRecorded: saved?.result ?? null } : null;
+    return source ? { ...source, alreadyRecorded: saved?.result ?? null, documented: documentations.length > 0 } : null;
   }
 
   source(companyId: number, receiptId: number) {

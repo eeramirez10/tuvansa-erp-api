@@ -12,7 +12,10 @@ import {
 import { localPurchasePayablesSql, paymentDocumentIdSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-payables.js';
 import { supplierPaymentReversalSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
 import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
-import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import { isLocalPurchaseReceptionId } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/postgres-purchase-reception-writes.js';
+import {
+  ensurePurchaseReceptionDocumentationSchema, isLocalReceptionDocumentationDocumentId,
+} from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-documentation-reads.js';
 import type { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
   SupplierPaymentCommand, SupplierPaymentDataSource, SupplierPaymentIdentity, SupplierPaymentResult, SupplierPaymentTarget,
@@ -73,7 +76,21 @@ const migrations = [{
       ADD CONSTRAINT supplier_payments_one_document CHECK ((receipt_id IS NULL) <> (expense_id IS NULL)),
       ADD CONSTRAINT supplier_payments_expense_revision UNIQUE (expense_id,receipt_revision);
   `,
+}, {
+  id: 'supplier_payment_documentation_target',
+  sql: `
+    ALTER TABLE tuvansa.supplier_payments
+      ADD COLUMN documentation_document_id bigint REFERENCES tuvansa.purchase_reception_documentation_documents(id),
+      DROP CONSTRAINT supplier_payments_one_document,
+      ADD CONSTRAINT supplier_payments_one_document CHECK (num_nonnulls(receipt_id,expense_id,documentation_document_id)=1),
+      ADD CONSTRAINT supplier_payments_documentation_revision UNIQUE (documentation_document_id,receipt_revision);
+  `,
 }];
+
+export function supplierPaymentDocumentTable(id: number) {
+  if (isLocalReceptionDocumentationDocumentId(id)) return 'purchase_reception_documentation_documents';
+  return isLocalPurchaseExpenseDocumentId(id) ? 'purchase_expense_documents' : 'purchase_receptions';
+}
 
 const unavailable = () =>
   new ApplicationError('No fue posible consultar o registrar los pagos de proveedor.', 'SUPPLIER_PAYMENT_POSTGRES_UNAVAILABLE', 503);
@@ -126,7 +143,7 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
       `SELECT r.id::float8 AS "receiptId", r.number,
          r.received_at::text AS "receivedAt", r.cancelled, r.principal::float8 AS principal,
          r.currency_id AS "currencyId", r.exchange_rate::float8 AS "exchangeRate",
-         (CASE WHEN r.cancelled THEN 0 ELSE ${withPayments ? 'GREATEST(r.principal - p.paid,0)' : 'r.principal'} END)::float8 AS remaining,
+         (CASE WHEN r.cancelled THEN 0 ELSE greatest(r.principal-r.documented_amount-${withPayments ? 'p.paid' : '0'},0) END)::float8 AS remaining,
          ${withPayments ? 'p.revision' : '1'} AS revision,
          ${withPayments ? 'p.latest_reversal_date' : 'null::text'} AS "latestReversalDate",
          CASE WHEN r.supplier_account IS NOT NULL THEN
@@ -145,7 +162,8 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
   }
 
   target(identity: SupplierPaymentIdentity) {
-    if (!this.writable() || (!isLocalPurchaseReceptionId(identity.receiptId) && !isLocalPurchaseExpenseDocumentId(identity.receiptId))) {
+    if (!this.writable() || (!isLocalPurchaseReceptionId(identity.receiptId) && !isLocalPurchaseExpenseDocumentId(identity.receiptId)
+      && !isLocalReceptionDocumentationDocumentId(identity.receiptId))) {
       return Promise.resolve(null);
     }
     return withConnection(this.connect, async (client) => this.findTarget(client, identity, await supplierPaymentsAvailable(client)));
@@ -171,8 +189,8 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
   private async migrate() {
     const client = await this.connect();
     try {
-      await ensurePurchaseReceptionSchema(client);
       await ensurePurchaseExpenseSchema(client);
+      await ensurePurchaseReceptionDocumentationSchema(client);
       await migratePostgres(client, migrations);
     } finally { client.release(); }
   }
@@ -212,7 +230,8 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
 
     await assertActiveSupplierCatalog(client, supplierId);
     const expense = isLocalPurchaseExpenseDocumentId(receiptId);
-    const table = expense ? 'purchase_expense_documents' : 'purchase_receptions';
+    const documented = isLocalReceptionDocumentationDocumentId(receiptId);
+    const table = supplierPaymentDocumentTable(receiptId);
     // Se bloquea el documento para que dos solicitudes no usen el mismo saldo.
     await client.query(`SELECT id FROM tuvansa.${table} WHERE id=$1 AND company_id=$2 FOR UPDATE`, [receiptId, companyId]);
     const target = await this.findTarget(client, identity, true);
@@ -244,11 +263,11 @@ export class PostgresSupplierPayments implements SupplierPaymentDataSource {
       `INSERT INTO tuvansa.supplier_payments
        (id,company_id,user_id,request_key,fingerprint,receipt_id,receipt_revision,supplier_id,
         bank_account_id,bank_code,bank_name,supplier_account,supplier_account_name,amount,date,
-        mode,number,policy_number,description,result,expense_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21)`,
-      [id, companyId, userId, input.requestKey, fingerprint, expense ? null : receiptId, target.revision + 1, supplierId,
+        mode,number,policy_number,description,result,expense_id,documentation_document_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22)`,
+      [id, companyId, userId, input.requestKey, fingerprint, expense || documented ? null : receiptId, target.revision + 1, supplierId,
         bank.id, bank.code, bank.name, supplierAccount, supplierAccountName, input.amount, input.date,
-        input.mode, number, policyNumber, input.description, JSON.stringify(result), expense ? receiptId : null],
+        input.mode, number, policyNumber, input.description, JSON.stringify(result), expense ? receiptId : null, documented ? receiptId : null],
     );
     return result;
   }

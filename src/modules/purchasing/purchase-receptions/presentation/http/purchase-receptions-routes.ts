@@ -4,9 +4,12 @@ import type { ReversePurchasePosting } from '../../application/use-cases/reverse
 import { postingReversalHandlers, purchaseReceptionCancellationHandlers } from './posting-reversal-handlers.js';
 import type { PurchaseReceptionsController } from './purchase-receptions-controller.js';
 import type { PurchaseReceptionPiecesController } from './purchase-reception-pieces-controller.js';
+import type { PurchaseReceptionCommentsController } from './purchase-reception-comments-controller.js';
+import type { PurchaseReceptionDocumentationController } from './purchase-reception-documentation-controller.js';
 
 export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsController, expenses: Router,
-  reversals: ReversePurchasePosting, receiptCancellations: CancelPurchaseReception, pieces: PurchaseReceptionPiecesController): Router => {
+  reversals: ReversePurchasePosting, receiptCancellations: CancelPurchaseReception, pieces: PurchaseReceptionPiecesController,
+  comments: PurchaseReceptionCommentsController, documentation: PurchaseReceptionDocumentationController): Router => {
   const router = Router();
   const cancellation = postingReversalHandlers(reversals, 'expense');
   const cancelReceipt = purchaseReceptionCancellationHandlers(receiptCancellations);
@@ -19,6 +22,10 @@ export const createPurchaseReceptionsRouter = (controller: PurchaseReceptionsCon
   router.get('/:purchaseReceptionId/next', controller.next);
   router.get('/:purchaseReceptionId/actions/auxiliary', controller.panel('auxiliary'));
   router.get('/:purchaseReceptionId/actions/classifications', controller.panel('classifications'));
+  router.get('/:purchaseReceptionId/actions/comments', comments.get);
+  router.patch('/:purchaseReceptionId/actions/comments', comments.save);
+  router.get('/:purchaseReceptionId/actions/document', documentation.preview);
+  router.post('/:purchaseReceptionId/actions/document', documentation.save);
   router.get('/:purchaseReceptionId/actions/pedimento', controller.panel('pedimento'));
   router.get('/:purchaseReceptionId/actions/pieces', controller.panel('pieces'));
   router.get('/:purchaseReceptionId/actions/pieces/lines/:lineId', pieces.prepare);

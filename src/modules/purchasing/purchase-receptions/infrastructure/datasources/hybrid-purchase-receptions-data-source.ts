@@ -12,15 +12,24 @@ import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.j
 import { paymentDocumentIdSql } from './postgres-purchase-payables.js';
 import { readLocalReceptionView, type LocalReceptionViewRecord } from './local-purchase-reception-view.js';
 import { readHistoricalReceptionCancellations } from './historical-purchase-reception-cancellation-reads.js';
+import {
+  readPurchaseReceptionDocumentations, type PurchaseReceptionDocumentationRecord,
+} from './purchase-reception-documentation-reads.js';
 import { supplierPaymentReversalSql, type PurchasePostingReversalReference } from './purchase-posting-reversal-reads.js';
 import { supplierPaymentReversalsAvailable } from './purchase-posting-reversal-tables.js';
 import { withReceiptPieceLines, withReceiptPieces } from './purchase-reception-piece-reads.js';
+import { purchaseReceptionCommentsAvailable, withReceiptComments } from './postgres-purchase-reception-comments.js';
 
 const reception = 'reception';
 const empty = { items: [], total: 0 };
 const money = (value: number) => Number(value.toFixed(2));
 const isLocalDocument = (id: number) => isLocalPurchaseReceptionId(id) || isLocalPurchaseExpenseDocumentId(id);
 const isHistoricalRA = (number: string) => /^RA\d/.test(number);
+
+const documentationMovement = ({ id, sourceId, sourceNumber, date, amount }: PurchaseReceptionDocumentationRecord) => ({
+  id, date, transactionType: 'DO', reference: '', relatedDocumentId: sourceId, relatedDocument: sourceNumber,
+  charges: 0, payments: amount, signedAmount: -amount, policyId: null, policyNumber: '',
+});
 
 export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDataSource {
   constructor(private readonly legacy: LegacyMysqlPurchaseReceptionsDataSource) {}
@@ -51,16 +60,19 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
 
   private async localDetail(receipt: PurchaseReceptionProps) {
     const document = /^RW\d/.test(receipt.number) ? await withReceiptPieceLines(receipt) : receipt;
-    return (await this.withBalances([PurchaseReception.create(document)]))[0]!;
+    return (await this.withBalances([PurchaseReception.create(await withReceiptComments(document))]))[0]!;
   }
 
   private async withHistoricalCancellations(items: PurchaseReception[]) {
     if (!postgresConfigured() || !items.length) return items;
     const receipts = items.map((item) => item.toPrimitives());
-    const cancellationRows = await readHistoricalReceptionCancellations({
-      receiptIds: receipts.filter(({ number }) => isHistoricalRA(number)).map(({ id }) => id),
-    });
+    const receiptIds = receipts.filter(({ number }) => isHistoricalRA(number)).map(({ id }) => id);
+    const [cancellationRows, documentationRows] = await Promise.all([
+      readHistoricalReceptionCancellations({ receiptIds }),
+      readPurchaseReceptionDocumentations({ sourceIds: receiptIds }),
+    ]);
     const cancellations = new Map(cancellationRows.map(({ receiptId, result }) => [receiptId, result]));
+    const documented = new Set(documentationRows.map(({ sourceId }) => sourceId));
     return items.map((item, index) => {
       const receipt = receipts[index]!;
       if (!isHistoricalRA(receipt.number)) return item;
@@ -68,7 +80,10 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       return PurchaseReception.create(cancellation ? {
         ...receipt, cancellationAvailable: true, cancelled: true, status: 'C', cancellation,
         totals: { ...receipt.totals, balance: 0 },
-      } : { ...receipt, cancellationAvailable: true });
+      } : {
+        ...receipt, cancellationAvailable: true,
+        totals: documented.has(receipt.id) ? { ...receipt.totals, balance: 0 } : receipt.totals,
+      });
     });
   }
 
@@ -76,7 +91,8 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     if (!receipt) return null;
     const [item] = await this.withHistoricalCancellations([receipt]);
     const document = item!.toPrimitives();
-    return isHistoricalRA(document.number) ? PurchaseReception.create(await withReceiptPieceLines(document)) : item!;
+    const withPieces = isHistoricalRA(document.number) ? await withReceiptPieceLines(document) : document;
+    return PurchaseReception.create(await withReceiptComments(withPieces));
   }
 
   private async withBalances(items: PurchaseReception[]) {
@@ -137,8 +153,16 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
     const where = conditions.join(' AND ');
     const orderBy = parameters.length ? 'number,id' : 'id DESC';
     return readLocalReceptionView<PurchaseReceptionSearchResult>(empty, false, async (client, view) => {
+      const documents = await purchaseReceptionCommentsAvailable(client) ? `
+        SELECT d.id,d.company_id,d.number,COALESCE(c.fields->>'orderNumber',d.order_number) AS order_number,
+          d.reception || jsonb_strip_nulls(jsonb_build_object(
+            'orderNumber',c.fields->>'orderNumber','supplierReference',c.fields->>'supplierReference','warehouse',c.fields->>'warehouse'
+          )) AS reception
+        FROM (${view}) d LEFT JOIN tuvansa.purchase_reception_comments c
+          ON c.company_id=d.company_id AND c.receipt_id=d.id AND c.receipt_number=d.number
+          AND c.supplier_id=(d.reception#>>'{supplier,id}')::bigint` : view;
       const { rows: [row] } = await client.query<{ total: string; results: PurchaseReceptionSaveResultRow[] }>(
-        `WITH documents AS (${view})
+        `WITH documents AS (${documents})
          SELECT (SELECT count(*) FROM documents WHERE ${where}) AS total,
           ARRAY(SELECT ${reception} - 'lines' FROM documents WHERE ${where}
              ORDER BY ${orderBy} OFFSET $${parameters.length + 1} LIMIT $${parameters.length + 2}) AS results`,
@@ -174,8 +198,14 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       const panel = await this.legacy.getPanel(id, key);
       if (panel && key === 'pieces') return withReceiptPieces(panel);
       if (!panel || key !== 'auxiliary' || !isHistoricalRA(panel.purchaseReception.number)) return panel;
-      const [cancellation] = await readHistoricalReceptionCancellations({ receiptIds: [id] });
-      if (!cancellation) return panel;
+      const [[cancellation], [documentation]] = await Promise.all([
+        readHistoricalReceptionCancellations({ receiptIds: [id] }),
+        readPurchaseReceptionDocumentations({ sourceIds: [id] }),
+      ]);
+      if (!cancellation) return documentation ? {
+        ...panel, source: 'postgres', items: [...panel.items, documentationMovement(documentation)],
+        summary: { ...panel.summary, total: money(Number(panel.summary?.total ?? 0) - documentation.amount) },
+      } : panel;
       const { result, amount, number } = cancellation;
       const movement = {
         id: result.id, date: result.date, transactionType: 'K', reference: result.reason,
@@ -204,7 +234,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       };
     }
     const amount = local.principal ?? 0;
-    const payments = await readSupplierPayments([], async (client) => {
+    const [payments, [documentation]] = await Promise.all([readSupplierPayments([], async (client) => {
       const reversal = supplierPaymentReversalSql(await supplierPaymentReversalsAvailable(client));
       const { rows } = await client.query<{
         id: number; date: string; number: string; amount: number; policyNumber: string;
@@ -227,7 +257,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
           policyNumber: row.reversal.policyNumber, policyId: row.reversal.id,
         }] : [original];
       });
-    });
+    }), readPurchaseReceptionDocumentations({ sourceIds: [id] })]);
     const charge = local.principal !== null ? [{
       id, date: dates.receivedAt, transactionType: local.movementType, reference: orderNumber || supplierReference,
       relatedDocumentId: id, charges: amount, payments: 0, signedAmount: amount, relatedDocument: number,
@@ -238,7 +268,7 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       relatedDocumentId: id, charges: 0, payments: amount, signedAmount: -amount, relatedDocument: number,
       policyNumber: cancellation.policyNumber, policyId: cancellation.id,
     }] : [];
-    const items = [...charge, ...payments, ...cancelled]
+    const items = [...charge, ...payments, ...cancelled, ...(documentation ? [documentationMovement(documentation)] : [])]
       .sort((left, right) => (left.date ?? '').localeCompare(right.date ?? '')
         || Number(right.id === id) - Number(left.id === id) || left.id - right.id);
     return {

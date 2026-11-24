@@ -17,9 +17,9 @@ export async function purchaseReceptionSupplierBalances(supplierIds: number[]): 
     const paid = hasPayments ? `coalesce((SELECT ${reversal.paid}
       FROM tuvansa.supplier_payments AS payment ${reversal.join} ${paymentScope}), 0)` : '0';
     const { rows } = await client.query<{ supplierId: number; balance: number }>(
-      `SELECT receipt.supplier_id::float8 AS "supplierId",sum(receipt.principal - ${paid})::float8 AS balance
+      `SELECT receipt.supplier_id::float8 AS "supplierId",sum(receipt.principal - receipt.documented_amount - ${paid})::float8 AS balance
        FROM (${source}) AS receipt
-       WHERE receipt.company_id=1 AND receipt.principal>0 AND NOT receipt.cancelled
+       WHERE receipt.company_id=1 AND (receipt.principal>0 OR receipt.historical_documentation) AND NOT receipt.cancelled
          AND receipt.supplier_id=ANY($1::bigint[])
        GROUP BY receipt.supplier_id`, [supplierIds],
     );
@@ -63,6 +63,15 @@ export interface SupplierPurchaseReceptionCharge {
   days: number;
   createdAt: string;
   cancellation: PurchasePostingReversalReference | null;
+  documentation: {
+    id: number;
+    sourceId: number;
+    amount: number;
+    date: string;
+    userId: number;
+    createdAt: string;
+  } | null;
+  historicalDocumentation: boolean;
 }
 
 export async function purchaseReceptionSupplierCharges(supplierId: number): Promise<SupplierPurchaseReceptionCharge[]> {
@@ -86,11 +95,11 @@ export async function purchaseReceptionSupplierCharges(supplierId: number): Prom
               receipt.principal::float8 AS principal,receipt.currency_id AS "currencyId",
               receipt.exchange_rate::float8 AS "exchangeRate",receipt.policy_number AS "policyNumber",
               receipt.policy_id::float8 AS "policyId",
-              (CASE WHEN receipt.cancelled THEN 0 ELSE receipt.principal - ${paid} END)::float8 AS remaining,
-              receipt.cancellation,
+              (CASE WHEN receipt.cancelled THEN 0 ELSE receipt.principal-receipt.documented_amount-${paid} END)::float8 AS remaining,
+              receipt.cancellation,receipt.documentation,receipt.historical_documentation AS "historicalDocumentation",
               ${items} AS payments,coalesce(CURRENT_DATE - receipt.due_at,0) AS days,receipt.created_at::text AS "createdAt"
        FROM (${source}) AS receipt ${join}
-       WHERE receipt.company_id=1 AND receipt.principal>0
+       WHERE receipt.company_id=1 AND (receipt.principal>0 OR receipt.historical_documentation)
          AND (NOT receipt.cancelled OR receipt.cancellation IS NOT NULL) AND receipt.supplier_id=$1
        ORDER BY receipt.id`, [supplierId],
     );

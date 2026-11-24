@@ -16,6 +16,7 @@ const block = (reason: string) => new ConflictError(reason, 'PURCHASE_RECEPTION_
 const invalidDate = (reason: string) => new ApplicationError(reason, 'PURCHASE_RECEPTION_CANCELLATION_INVALID_DATE', 422);
 
 function blockedSource(source: ReceiptCancellationSource) {
+  if (source.documented) return 'La recepción está documentada y ya generó otros documentos por pagar.';
   if (source.piecesInvoiced) return 'Hay piezas de la recepción que ya se utilizaron en una factura.';
   const { header, lines } = source.movement;
   if (source.alreadyRecorded || source.receipt.cancelled) return 'La recepción ya fue cancelada.';

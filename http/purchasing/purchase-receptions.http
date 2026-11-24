@@ -49,6 +49,36 @@ GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/a
 ### Accion: Clasificar
 GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/classifications
 
+### Comentarios y revisión para la edición
+GET {{baseUrl}}/purchasing/purchase-receptions/{{purchaseReceptionId}}/actions/comments
+
+### Guardar comentarios de una recepción temporal con fields y revision del GET
+PATCH {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/comments
+Content-Type: application/json
+
+{
+  "revision": "{{version}}",
+  "fields": {
+    "dueAt": null, "supplierReference": "REFERENCIA-PRUEBA", "department": "01", "orderNumber": "OW00000001",
+    "transportCode": "", "processDate": null, "otherLabel": "", "boxes": 0, "volume": 0,
+    "folio": "", "folioAt": null, "lines": ["", "", "", "", "Observación de prueba\nSegunda línea"],
+    "amountInWords": "", "warehouse": "01"
+  }
+}
+
+### Consultar elegibilidad para Documenta y copiar amount y revision del GET
+GET {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/document
+
+### Documentar una recepción temporal de 100.00 en dos cargos
+POST {{baseUrl}}/purchasing/purchase-receptions/{{receptionId}}/actions/document
+Content-Type: application/json
+
+{
+  "requestKey": "{{requestKey}}",
+  "revision": "{{version}}",
+  "documents": [{ "number": "PRUEBA-DO-1", "amount": 40 }, { "number": "PRUEBA-DO-2", "amount": 60 }]
+}
+
 ### Pedimento de una recepción existente y sus cargos vinculados
 GET {{baseUrl}}/purchasing/purchase-receptions/341534/actions/pedimento
 

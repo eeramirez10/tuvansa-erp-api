@@ -44,7 +44,12 @@ function paymentRow(charge: SupplierPurchaseReceptionCharge, payment: SupplierPu
 function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
   return charges.flatMap((charge) => {
     const original = movementRow(charge);
-    const movements = [{ createdAt: charge.createdAt, row: original }];
+    const movements = charge.historicalDocumentation ? [] : [{ createdAt: charge.createdAt, row: original }];
+    const documentation = charge.documentation;
+    if (documentation) movements.push({ createdAt: documentation.createdAt, row: {
+      ...original, id: documentation.id, date: documentation.date, amount: -documentation.amount,
+      movementType: 'DO', policy: '', policyId: null, userId: documentation.userId, paymentReference: '',
+    } });
     for (const payment of charge.payments) {
       movements.push({ createdAt: payment.createdAt, row: paymentRow(charge, payment) });
       const reversal = payment.reversal;
@@ -114,11 +119,15 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
 
     const open = charges.filter(({ remaining }) => remaining > 0).map(balanceRow);
     const canceledIds = new Set(historical.map(({ receiptId }) => receiptId));
+    for (const charge of charges) {
+      if (charge.historicalDocumentation && charge.documentation) canceledIds.add(charge.documentation.sourceId);
+    }
     const visible = result.items.filter(({ id }) => !canceledIds.has(Number(id)));
     const removed = result.items.filter(({ id }) => canceledIds.has(Number(id)));
     const summary = {
       ...result.summary,
-      amount: money(Number(result.summary?.amount ?? 0) + balance - removed.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)),
+      amount: money(Number(result.summary?.amount ?? 0) + open.reduce((sum, row) => sum + row.amount, 0)
+        - removed.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)),
       originalAmount: money(Number(result.summary?.originalAmount ?? 0) + open.reduce((total, row) => total + row.originalAmount, 0)
         - removed.reduce((sum, row) => sum + Number(row.originalAmount ?? 0), 0)),
     };

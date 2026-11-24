@@ -5,7 +5,9 @@ import {
   connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory,
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
-import { isLocalSupplierPaymentId, supplierPaymentsAvailable } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
+import {
+  isLocalSupplierPaymentId, supplierPaymentDocumentTable, supplierPaymentsAvailable,
+} from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { bankReconciliationsAvailable, bankReconciliationState } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import type {
   PostingReversalCommand, PostingReversalDataSource, PostingReversalDocument, PostingReversalReconciliation, PostingReversalResult,
@@ -101,7 +103,7 @@ async function paymentSnapshot(client: PostgresClient, companyId: number,
   if (!payment) return null;
   const { documentId, bankAccountId, separateAccounts, ...header } = payment;
   if (lock) {
-    const table = isLocalPurchaseExpenseDocumentId(documentId) ? 'purchase_expense_documents' : 'purchase_receptions';
+    const table = supplierPaymentDocumentTable(documentId);
     await client.query(`SELECT id FROM tuvansa.${table} WHERE id=$1 AND company_id=$2 FOR UPDATE`, [documentId, companyId]);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:'||$1::text||':'||$2::text,0))", [companyId, bankAccountId]);
   }

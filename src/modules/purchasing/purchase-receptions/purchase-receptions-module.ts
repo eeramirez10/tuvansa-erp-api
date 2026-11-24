@@ -9,6 +9,8 @@ import { GetPurchaseReceptionByNumber } from './application/use-cases/get-purcha
 import { GetPurchaseReceptionPanel } from './application/use-cases/get-purchase-reception-panel.js';
 import { GetPurchaseReception } from './application/use-cases/get-purchase-reception.js';
 import { ManagePurchaseReceptionPieces } from './application/use-cases/manage-purchase-reception-pieces.js';
+import { ManagePurchaseReceptionComments } from './application/use-cases/manage-purchase-reception-comments.js';
+import { ManagePurchaseReceptionDocumentation } from './application/use-cases/manage-purchase-reception-documentation.js';
 import { NavigatePurchaseReception } from './application/use-cases/navigate-purchase-reception.js';
 import { ReversePurchasePosting } from './application/use-cases/reverse-purchase-posting.js';
 import { SearchPurchaseReceptions } from './application/use-cases/search-purchase-receptions.js';
@@ -18,16 +20,21 @@ import { MysqlHistoricalReceptionCancellationSource } from './infrastructure/dat
 import { MysqlPostingReversalReferences } from './infrastructure/datasources/mysql-posting-reversal-references.js';
 import { MysqlPurchaseExpenseReferences } from './infrastructure/datasources/mysql-purchase-expense-references.js';
 import { MysqlPurchaseReceptionPieceNativeSource } from './infrastructure/datasources/mysql-purchase-reception-piece-native-source.js';
+import { MysqlPurchaseReceptionCommentsSource } from './infrastructure/datasources/mysql-purchase-reception-comments-source.js';
 import { MysqlPurchaseReceptionWriteReferences } from './infrastructure/datasources/mysql-purchase-reception-write-references.js';
 import { PostgresPurchaseReceptionWrites } from './infrastructure/datasources/postgres-purchase-reception-writes.js';
 import { PostgresPurchaseReceptionCancellations } from './infrastructure/datasources/postgres-purchase-reception-cancellations.js';
 import { PostgresPurchaseReceptionPieces } from './infrastructure/datasources/postgres-purchase-reception-pieces.js';
+import { PostgresPurchaseReceptionComments } from './infrastructure/datasources/postgres-purchase-reception-comments.js';
+import { PostgresPurchaseReceptionDocumentations } from './infrastructure/datasources/postgres-purchase-reception-documentations.js';
 import { PostgresPurchaseExpenses } from './infrastructure/datasources/postgres-purchase-expenses.js';
 import { PostgresPurchasePostingReversals } from './infrastructure/datasources/postgres-purchase-posting-reversals.js';
 import { PurchaseReceptionsRepositoryImpl } from './infrastructure/repositories/purchase-receptions-repository-impl.js';
 import { PurchaseReceptionsController } from './presentation/http/purchase-receptions-controller.js';
 import { createPurchaseExpenseRouter } from './presentation/http/purchase-expense-routes.js';
 import { PurchaseReceptionPiecesController } from './presentation/http/purchase-reception-pieces-controller.js';
+import { PurchaseReceptionCommentsController } from './presentation/http/purchase-reception-comments-controller.js';
+import { PurchaseReceptionDocumentationController } from './presentation/http/purchase-reception-documentation-controller.js';
 import { createPurchaseReceptionsRouter } from './presentation/http/purchase-receptions-routes.js';
 
 export const createPurchaseReceptionsModule = (): Router => {
@@ -57,5 +64,11 @@ export const createPurchaseReceptionsModule = (): Router => {
   const pieces = new PurchaseReceptionPiecesController(
     new ManagePurchaseReceptionPieces(new PostgresPurchaseReceptionPieces(nativePieces)),
   );
-  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces);
+  const comments = new PurchaseReceptionCommentsController(
+    new ManagePurchaseReceptionComments(new PostgresPurchaseReceptionComments(new MysqlPurchaseReceptionCommentsSource())),
+  );
+  const documentation = new PurchaseReceptionDocumentationController(
+    new ManagePurchaseReceptionDocumentation(new PostgresPurchaseReceptionDocumentations()),
+  );
+  return createPurchaseReceptionsRouter(controller, createPurchaseExpenseRouter(expenses), reversals, receiptCancellations, pieces, comments, documentation);
 };

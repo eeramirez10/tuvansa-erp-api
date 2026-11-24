@@ -7,8 +7,13 @@ import { migratePostgres } from '../../../../../shared/infrastructure/datasource
 import { assertWarehouseStock, lockWarehouseStock, readLegacySaleStock, scaledStock, type SaleStockRequest } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import { catalogOtherData, catalogProductsById } from '../../../products/infrastructure/datasources/product-catalog-references.js';
 import type { MovementCancellationDataSource } from '../../domain/datasources/movements-data-source.js';
-import type { MovementDocument } from '../../domain/entities/inventory-movement.js';
+import type { MovementDocument, MovementLine } from '../../domain/entities/inventory-movement.js';
 import type { InventoryAdjustmentInput, InventoryAdjustmentsRepository } from '../../domain/repositories/inventory-adjustments-repository.js';
+import {
+  createAdjustmentLayer, currentAdjustmentLayers, inactivePepsOrder, insufficientLayer, inventoryAdjustmentDbUnavailable as dbUnavailable,
+  inventoryLayerMigration, lockPepsProducts, nextPepsOrder, readLocalInventoryAdjustments, scaledLayerStock,
+  writeAdjustmentLayerStock, type AdjustmentLayer,
+} from './inventory-adjustment-layers.js';
 import { MysqlInventoryAdjustmentReferences, type AdjustmentProduct } from './mysql-inventory-adjustment-references.js';
 
 const idStart = 7950000000000;
@@ -38,31 +43,14 @@ const migrations = [{ id: 'inventory_adjustment_capture', sql: `
     PRIMARY KEY(adjustment_id,product_id,warehouse,reversal)
   );
   CREATE INDEX inventory_adjustment_stock_product ON tuvansa.inventory_adjustment_stock(product_id,warehouse);
-` }];
+` }, inventoryLayerMigration];
 
-const dbUnavailable = () => new ApplicationError(
-  'No fue posible acceder a los movimientos locales en PostgreSQL.', 'INVENTORY_ADJUSTMENT_POSTGRES_UNAVAILABLE', 503,
-);
+export { readLocalInventoryAdjustments };
 const unsupported = (message: string) => new ApplicationError(message, 'INVENTORY_ADJUSTMENT_UNSUPPORTED', 422);
 const duplicateDocument = () => new ConflictError('El folio ya existe.', 'INVENTORY_ADJUSTMENT_DOCUMENT_EXISTS');
 const insufficient = (warehouse: string, product: number) => new ConflictError(
   `Existencia disponible insuficiente para el producto ${product} en el almacén ${warehouse}.`, 'INVENTORY_ADJUSTMENT_STOCK_INSUFFICIENT',
 );
-
-export async function readLocalInventoryAdjustments<T>(fallback: T, read: (client: PostgresClient) => Promise<T>): Promise<T> {
-  if (!postgresConfigured()) return fallback;
-  let client: PostgresClient | undefined;
-  try {
-    client = await connectPostgres();
-    const { rows: [table] } = await client.query<{ available: boolean }>(
-      "SELECT to_regclass('tuvansa.inventory_adjustments') IS NOT NULL AS available",
-    );
-    return table?.available ? await read(client) : fallback;
-  } catch (error) {
-    if (error instanceof ApplicationError) throw error;
-    throw dbUnavailable();
-  } finally { client?.release(); }
-}
 
 async function loadCatalogProducts(client: PostgresClient, ids: number[], source: Map<number, AdjustmentProduct>) {
   const products = await catalogProductsById(ids, client);
@@ -75,14 +63,20 @@ async function loadCatalogProducts(client: PostgresClient, ids: number[], source
     const simpleType = classification.type === 'rawMaterial' || classification.type === 'finishedProduct'
       || (legacy !== undefined && classification.type === 'assembly');
     const plainStock = legacy ? legacy.simple && options?.noInventoryLayer !== false : options?.noInventoryLayer === true;
-    const specialStock = options?.controlsPieces || options?.tariff || options?.tariffPercentage || options?.customsEntry;
+    const specialStock = options?.controlsPieces || options?.tariff || options?.tariffPercentage;
     const missingLayerSetting = legacy === undefined && !plainStock;
     source.set(id, {
       id, code, description, unit: classification.unit.code,
       cost: (typeof options?.list5 === 'number' ? options.list5 : prices.costs.last) + prices.costs.adValorem,
       transferCost: (typeof options?.list4 === 'number' ? options.list4 : prices.costs.average) + prices.costs.adValorem,
       active: document.isActive && !deleted && (legacy?.active ?? true),
-      simple: simpleType && !classification.usesColorAndSize && plainStock && !specialStock,
+      simple: simpleType && !classification.usesColorAndSize && plainStock && !specialStock && !options?.customsEntry,
+      peps: Boolean(legacy?.peps && simpleType && !classification.usesColorAndSize && options?.noInventoryLayer !== true && !specialStock),
+      layerCost: typeof options?.list5 === 'number' ? options.list5 : prices.costs.last,
+      adValorem: prices.costs.adValorem,
+      customsEntry: typeof options?.customsEntry === 'string' ? options.customsEntry : legacy?.customsEntry ?? '',
+      customsOffice: typeof options?.customsOffice === 'string' ? options.customsOffice : legacy?.customsOffice ?? '',
+      importDate: typeof options?.importDate === 'string' || options?.importDate === null ? options.importDate : legacy?.importDate ?? null,
       ...(missingLayerSetting ? { incompatibility: `Activa No manejar capa en Otros para capturar movimientos del producto ${code}.` } : {}),
       legacyOnHand: Number(legacy?.legacyOnHand ?? 0), legacyAssigned: Number(legacy?.legacyAssigned ?? 0),
     });
@@ -116,6 +110,47 @@ const movementCost = (lines: Pick<MovementDocument['lines'][number], 'quantity' 
   if (cents > BigInt(Number.MAX_SAFE_INTEGER)) throw unsupported('El importe total del movimiento excede el rango admitido.');
   return sign * Number(cents) / 100;
 };
+
+function adjustmentCost(value: number, product: AdjustmentProduct) {
+  const rounded = Number(Number(value).toFixed(4));
+  if (!Number.isFinite(rounded) || rounded < 0 || rounded > 999999999.9999) {
+    throw unsupported(`El costo del producto ${product.code} no es válido.`);
+  }
+  return rounded;
+}
+
+type CaptureLine = Omit<MovementLine, 'id'>;
+
+function allocatePepsExit(
+  line: CaptureLine, product: AdjustmentProduct, layers: AdjustmentLayer[], queueChanges: Map<number, number>,
+): CaptureLine[] {
+  let remaining = -line.quantity;
+  const allocated: CaptureLine[] = [];
+  for (const layer of layers) {
+    if (remaining === 0) break;
+    if (layer.available <= 0) continue;
+    const quantity = Math.min(remaining, layer.available);
+    if (scaledStock(quantity) !== quantity) throw unsupported(
+      `La capa ${layer.id} de ${product.code} requiere una conciliación de unidades antes de registrar la salida.`,
+    );
+    allocated.push({ ...line, quantity: -quantity, lotId: layer.id, lotWarehouse: layer.warehouse });
+    layer.available = scaledLayerStock(layer.available - quantity);
+    if (layer.available === 0) queueChanges.set(layer.id, inactivePepsOrder);
+    remaining = scaledStock(remaining - quantity);
+  }
+  if (remaining > 0) throw insufficientLayer(product.code, line.warehouse);
+  return allocated;
+}
+
+function groupPepsLayers(layers: AdjustmentLayer[]) {
+  const byProduct = new Map<number, AdjustmentLayer[]>();
+  for (const layer of layers.sort((a, b) => a.layerOrder - b.layerOrder || a.id - b.id)) {
+    const group = byProduct.get(layer.productId) ?? [];
+    group.push(layer);
+    byProduct.set(layer.productId, group);
+  }
+  return byProduct;
+}
 
 async function writeDeltas(client: PostgresClient, movement: MovementDocument, reversal: boolean) {
   const stock = byWarehouse(movement.lines).flatMap(({ warehouse, deltas }) =>
@@ -203,21 +238,24 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         await lockWarehouseStock(client, code, productIds);
       }
       const products = await loadCatalogProducts(client, productIds, await this.references.products(warehouse, productIds));
+      const layered = new Set(productIds.filter((id) => capture.automaticPeps && type !== 'TR' && products.get(id)?.peps));
+      await lockPepsProducts(client, [...layered]);
       const sourceLines = lines.map(({ productId, quantity, cost }) => {
         const product = products.get(productId);
         if (!product) throw new NotFoundError('Producto de inventario');
         if (!product.active) throw unsupported(`El producto ${product.code} está inactivo.`);
-        if (!product.simple || !product.unit.trim()) throw unsupported(
+        if ((!product.simple && !layered.has(productId)) || !product.unit.trim()) throw unsupported(
           product.incompatibility ?? `El producto ${product.code} requiere un flujo especial de inventario o una unidad base.`,
         );
         if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 999999999.999 || scaledStock(quantity) !== quantity) {
           throw unsupported(`La cantidad del producto ${product.code} no es válida.`);
         }
-        const defaultCost = destinationWarehouse ? product.transferCost : product.cost;
-        const unitCost = Number((cost ?? Number(defaultCost)).toFixed(4));
-        if (!Number.isFinite(unitCost) || unitCost < 0 || unitCost > 999999999.9999) {
-          throw unsupported(`El costo del producto ${product.code} no es válido.`);
+        // MCPAR03/33 y /37. La compañía descarga por PEPS y registra el costo promedio de catálogo en FAXINV.
+        const defaultCost = destinationWarehouse || (type === 'SI' && layered.has(productId)) ? product.transferCost : product.cost;
+        if (type === 'SI' && layered.has(productId) && cost !== undefined) {
+          throw unsupported(`Deja vacío el costo de ${product.code}. La salida toma el costo que corresponde a PEPS.`);
         }
+        const unitCost = adjustmentCost(cost ?? defaultCost, product);
         return {
           productId, productCode: product.code, description: product.description, quantity: quantity * (destinationWarehouse ? -1 : movement.sign),
           unit: product.unit, cost: unitCost, warehouse, type, lotId: 0, pieces: 0, piecesText: '', userId: 0,
@@ -230,9 +268,6 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         });
         await assertWarehouseStock(client, warehouse, requests, (product) => insufficient(warehouse, product), null, false);
       }
-      const signedLines = destinationWarehouse ? sourceLines.flatMap((line) => [line,
-        { ...line, quantity: -line.quantity, warehouse: destinationWarehouse }]) : sourceLines;
-
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.inventory_adjustment_ids') AS id");
       const id = Number(allocation!.id);
       const number = document ?? `${type}W${String(id - idStart + 1).padStart(8, '0')}`;
@@ -242,6 +277,12 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       );
       if (exists || await this.references.documentExists(number)) throw duplicateDocument();
 
+      const queueChanges = new Map<number, number>();
+      const postedLines = layered.size
+        ? await this.postPepsLayers(client, sourceLines, layered, products, warehouse, number, type === 'EI', queueChanges)
+        : sourceLines;
+      const signedLines = destinationWarehouse ? postedLines.flatMap((line) => [line,
+        { ...line, quantity: -line.quantity, warehouse: destinationWarehouse }]) : postedLines;
       const { rows: ids } = await client.query<{ id: string }>(
         "SELECT nextval('tuvansa.inventory_adjustment_line_ids') AS id FROM generate_series(1,$1::int)", [signedLines.length],
       );
@@ -254,7 +295,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         lines: signedLines.map((line, index) => ({ ...line, id: Number(ids[index]!.id) })),
         totals: {
           quantity: scaledStock(signedLines.reduce((sum, line) => sum + line.quantity, 0)),
-          cost: movementCost(sourceLines, movement.sign),
+          cost: movementCost(postedLines, movement.sign),
         },
       };
       await client.query(
@@ -262,8 +303,41 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
          VALUES($1,$2,$3,$4,$5::jsonb,$5::jsonb)`, [id, number, requestKey, fingerprint, JSON.stringify(saved)],
       );
       await writeDeltas(client, saved, false);
+      await writeAdjustmentLayerStock(client, saved, false, queueChanges);
       return saved;
     });
+  }
+
+  private async postPepsLayers(
+    client: PostgresClient, lines: CaptureLine[], layered: Set<number>, products: Map<number, AdjustmentProduct>,
+    warehouse: string, document: string, isEntry: boolean, queueChanges: Map<number, number>,
+  ) {
+    const ids = [...layered];
+    const layers = groupPepsLayers(await currentAdjustmentLayers(client, ids, await this.references.layers(ids)));
+    const result: CaptureLine[] = [];
+    const newOrders = new Map<number, number>();
+    for (const line of lines) {
+      if (!layered.has(line.productId)) {
+        result.push(line);
+        continue;
+      }
+      const product = products.get(line.productId)!;
+      const queue = layers.get(line.productId) ?? [];
+      if (!isEntry) {
+        result.push(...allocatePepsExit(line, product, queue, queueChanges));
+        continue;
+      }
+      // MCPAR03/28 y /51. Con el encabezado de pedimento vacío, la capa toma los datos de FINV.
+      const layerOrder = newOrders.get(product.id) ?? nextPepsOrder(queue);
+      newOrders.set(product.id, Math.min(layerOrder + 1, 9999));
+      const lotId = await createAdjustmentLayer(client, {
+        productId: product.id, warehouse, date: product.importDate ?? null, document, initial: line.quantity,
+        cost: adjustmentCost(product.layerCost!, product), adValorem: adjustmentCost(product.adValorem!, product),
+        customsEntry: product.customsEntry ?? '', customsOffice: product.customsOffice ?? '', layerOrder,
+      });
+      result.push({ ...line, lotId });
+    }
+    return result;
   }
 
   async canCancel(document: MovementDocument): Promise<string | null> {
@@ -281,6 +355,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
     const grouped = byWarehouse(movement.lines);
     if (lock) {
       for (const { warehouse, deltas } of grouped) await lockWarehouseStock(client, warehouse, [...deltas.keys()]);
+      await lockPepsProducts(client, movement.lines.filter(({ lotId }) => lotId > 0).map(({ productId }) => productId));
     }
     for (const { warehouse, deltas } of grouped) {
       const outgoing = [...deltas].filter(([, quantity]) => quantity > 0);
@@ -291,7 +366,42 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         productId, quantity, legacyOnHand: Number(stock.get(productId)?.onHand ?? 0), legacyAssigned: Number(stock.get(productId)?.assigned ?? 0),
       }));
       await assertWarehouseStock(client, warehouse, requests, (product) => insufficient(warehouse, product), null, false);
+      const affected = movement.lines.filter((line) => line.warehouse === warehouse && line.quantity > 0 && line.lotId);
+      if (affected.length) {
+        const productIds = [...new Set(affected.map(({ productId }) => productId))];
+        const local = await currentAdjustmentLayers(client, productIds, []);
+        const available = new Map(local.map((layer) => [layer.id, layer.available]));
+        for (const { lotId, quantity, productCode } of affected) {
+          if (quantity > (available.get(lotId) ?? 0)) throw insufficientLayer(productCode, warehouse);
+        }
+      }
     }
+  }
+
+  private async pepsCancellationOrder(client: PostgresClient, movement: MovementDocument) {
+    const tracked = movement.lines.filter(({ lotId }) => lotId > 0);
+    const queueChanges = new Map<number, number>();
+    if (!tracked.length) return queueChanges;
+
+    const ids = [...new Set(tracked.map(({ productId }) => productId))];
+    const byProduct = groupPepsLayers(await currentAdjustmentLayers(client, ids, await this.references.layers(ids)));
+    for (const line of tracked) {
+      const queue = byProduct.get(line.productId) ?? [];
+      const layer = queue.find(({ id }) => id === line.lotId);
+      if (!layer || layer.warehouse !== (line.lotWarehouse ?? line.warehouse)) {
+        throw new ConflictError(`La capa ${line.lotId} de ${line.productCode} ya no está disponible.`, 'INVENTORY_ADJUSTMENT_LAYER_MISSING');
+      }
+      layer.available = scaledLayerStock(layer.available - line.quantity);
+      if (layer.available <= 0) {
+        layer.layerOrder = inactivePepsOrder;
+        queueChanges.set(layer.id, layer.layerOrder);
+      } else if (layer.layerOrder === inactivePepsOrder) {
+        // MCPAR03/35. Volver a abrir una capa agotada la coloca detrás de las que siguen vigentes.
+        layer.layerOrder = nextPepsOrder(queue);
+        queueChanges.set(layer.id, layer.layerOrder);
+      }
+    }
+    return queueChanges;
   }
 
   async cancel(id: number): Promise<void> {
@@ -304,7 +414,9 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       if (saved.canceled) return;
       const { original } = saved;
       await this.checkCancellationStock(client, original, true);
+      const queueChanges = await this.pepsCancellationOrder(client, original);
       await writeDeltas(client, original, true);
+      await writeAdjustmentLayerStock(client, original, true, queueChanges);
       const canceled: MovementDocument = {
         ...original,
         lines: original.lines.map((line) => ({ ...line, type: 'K', quantity: 0, cost: 0, pieces: 0, piecesText: '' })),

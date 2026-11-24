@@ -16,6 +16,7 @@ export interface InventoryAdjustmentInput {
 export interface InventoryAdjustmentCapture {
   writable: boolean;
   reason: string | null;
+  automaticPeps?: boolean;
   defaultDate: string;
   defaultWarehouse: string;
   types: { code: InventoryAdjustmentType; name: string; sign: -1 | 0 | 1 }[];

@@ -2,7 +2,7 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { hasLocalSalesStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { MovementHeader, MovementLine } from '../../../movements/domain/entities/inventory-movement.js';
-import type { ProductLedgerFilters } from '../../domain/repositories/product-panels-repository.js';
+import type { ProductLedgerFilters, ProductLotMovementTotals } from '../../domain/repositories/product-panels-repository.js';
 
 const sources = [
   { flag: 'receipts', table: 'purchase_receptions', stock: 'purchase_reception_inventory', key: 'receipt_id' },
@@ -15,9 +15,35 @@ const sources = [
 interface LocalLedgerPage {
   items: Record<string, unknown>[];
   openingDelta: number;
+  lotTotals?: ProductLotMovementTotals;
 }
 
+type LocalMovement = { header: MovementHeader; line: MovementLine };
+
 const empty: LocalLedgerPage = { items: [], openingDelta: 0 };
+
+async function localLotPage(
+  client: PostgresClient, source: string, productId: number, filters: ProductLedgerFilters,
+  limit: number, offset: number,
+) {
+  const { rows: [page] } = await client.query<ProductLotMovementTotals & { items: LocalMovement[] }>(
+    `WITH matched AS (
+       SELECT header,line FROM ${source}
+       WHERE ($2::text IS NULL OR line->>'warehouse'=$2) AND ($3::text IS NULL OR line->>'type'=$3)
+         AND line->>'lotId'=$4::text
+     ), paged AS (
+       SELECT header,line FROM matched ORDER BY (line->>'id')::bigint LIMIT $5 OFFSET $6
+     )
+     SELECT (SELECT COALESCE(jsonb_agg(to_jsonb(paged) ORDER BY (line->>'id')::bigint), '[]'::jsonb) FROM paged) AS items,
+       COUNT(*)::float8 AS count, COALESCE(SUM(GREATEST((line->>'quantity')::numeric,0)),0)::float8 AS entries,
+       COALESCE(SUM(GREATEST(-(line->>'quantity')::numeric,0)),0)::float8 AS exits,
+       COALESCE(SUM((line->>'quantity')::numeric),0)::float8 AS net
+     FROM matched`,
+    [productId, filters.warehouse ?? null, filters.movementType ?? null, filters.lotId, limit, offset],
+  );
+  const { items, ...lotTotals } = page!;
+  return { rows: items, lotTotals };
+}
 
 export async function localProductLedger(
   productId: number,
@@ -25,9 +51,10 @@ export async function localProductLedger(
   limit: number,
   findOffset: () => Promise<number>,
 ): Promise<LocalLedgerPage> {
-  const { warehouse, movementType, openingMovementType } = filters ?? {};
+  const scope = filters ?? {};
+  const { warehouse, movementType, openingMovementType, lotId } = scope;
   const recalculateOpening = warehouse !== undefined && openingMovementType !== undefined;
-  if (!postgresConfigured() || (limit <= 0 && !recalculateOpening)) return empty;
+  if (!postgresConfigured() || (limit <= 0 && !recalculateOpening && lotId === undefined)) return empty;
 
   let client: PostgresClient | undefined;
   try {
@@ -43,12 +70,14 @@ export async function localProductLedger(
     );
     if (queries.length === 0) return empty;
     const source = `(${queries.join(' UNION ALL ')}) AS movements`;
-    const { rows } = limit > 0 ? await client.query<{ header: MovementHeader; line: MovementLine }>(
+    const offset = limit > 0 ? await findOffset() : 0;
+    const lotPage = lotId === undefined ? undefined : await localLotPage(client, source, productId, scope, limit, offset);
+    const rows = lotPage?.rows ?? (limit > 0 ? (await client.query<LocalMovement>(
       `SELECT header,line FROM ${source}
        WHERE ($2::text IS NULL OR line->>'warehouse'=$2) AND ($3::text IS NULL OR line->>'type'=$3)
        ORDER BY (line->>'id')::bigint LIMIT $4 OFFSET $5`,
-      [productId, warehouse ?? null, movementType ?? null, limit, await findOffset()],
-    ) : { rows: [] };
+      [productId, warehouse ?? null, movementType ?? null, limit, offset],
+    )).rows : []);
     const { rows: [opening] } = recalculateOpening ? await client.query<{ delta: number }>(
       `SELECT COALESCE(SUM((line->>'quantity')::numeric),0)::float8 AS delta
        FROM ${source} WHERE line->>'warehouse'=$2 AND line->>'type'<>$3`,
@@ -62,6 +91,7 @@ export async function localProductLedger(
         pieces: line.piecesText, sku: '', ellosReference: header.reference2,
       })),
       openingDelta: opening?.delta ?? 0,
+      ...(lotPage === undefined ? {} : { lotTotals: lotPage.lotTotals }),
     };
   } catch (error) {
     if (error instanceof ApplicationError) throw error;

@@ -39,10 +39,14 @@ const ledgerQuerySchema = panelQuerySchema.extend({
   warehouse: z.string().max(16).optional(),
   movementType: z.literal('R').optional(),
   openingMovementType: z.literal('R').optional(),
+  lotId: z.coerce.number().int().positive().optional(),
 }).refine(
   ({ warehouse, movementType, openingMovementType }) =>
     openingMovementType === undefined || (warehouse !== undefined && movementType === 'R'),
   { message: 'El tipo para el saldo inicial requiere filtrar por almacén y por tipo.' },
+).refine(
+  ({ lotId, openingMovementType }) => lotId === undefined || openingMovementType === undefined,
+  { message: 'El saldo inicial por tipo corresponde al auxiliar de almacén.' },
 );
 
 const fulfillmentQuerySchema = panelQuerySchema.extend({

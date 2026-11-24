@@ -146,6 +146,15 @@ pnpm exec tsx scripts/migrate-postgres-inventory-other-data.ts
 | Lotes | Dos paneles: lotes disponibles y movimientos de entradas/salidas, con totales separados |
 | UEPS / PEPS | Capas de inventario con cantidad inicial, costo, advalorem, documento, lote, caducidad y llave |
 
+**Lotes** consulta los movimientos de la fila seleccionada mediante el
+mismo Auxiliar con `lotId`. La captura de **EINVLOTES** incluye
+`FLOTES.LOSEQ` como filtro en la segunda tabla. La API usa `FAXINV.LOSEQ`
+para limitar el auxiliar histórico y la identidad `lotId` de cada partida web
+con el mismo criterio. El filtro se aplica antes de paginar y
+`lotTotals` devuelve el conteo, entradas, salidas y neto de toda la consulta.
+Las consultas de Lotes y UEPS / PEPS conservan los identificadores históricos
+y muestran los saldos ajustados y las capas creadas en PostgreSQL.
+
 ## Consultas
 
 | Boton OMNIS | Endpoint GET | Origen confirmado | Procedimiento → ventana |

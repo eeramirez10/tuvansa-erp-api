@@ -98,10 +98,10 @@ acepta el costo capturado con cuatro decimales.
 La API aplica el alcance de almacenes de captura configurado y habilita los
 almacenes ordinarios de la compañía. Los usuarios de Omnis están delimitados
 en `TIUSUARIOS` y `CATUSUARIOS`. La sesión web usa la política de acceso de
-la API y no identifica al operador por esos nombres históricos. Se admiten
-productos activos de inventario sin manejo de piezas, tallas, capas o
-pedimento. La maquila y las operaciones con lotes conservan sus procedimientos
-dedicados.
+la API y no identifica al operador por esos nombres históricos. La captura
+admite productos activos en unidad base, incluidas las entradas y salidas
+con PEPS automático de TUVANSA México. La captura manual de pedimentos y
+los productos con control de piezas siguen en sus flujos dedicados.
 Los productos web nuevos requieren **No manejar capa** en **Otros**
 para registrar EI, SI o TR.
 
@@ -118,6 +118,32 @@ una salida repone la cantidad. El documento conserva el mismo folio y se
 puede consultar con las partidas `K` en cero. PostgreSQL conserva el original
 y los movimientos de stock firmados de aplicación y cancelación. Las consultas
 de documentos incluyen los folios web con ambas fuentes de lectura.
+
+### Entradas y salidas con PEPS
+
+German de pruebas confirma PEPS automático con las posiciones 24, 45 y 51
+de `FCIA.CIACOMPORTA` activas y las posiciones 46, 67, 75 y 94 inactivas.
+`MCPAR03/21` usa capas en los productos con `INOCAPAS` distinto de 1.
+
+- **Entrada (EI).** `MCPAR03/28` y `/51` abren una capa con saldo inicial,
+  folio y almacén. Con el encabezado de pedimento vacío, la capa usa lista 5,
+  advalorem y datos de importación de `FINV`. El costo registrado en la
+  partida puede ser distinto al de la capa.
+- **Salida (SI).** `MCPAR03/33` y `/37` recorren las capas por `LOKEY` en la
+  cola del producto y separan la partida por `LOSEQ` al consumir varias.
+  TUVANSA tiene la posición 94 desactivada, por lo que la cola es común entre
+  almacenes. La salida descuenta el almacén elegido y se registra a
+  `ILISTA4 + IADVALOREM`.
+- **Anulación.** `MFACT/112` y `MCPAR03/35` restituyen las cantidades por
+  `LOSEQ`, conservan la cantidad inicial y asignan una nueva clave al
+  reactivar una capa agotada. La API exige el saldo completo de la capa
+  antes de anular una EI y aplica ambas actualizaciones en una transacción.
+
+`FLOTES` se lee en MySQL y se complementa con
+`tuvansa.inventory_adjustment_layers` y
+`tuvansa.inventory_adjustment_layer_stock` en PostgreSQL. Los paneles
+**Lotes** y **UEPS / PEPS** consultan el saldo combinado. La captura web
+con capas cubre EI y SI, y la anulación cubre sus folios web.
 
 ## Inventarios → Traspasos
 

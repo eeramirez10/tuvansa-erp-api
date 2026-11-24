@@ -8,6 +8,7 @@ import type {
   ProductPanelCriteria,
   ProductBlockStatus,
   ProductLedgerFilters,
+  ProductLotMovementTotals,
   ProductPanelKey,
   ProductPanelResult,
   ProductPanelSection,
@@ -42,10 +43,11 @@ const ledgerScope = `FROM faxinv LEFT JOIN finv ON faxinv.ISEQ = finv.ISEQ
       LEFT JOIN flotes ON faxinv.LOSEQ = flotes.LOSEQ
       WHERE finv.ISEQ = ? AND AIMES = 1 AND DEST = 0 AND DMULTICIA = 1`;
 
-const ledgerConditions = (warehouse?: string, movementType?: 'R') => ({
+const ledgerConditions = (warehouse?: string, movementType?: 'R', lotId?: number) => ({
   sql: (warehouse === undefined ? '' : " AND COALESCE(faxinv.AIALMACEN, '') = ?")
-    + (movementType === undefined ? '' : ' AND faxinv.AITIPMV = ?'),
-  params: [warehouse, movementType].filter((value): value is string => value !== undefined),
+    + (movementType === undefined ? '' : ' AND faxinv.AITIPMV = ?')
+    + (lotId === undefined ? '' : ' AND faxinv.LOSEQ = ?'),
+  params: [warehouse, movementType, lotId].filter((value) => value !== undefined),
 });
 
 const customerOrdersScope = `FROM fplin LEFT JOIN finv ON fplin.ISEQ = finv.ISEQ
@@ -601,11 +603,28 @@ const parametersFor = (
 
 export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSource {
   protected async countLedgerItems(productId: number, filters?: ProductLedgerFilters): Promise<number> {
-    const conditions = ledgerConditions(filters?.warehouse, filters?.movementType);
+    const conditions = ledgerConditions(filters?.warehouse, filters?.movementType, filters?.lotId);
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { count: number | string }>>(
       `SELECT COUNT(*) AS count ${ledgerScope}${conditions.sql}`, [productId, ...conditions.params],
     );
     return Number(rows[0]?.count ?? 0);
+  }
+
+  protected async countProductLots(productId: number): Promise<number> {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & { count: number | string }>>(
+      'SELECT COUNT(*) AS count FROM flotes WHERE ISEQ = ?', [productId],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  private async getLotMovementTotals(productId: number, conditions: ReturnType<typeof ledgerConditions>): Promise<ProductLotMovementTotals> {
+    const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & Record<keyof ProductLotMovementTotals, number | string>>>(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(GREATEST(faxinv.AICANT, 0)), 0) AS entries,
+        COALESCE(SUM(GREATEST(-faxinv.AICANT, 0)), 0) AS exits, COALESCE(SUM(faxinv.AICANT), 0) AS net
+       ${ledgerScope}${conditions.sql}`, [productId, ...conditions.params],
+    );
+    const row = rows[0];
+    return { count: Number(row?.count ?? 0), entries: Number(row?.entries ?? 0), exits: Number(row?.exits ?? 0), net: Number(row?.net ?? 0) };
   }
 
   async getPanel(
@@ -642,7 +661,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
     }
 
     const ledger = panel === 'ledger' ? criteria.ledger : undefined;
-    const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType);
+    const conditions = ledgerConditions(ledger?.warehouse, ledger?.movementType, ledger?.lotId);
     const documentType = panel === 'customer-orders' ? 1 : panel === 'customer-quotes' ? 4 : undefined;
     const hasFulfillmentFilter = documentType !== undefined || panel === 'supplier-orders';
     const fulfillmentFilter = hasFulfillmentFilter && criteria.excludeFulfilled ? ' AND PLSURT < PLCANT' : '';
@@ -655,8 +674,9 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
       : panel === 'supplier-orders' ? ' ORDER BY finv.ISEQ, FPLIN.PLSEQ'
       : panel === 'supplier-orders-ct' ? ' ORDER BY ICOD, PLSEQ'
       : panel === 'customer-sales' || panel === 'sales-by-branch' ? ` ORDER BY ${salesOrder}, ${salesTie}` : '';
-    const openingStock = ledger?.warehouse === undefined ? undefined
+    const openingStock = ledger?.warehouse === undefined || ledger.lotId !== undefined ? undefined
       : await this.getWarehouseOpeningStock(product, ledger.warehouse, ledger.openingMovementType);
+    const lotTotals = ledger?.lotId === undefined ? undefined : await this.getLotMovementTotals(productId, conditions);
     const customerOrdersTotals = documentType !== undefined
       ? await this.getOrderTotals(product.id, `${customerOrdersScope} AND PESPEDIDO = ${documentType}${fulfillmentFilter}`)
       : undefined;
@@ -701,6 +721,7 @@ export class LegacyMysqlProductPanelsDataSource implements ProductPanelsDataSour
         return confirmedOrders.has(order) ? { ...item, assigned: confirmedByLine.get(`${order}/${row.id}`) ?? 0 } : item;
       }),
       ...(openingStock === undefined ? {} : { openingStock }),
+      ...(lotTotals === undefined ? {} : { lotTotals }),
       ...(customerOrdersTotals === undefined ? {} : { customerOrdersTotals }),
       ...(supplierOrdersTotals === undefined ? {} : { supplierOrdersTotals: { remaining: supplierOrdersTotals.remaining } }),
       ...(customerSalesTotals === undefined ? {} : { customerSalesTotals }),

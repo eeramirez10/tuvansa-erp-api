@@ -35,6 +35,14 @@ export interface ProductLedgerFilters {
   warehouse?: string | undefined;
   movementType?: 'R' | undefined;
   openingMovementType?: 'R' | undefined;
+  lotId?: number | undefined;
+}
+
+export interface ProductLotMovementTotals {
+  count: number;
+  entries: number;
+  exits: number;
+  net: number;
 }
 
 export interface ProductPanelResult {
@@ -46,6 +54,7 @@ export interface ProductPanelResult {
   source: 'mysql' | 'product-cache' | 'not-available';
   items: Array<Record<string, unknown>>;
   openingStock?: number;
+  lotTotals?: ProductLotMovementTotals;
   customerOrdersTotals?: { remaining: number; assigned: number };
   supplierOrdersTotals?: { remaining: number };
   customerSalesTotals?: { quantity: number; amount: number };

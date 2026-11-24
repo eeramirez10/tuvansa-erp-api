@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterAll, expect, it, vi } from 'vitest';
 import { env } from '../src/config/env.js';
 import { createMovementsModule } from '../src/modules/inventories/movements/movements-module.js';
+import { adjustmentLotState } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
 import { blankProduct } from '../src/modules/inventories/products/infrastructure/datasources/product-catalog-record.js';
 import { migratePostgresProductCatalog } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-catalog-schema.js';
 import { migrateProductOtherData } from '../src/modules/inventories/products/infrastructure/datasources/postgres-product-other-data-source.js';
@@ -31,28 +32,41 @@ vi.mock('../src/shared/infrastructure/database/postgres-pool.js', async (importO
 
 vi.mock('../src/modules/sales/orders/infrastructure/datasources/sales-order-inventory-stock.js', async (importOriginal) => ({
   ...await importOriginal<object>(),
-  readLegacySaleStock: async () => new Map(),
+  readLegacySaleStock: async (warehouse: string) => warehouse === '01'
+    ? new Map([[62835, { onHand: 5, assigned: 0 }]]) : new Map(),
 }));
 
 vi.mock('../src/modules/inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js', () => ({
   MysqlInventoryAdjustmentReferences: class {
     async capture() {
       return {
-        reason: null, defaultDate: '2026-11-24', defaultWarehouse: '01',
+        reason: null, defaultDate: '2026-11-24', defaultWarehouse: '01', automaticPeps: true,
         types: [{ code: 'EI', name: 'ENTRADA DE INVENTARIO', sign: 1 }, { code: 'SI', name: 'SALIDA DE INVENTARIO', sign: -1 },
           { code: 'TR', name: 'TRASPASOS ENTRE ALMACENES', sign: 0 }],
         warehouses: [{ code: '01', name: 'SUC. MÉXICO' }, { code: '11', name: 'NO CALIDAD MEX' }, { code: '12', name: 'ALMACÉN 12' }],
       };
     }
 
-    async products() {
+    async products(warehouse: string) {
       return new Map([[13265, {
         id: 13265, code: '01300935', description: 'Prueba', unit: 'PZ', cost: 1.2345, transferCost: 2.3456,
         active: true, simple: true, legacyOnHand: 0, legacyAssigned: 0,
+      }], [62835, {
+        id: 62835, code: '01511263', description: 'Producto PEPS', unit: 'PZ', cost: 160, transferCost: 175.4321,
+        layerCost: 159.4801, adValorem: 0.5199, active: true, simple: false, peps: true, customsEntry: '123456789012345',
+        customsOffice: '240', importDate: '2024-12-26', legacyOnHand: warehouse === '01' ? 5 : 0, legacyAssigned: 0,
       }]]);
     }
 
     async documentExists(number: string) { return number === 'EI1000'; }
+
+    async layers(ids: number[]) {
+      return ids.includes(62835) ? [{
+        id: 17836, productId: 62835, warehouse: '11', layerOrder: 1, available: 5, initial: 5,
+        date: null, cost: 151, adValorem: 0, document: 'RA09139', customsEntry: '', customsOffice: '',
+        expiresAt: null, lot: '', number: '', location: '',
+      }] : [];
+    }
   },
 }));
 
@@ -98,6 +112,64 @@ it('registra EI y SI en un almacén, evita duplicados y conserva los asientos fi
   expect(ledger.rows).toEqual([{ rows: 4, balance: 0 }]);
   const original = await db.query('SELECT original_movement AS original FROM tuvansa.inventory_adjustments WHERE id=$1', [entry.body.data.header.id]);
   expect(original.rows).toEqual([{ original: entry.body.data }]);
+}, 30000);
+
+it('registra PEPS global, divide la SI, conserva el costo promedio y reactiva la capa agotada al cancelar', async () => {
+  env.INVENTORY_MOVEMENTS_SOURCE = 'mysql';
+  const route = '/api/inventories/movements';
+  const app = express().use(express.json()).use(route, createMovementsModule()).use(errorHandler);
+  const productId = 62835;
+  const base = { requestKey: randomUUID(), date: '2026-11-24', warehouse: '01' };
+  const entryInput = { ...base, type: 'EI', lines: [{ productId, quantity: 2, cost: 215 }] };
+  const { body: { data: entry } } = await request(app).post(route).send(entryInput).expect(201);
+  expect(entry.lines[0]).toMatchObject({ cost: 215, quantity: 2 });
+  const incomingLot = entry.lines[0].lotId;
+  expect((await adjustmentLotState(productId, true)).local).toMatchObject([{
+    id: incomingLot, initial: 2, available: 2, cost: 159.4801, adValorem: 0.5199, warehouse: '01',
+    customsEntry: '123456789012345', customsOffice: '240', date: '2024-12-26',
+  }]);
+  expect((await request(app).post(route).send(entryInput).expect(201)).body.data).toEqual(entry);
+
+  const exitInput = { ...base, requestKey: randomUUID(), type: 'SI', lines: [{ productId, quantity: 6 }] };
+  await request(app).post(route).send({ ...exitInput, lines: [{ productId, quantity: 6, cost: 111 }] }).expect(422);
+  const { body: { data: exit } } = await request(app).post(route).send(exitInput).expect(201);
+  expect(exit.lines).toMatchObject([
+    { lotId: 17836, lotWarehouse: '11', warehouse: '01', quantity: -5, cost: 175.4321 },
+    { lotId: incomingLot, lotWarehouse: '01', warehouse: '01', quantity: -1, cost: 175.4321 },
+  ]);
+  expect(exit.totals).toEqual({ quantity: -6, cost: -1052.59 });
+  const depleted = await adjustmentLotState(productId, false);
+  expect(depleted.deltas).toEqual(new Map([[17836, -5], [incomingLot, 1]]));
+  expect(depleted.orders).toEqual(new Map([[17836, 10000]]));
+
+  const { body: { data: extra } } = await request(app).post(route).send({
+    ...entryInput, requestKey: randomUUID(), lines: [{ productId, quantity: 3 }],
+  }).expect(201);
+  const entryPath = `${route}/${entry.header.id}`;
+  const exitPath = `${route}/${exit.header.id}`;
+  const lotCheck = await request(app).delete(entryPath).expect(409);
+  expect(JSON.stringify(lotCheck.body)).toContain('INVENTORY_ADJUSTMENT_LAYER_INSUFFICIENT');
+  await request(app).delete(exitPath).expect(204);
+  await request(app).delete(exitPath).expect(204);
+  expect((await request(app).get(exitPath).expect(200)).body.data.lines).toMatchObject([
+    { lotId: 17836, type: 'K', quantity: 0 }, { lotId: incomingLot, type: 'K', quantity: 0 },
+  ]);
+  const restored = await adjustmentLotState(productId, false);
+  expect(restored.deltas).toEqual(new Map([[17836, 0], [incomingLot, 2], [extra.lines[0].lotId, 3]]));
+  expect(restored.orders).toEqual(new Map([[17836, 4]]));
+
+  const { body: { data: nextExit } } = await request(app).post(route).send({
+    ...exitInput, requestKey: randomUUID(), lines: [{ productId, quantity: 1 }],
+  }).expect(201);
+  expect(nextExit.lines).toMatchObject([{ lotId: incomingLot, quantity: -1 }]);
+  await request(app).delete(`${route}/${nextExit.header.id}`).expect(204);
+  await request(app).delete(entryPath).expect(204);
+  await request(app).delete(`${route}/${extra.header.id}`).expect(204);
+  expect((await adjustmentLotState(productId, true)).local).toMatchObject([{ initial: 2, available: 0 }, { initial: 3, available: 0 }]);
+  const { rows: [stock] } = await db.query<{ balance: number }>(`
+    SELECT sum(quantity)::float8 AS balance FROM tuvansa.inventory_adjustment_stock
+    WHERE product_id=62835 AND warehouse='01'`);
+  expect(stock?.balance).toBe(0);
 }, 30000);
 
 it('registra un TR con ambas partidas y solo lo cancela si hay existencia libre en destino', async () => {

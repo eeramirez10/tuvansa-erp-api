@@ -30,6 +30,12 @@ const company = 1;
 const warehouseScope = env.PURCHASE_ORDER_WAREHOUSES ?? ['01', '11', '12', '13'];
 const localDate = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
 
+export const mexicoGlobalPepsCondition = `c.CIANOCOSTOS=0 AND SUBSTRING(c.CIACOMPORTA,24,1)='1'
+  AND SUBSTRING(c.CIACOMPORTA,46,1)='0' AND SUBSTRING(c.CIACOMPORTA,51,1)='1'
+  AND SUBSTRING(c.CIACOMPORTA,67,1)='0' AND SUBSTRING(c.CIACOMPORTA,75,1)='0'
+  AND SUBSTRING(c.CIACOMPORTA,22,1)='1' AND SUBSTRING(c.CIACOMPORTA,45,1)='1'
+  AND SUBSTRING(c.CIACOMPORTA,94,1)='0'`;
+
 export class MysqlInventoryAdjustmentReferences {
   async capture(): Promise<References> {
     // EI/SI de EINV#3 y TR de EINV#17/401–402. Se habilita el TR ordinario de un folio de TUVANSA.
@@ -38,10 +44,7 @@ export class MysqlInventoryAdjustmentReferences {
         `SELECT CIAALM AS warehouse,(CIANOCOSTOS=0 AND SUBSTRING(CIACOMPORTA,42,1)='1'
            AND SUBSTRING(CIACOMPORTA,45,1)='1' AND SUBSTRING(CIACOMPORTA,75,1)='0'
            AND SUBSTRING(CIACOMPORTA,94,1)='0') AS supportsTransfer,
-           (CIANOCOSTOS=0 AND SUBSTRING(CIACOMPORTA,24,1)='1' AND SUBSTRING(CIACOMPORTA,46,1)='0'
-           AND SUBSTRING(CIACOMPORTA,51,1)='1' AND SUBSTRING(CIACOMPORTA,67,1)='0'
-           AND SUBSTRING(CIACOMPORTA,75,1)='0' AND SUBSTRING(CIACOMPORTA,22,1)='1'
-           AND SUBSTRING(CIACOMPORTA,45,1)='1' AND SUBSTRING(CIACOMPORTA,94,1)='0') AS automaticPeps FROM FCIA
+           (${mexicoGlobalPepsCondition}) AS automaticPeps FROM FCIA c
          WHERE CIASEQ=? AND CIAALIAS='TUVANSA' AND SUBSTRING(CIACOMPORTA,37,1)='1' LIMIT 1`, [company],
       ),
       legacyMysqlPool.execute<(RowDataPacket & References['types'][number])[]>(

@@ -46,12 +46,52 @@ emite en un paso independiente que requiere la integración de timbrado.
 | Cancelar | Cierre de la captura | Descarta la fecha y las cantidades ingresadas |
 
 La captura web cubre pedidos locales de México en pesos, dentro del periodo
-fiscal, con IVA del 16 % y productos en su unidad base sin capas, lotes ni piezas.
+fiscal, con IVA del 16 % y productos en su unidad base. Admite productos
+ordinarios y productos con PEPS global bajo la configuración de TUVANSA.
 PostgreSQL verifica la revisión del pedido, las existencias y el crédito al
 confirmar. Una clave de solicitud repetida devuelve el folio original si todos
 los datos coinciden. Los requests están en `http/sales/invoices.http`.
 
 Los depósitos de [Cobranza](../accounts-receivable/clients.md#cobrar-una-remisión-web) actualizan **Pagado** y **Saldo**. **Auxiliar** conserva el cargo FA, muestra los abonos PA por fecha y enlaza cada póliza. Al liquidar, Facturación muestra la fecha del último cobro aplicado.
+
+### Remisión con PEPS global
+
+`MFACT/38` genera el auxiliar de inventario a través de `MBASE/41`.
+`MCPAR03/21, /33, /37` toma las capas más antiguas del producto en orden
+de `LOKEY`. La partida se divide por `LOSEQ` cuando consume varias capas.
+Con [45] activo, el costo de la partida es el promedio más ad valorem.
+La salida de existencias se registra en el almacén del pedido. Con [94]
+inactivo, la capa puede pertenecer a otro almacén.
+
+| Vista / acción | Endpoint | Origen y efecto |
+| --- | --- | --- |
+| Pedidos / Facturar | `POST /api/sales/invoices/from-order` | Derivado de `MFACT/38` y `MCPAR03/33, /37`. Registra el FAW, las salidas por capa, el surtido y el cargo en una transacción |
+| Facturación / Lotes | `GET /api/sales/invoices/:id/actions/lots` | Proyecta las capas, cantidades, almacenes y pedimentos registrados en el FAW |
+| Facturación / Cancelar remisión | `POST /api/sales/invoices/:id/actions/cancel-remission` | Derivado de `MFACT/29, /112, /113` y `MCPAR03/35`. Repone las cantidades en los mismos `LOSEQ` y conserva el cargo FA y su contrapartida K en el auxiliar |
+
+Las capas se leen de `FLOTES` y `tuvansa.inventory_adjustment_layers`.
+Las salidas y reposiciones comparten el diario PostgreSQL
+`tuvansa.inventory_adjustment_layer_stock` con Inventarios y Recepciones.
+Al reponer una capa agotada, la misma capa se reactiva al final de la cola
+con su cantidad inicial y sus costos originales. **Regenerar pedido**
+suma las partidas de las capas de cada renglón y devuelve la cantidad al
+pendiente. El documento K conserva las ligas a las capas para el Auxiliar
+de Inventarios y el saldo del cliente se reduce por el importe de la remisión.
+
+En German, la remisión histórica cancelada `FA25142` conserva las partidas
+`K` en `FAXINV` vinculadas a las capas `14388` y `15034` de `FLOTES`.
+`FAX` contiene tanto el cargo FA como la contrapartida K por el mismo importe.
+La validación nativa se apoyó en esos registros y en los procedimientos
+exportados. La sesión de pruebas llegó a **Pedidos** pero el alta quedó
+bloqueada en esta biblioteca.
+
+En PostgreSQL de pruebas, el pedido temporal `NP5000000034` asignó tres
+unidades del producto `01511263`. `FAW00000025` remitió dos y registró
+una salida en cada capa `18118` y `17836` por un cargo de 464 MXN.
+**Lotes** mostró ambas capas en Chrome. La cancelación regeneró los
+tres pendientes, revirtió el cargo y repuso las cantidades en las dos
+capas. `18118` volvió al final de la cola PEPS. Se comprobaron los
+reintentos de alta y cancelación y se retiraron los folios temporales.
 
 ## Simulación de timbrado
 

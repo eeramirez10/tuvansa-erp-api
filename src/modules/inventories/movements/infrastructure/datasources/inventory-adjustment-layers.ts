@@ -1,6 +1,7 @@
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { scaledStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { MovementLine } from '../../domain/entities/inventory-movement.js';
 
 export const inventoryAdjustmentDbUnavailable = () => new ApplicationError(
@@ -94,6 +95,65 @@ async function layerTables(client: PostgresClient) {
   return row?.present ?? false;
 }
 
+export function groupPepsLayers(layers: AdjustmentLayer[]) {
+  const byProduct = new Map<number, AdjustmentLayer[]>();
+  for (const layer of layers.sort((a, b) => a.layerOrder - b.layerOrder || a.id - b.id)) {
+    const group = byProduct.get(layer.productId) ?? [];
+    group.push(layer);
+    byProduct.set(layer.productId, group);
+  }
+  return byProduct;
+}
+
+type PepsLine = LayerLine & Pick<MovementLine, 'productCode' | 'customsEntry'>;
+
+export function allocatePepsExit<T extends PepsLine>(line: T, layers: AdjustmentLayer[], queueChanges: Map<number, number>) {
+  let remaining = -line.quantity;
+  const allocated: Array<{ line: T; layer: AdjustmentLayer }> = [];
+  for (const layer of layers) {
+    if (remaining === 0) break;
+    if (layer.available <= 0) continue;
+    const quantity = Math.min(remaining, layer.available);
+    if (scaledStock(quantity) !== quantity) throw new ApplicationError(
+      `La capa ${layer.id} de ${line.productCode} requiere una conciliación de unidades antes de registrar la salida.`,
+      'INVENTORY_ADJUSTMENT_UNSUPPORTED', 422,
+    );
+    const allocatedLine = { ...line, quantity: -quantity, lotId: layer.id, lotWarehouse: layer.warehouse,
+      ...(layer.customsEntry ? { customsEntry: layer.customsEntry } : {}) };
+    allocated.push({ line: allocatedLine, layer });
+    layer.available = scaledLayerStock(layer.available - quantity);
+    if (layer.available === 0) {
+      layer.layerOrder = inactivePepsOrder;
+      queueChanges.set(layer.id, inactivePepsOrder);
+    }
+    remaining = scaledStock(remaining - quantity);
+  }
+  if (remaining > 0) throw insufficientLayer(line.productCode, line.warehouse);
+  return allocated;
+}
+
+export function reversePepsOrders(lines: PepsLine[], layers: AdjustmentLayer[]) {
+  const queues = groupPepsLayers(layers);
+  const orders = new Map<number, number>();
+  for (const line of lines) {
+    const queue = queues.get(line.productId) ?? [];
+    const layer = queue.find(({ id }) => id === line.lotId);
+    if (!layer || layer.warehouse !== (line.lotWarehouse ?? line.warehouse)) {
+      throw new ConflictError(`La capa ${line.lotId} de ${line.productCode} ya no está disponible.`, 'INVENTORY_ADJUSTMENT_LAYER_MISSING');
+    }
+    layer.available = scaledLayerStock(layer.available - line.quantity);
+    if (layer.available <= 0) {
+      layer.layerOrder = inactivePepsOrder;
+      orders.set(layer.id, layer.layerOrder);
+    } else if (layer.layerOrder === inactivePepsOrder) {
+      // MCPAR03/35 reactiva el mismo LOSEQ al final de la cola.
+      layer.layerOrder = nextPepsOrder(queue);
+      orders.set(layer.id, layer.layerOrder);
+    }
+  }
+  return orders;
+}
+
 async function localLayerDeltas(client: PostgresClient, products: number[]) {
   const { rows } = await client.query<{ id: string; quantity: string }>(
     `SELECT layer_id AS id,sum(quantity) AS quantity FROM tuvansa.inventory_adjustment_layer_stock
@@ -163,7 +223,7 @@ export async function currentAdjustmentLayers(
 }
 
 export async function writeLayerStock(
-  client: PostgresClient, origin: 'adjustment_id' | 'receipt_id', id: number, lines: LayerLine[], reversal: boolean,
+  client: PostgresClient, origin: 'adjustment_id' | 'receipt_id' | 'remission_id', id: number, lines: LayerLine[], reversal: boolean,
   queueChanges?: ReadonlyMap<number, number>,
 ) {
   const byLayer = new Map<number, LayerLine>();

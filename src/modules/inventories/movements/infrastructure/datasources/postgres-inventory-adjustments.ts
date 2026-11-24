@@ -10,8 +10,9 @@ import type { MovementCancellationDataSource } from '../../domain/datasources/mo
 import type { MovementDocument, MovementLine } from '../../domain/entities/inventory-movement.js';
 import type { InventoryAdjustmentInput, InventoryAdjustmentsRepository } from '../../domain/repositories/inventory-adjustments-repository.js';
 import {
-  createAdjustmentLayer, currentAdjustmentLayers, inactivePepsOrder, insufficientLayer, inventoryAdjustmentDbUnavailable as dbUnavailable,
-  inventoryLayerMigration, lockPepsProducts, nextPepsOrder, readLocalInventoryAdjustments, scaledLayerStock,
+  allocatePepsExit, createAdjustmentLayer, currentAdjustmentLayers, groupPepsLayers, inactivePepsOrder,
+  insufficientLayer, inventoryAdjustmentDbUnavailable as dbUnavailable, inventoryLayerMigration, lockPepsProducts,
+  nextPepsOrder, readLocalInventoryAdjustments, reversePepsOrders,
   writeLayerStock, type AdjustmentLayer,
 } from './inventory-adjustment-layers.js';
 import { MysqlInventoryAdjustmentReferences, type AdjustmentProduct } from './mysql-inventory-adjustment-references.js';
@@ -161,41 +162,6 @@ async function assignMovementLineIds(client: PostgresClient, lines: CaptureLine[
     "SELECT nextval('tuvansa.inventory_adjustment_line_ids') AS id FROM generate_series(1,$1::int)", [lines.length],
   );
   return lines.map((line, index) => ({ ...line, id: Number(rows[index]!.id) }));
-}
-
-function allocatePepsExit(
-  line: CaptureLine, product: AdjustmentProduct, layers: AdjustmentLayer[], queueChanges: Map<number, number>,
-): CaptureLine[] {
-  let remaining = -line.quantity;
-  const allocated: CaptureLine[] = [];
-  for (const layer of layers) {
-    if (remaining === 0) break;
-    if (layer.available <= 0) continue;
-    const quantity = Math.min(remaining, layer.available);
-    if (scaledStock(quantity) !== quantity) throw unsupported(
-      `La capa ${layer.id} de ${product.code} requiere una conciliación de unidades antes de registrar la salida.`,
-    );
-    allocated.push({ ...line, quantity: -quantity, lotId: layer.id, lotWarehouse: layer.warehouse,
-      ...(layer.customsEntry ? { customsEntry: layer.customsEntry } : {}) });
-    layer.available = scaledLayerStock(layer.available - quantity);
-    if (layer.available === 0) {
-      layer.layerOrder = inactivePepsOrder;
-      queueChanges.set(layer.id, inactivePepsOrder);
-    }
-    remaining = scaledStock(remaining - quantity);
-  }
-  if (remaining > 0) throw insufficientLayer(product.code, line.warehouse);
-  return allocated;
-}
-
-function groupPepsLayers(layers: AdjustmentLayer[]) {
-  const byProduct = new Map<number, AdjustmentLayer[]>();
-  for (const layer of layers.sort((a, b) => a.layerOrder - b.layerOrder || a.id - b.id)) {
-    const group = byProduct.get(layer.productId) ?? [];
-    group.push(layer);
-    byProduct.set(layer.productId, group);
-  }
-  return byProduct;
 }
 
 async function writeDeltas(client: PostgresClient, movement: MovementDocument, reversal: boolean) {
@@ -369,7 +335,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       const product = products.get(line.productId)!;
       const queue = layers.get(line.productId) ?? [];
       if (!isEntry) {
-        result.push(...allocatePepsExit(line, product, queue, queueChanges));
+        result.push(...allocatePepsExit(line, queue, queueChanges).map((allocation) => allocation.line));
         continue;
       }
       const layerOrder = newOrders.get(product.id) ?? nextPepsOrder(queue);
@@ -421,28 +387,9 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
 
   private async pepsCancellationOrder(client: PostgresClient, movement: MovementDocument) {
     const tracked = movement.lines.filter(({ lotId }) => lotId > 0);
-    const queueChanges = new Map<number, number>();
-    if (!tracked.length) return queueChanges;
-
+    if (!tracked.length) return new Map<number, number>();
     const ids = [...new Set(tracked.map(({ productId }) => productId))];
-    const byProduct = groupPepsLayers(await currentAdjustmentLayers(client, ids, await this.references.layers(ids)));
-    for (const line of tracked) {
-      const queue = byProduct.get(line.productId) ?? [];
-      const layer = queue.find(({ id }) => id === line.lotId);
-      if (!layer || layer.warehouse !== (line.lotWarehouse ?? line.warehouse)) {
-        throw new ConflictError(`La capa ${line.lotId} de ${line.productCode} ya no está disponible.`, 'INVENTORY_ADJUSTMENT_LAYER_MISSING');
-      }
-      layer.available = scaledLayerStock(layer.available - line.quantity);
-      if (layer.available <= 0) {
-        layer.layerOrder = inactivePepsOrder;
-        queueChanges.set(layer.id, layer.layerOrder);
-      } else if (layer.layerOrder === inactivePepsOrder) {
-        // MCPAR03/35. Volver a abrir una capa agotada la coloca detrás de las que siguen vigentes.
-        layer.layerOrder = nextPepsOrder(queue);
-        queueChanges.set(layer.id, layer.layerOrder);
-      }
-    }
-    return queueChanges;
+    return reversePepsOrders(tracked, await currentAdjustmentLayers(client, ids, await this.references.layers(ids)));
   }
 
   private async transferCancellationLines(
@@ -480,8 +427,8 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
         lines.push({ ...line, lotId: id, lotWarehouse: warehouse });
       } else {
         // La asignación usa el signo de la reversión. El diario recibe el signo original.
-        const allocations = allocatePepsExit({ ...line, quantity: -line.quantity }, product, queue, queueChanges)
-          .map((allocation) => ({ ...allocation, quantity: -allocation.quantity }));
+        const allocations = allocatePepsExit({ ...line, quantity: -line.quantity }, queue, queueChanges)
+          .map(({ line: allocated }) => ({ ...allocated, quantity: -allocated.quantity }));
         const [first, ...rest] = allocations;
         lines.push({ ...first!, id: line.id });
         splits.push(...rest);

@@ -1,4 +1,5 @@
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import type { InventoryPepsCost } from '../../../../inventories/movements/domain/entities/inventory-peps-cost.js';
 import type { OrderProps } from '../../../orders/domain/entities/order.js';
 import type { InvoiceLine, InvoiceProps } from '../entities/invoice.js';
 
@@ -20,6 +21,7 @@ export interface InvoiceFromOrderStock {
   quantity: number;
   legacyOnHand: number;
   legacyAssigned: number;
+  pepsCostBasis?: InventoryPepsCost;
 }
 
 export interface InvoiceFromOrderPosting {
@@ -64,6 +66,7 @@ export interface InvoiceFromOrderProduct {
   legacyOnHand: number;
   legacyAssigned: number;
   supported: boolean;
+  pepsCostBasis?: InventoryPepsCost;
 }
 
 export interface InvoiceFromOrderContext {

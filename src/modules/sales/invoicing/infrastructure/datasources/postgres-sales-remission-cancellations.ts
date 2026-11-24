@@ -5,6 +5,7 @@ import { connectPostgres, postgresConfigured, type PostgresClient, type Postgres
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { remissionCollectionStatus } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import { MysqlInventoryAdjustmentReferences } from '../../../../inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js';
 import type { OrderProps } from '../../../orders/domain/entities/order.js';
 import { PostgresOrderOverlayDataSource } from '../../../orders/infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { lockWarehouseStock } from '../../../orders/infrastructure/datasources/sales-order-inventory-stock.js';
@@ -15,6 +16,7 @@ import type {
 import { historicalSalesRemissionCancellationsOn } from './historical-sales-remission-cancellation-reads.js';
 import { ensureSalesRemissionSchema, isLocalSalesRemissionId, salesRemissionsAvailable } from './postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationIdEnd, salesRemissionCancellationIdStart, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
+import { restoreSalesRemissionLayers, type SalesRemissionLayerReferences } from './sales-remission-peps.js';
 
 const migrations = [{ id: 'sales_remission_cancellations', sql: `
   CREATE SEQUENCE tuvansa.sales_remission_cancellation_ids START WITH ${salesRemissionCancellationIdStart} MAXVALUE ${salesRemissionCancellationIdEnd};
@@ -112,6 +114,7 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured = postgresConfigured,
     private readonly historical?: HistoricalSalesRemissionCancellationSource,
+    private readonly layers: SalesRemissionLayerReferences = new MysqlInventoryAdjustmentReferences(),
   ) {}
 
   private async withConnection<T>(work: (client: PostgresClient) => Promise<T>) {
@@ -193,6 +196,7 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
       }
       const products = await validateInventory(client, current);
       const regenerated = order ? regenerate(current, order) : null;
+      if (!current.historical) await restoreSalesRemissionLayers(client, id, current.movement.lines, this.layers);
 
       const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.sales_remission_cancellation_ids') AS id");
       const cancellationId = Number(allocation!.id);

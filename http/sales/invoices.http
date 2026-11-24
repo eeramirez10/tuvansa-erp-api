@@ -72,6 +72,9 @@ GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/print
 ### Acciones: Lotes
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/lots
 
+### Capas PEPS de una remisión web
+GET {{baseUrl}}/sales/invoices/{{remissionId}}/actions/lots
+
 ### Acciones: Piezas
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/actions/pieces
 
@@ -91,6 +94,21 @@ Content-Type: application/json
   "reason": "Cancelación de remisión histórica de prueba",
   "confirmed": true,
   "regenerateOrder": false
+}
+
+### Preparar la cancelación de una remisión web con PEPS
+GET {{baseUrl}}/sales/invoices/{{remissionId}}/actions/cancel-remission
+
+### Reponer las capas y regenerar el pedido en PostgreSQL de pruebas
+POST {{baseUrl}}/sales/invoices/{{remissionId}}/actions/cancel-remission
+Content-Type: application/json
+
+{
+  "requestKey": "{{cancellationKey}}",
+  "date": "{{cancellationDate}}",
+  "reason": "Prueba de reversión de remisión con PEPS",
+  "confirmed": true,
+  "regenerateOrder": true
 }
 
 ### Consultar la simulación de una remisión FA web

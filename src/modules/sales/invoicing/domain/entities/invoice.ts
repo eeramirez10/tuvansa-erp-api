@@ -19,6 +19,16 @@ export interface InvoiceLine {
   package: string;
   sku: string;
   family: string;
+  inventoryLayer?: {
+    id: number;
+    warehouse: string;
+    date: string | null;
+    lot: string;
+    customsEntry: string;
+    customsOffice: string;
+    number: string;
+    expiresAt: string | null;
+  };
 }
 
 export interface InvoiceProps {

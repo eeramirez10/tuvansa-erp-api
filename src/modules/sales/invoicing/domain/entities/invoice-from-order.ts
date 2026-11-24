@@ -117,6 +117,7 @@ export function postInvoiceFromOrder(
     stock.set(line.productId, {
       productId: line.productId, quantity: quantity((prior?.quantity ?? 0) + delivered),
       legacyOnHand: product.legacyOnHand, legacyAssigned: product.legacyAssigned,
+      ...(product.pepsCostBasis && { pepsCostBasis: product.pepsCostBasis }),
     });
     pieces += delivered;
     grossSubtotal += delivered * line.price;

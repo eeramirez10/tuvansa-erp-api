@@ -24,8 +24,12 @@ function blockingReason(source: SalesRemissionCancellationSource) {
     || invoice.currency.id !== 1 || invoice.currency.exchangeRate !== 1 || source.charge <= 0
     || !source.warehouse || !lineEffects.length || movement.lines.length !== lineEffects.length
     || invoice.lines.length !== lineEffects.length) return 'El documento requiere una cancelación distinta.';
-  if (invoice.lines.some(({ pieces }) => pieces !== 0) || movement.lines.some(({ lotId, pieces, piecesText }) =>
-    lotId !== 0 || pieces !== 0 || !/^(?:0+(?:\.0+)?)?$/.test(piecesText.trim()))) {
+  if (invoice.lines.some(({ pieces }) => pieces !== 0) || movement.lines.some(({ lotId, lotWarehouse, pieces, piecesText }, index) => {
+    const layer = invoice.lines[index]?.inventoryLayer;
+    const validLayer = lotId === 0 ? !layer : !source.historical && Number.isSafeInteger(lotId) && lotId > 0
+      && lotWarehouse && layer?.id === lotId && layer.warehouse === lotWarehouse;
+    return !validLayer || pieces !== 0 || !/^(?:0+(?:\.0+)?)?$/.test(piecesText.trim());
+  })) {
     return 'La remisión tiene lotes o piezas que requieren su propia cancelación.';
   }
   if (hasCollection) return 'La remisión tiene un cobro PA aplicado.';
@@ -41,16 +45,22 @@ function periodReason(source: SalesRemissionCancellationSource, period: PostingR
 
 function regenerateOrder(source: SalesRemissionCancellationSource, order: OrderProps): OrderProps {
   if (order.id !== source.orderId || order.number !== source.orderNumber || order.documentKind !== 'order') throw changedOrder();
-  const effects = new Map(source.lineEffects.map(({ orderLineId, ...line }, index) => [orderLineId, {
-    ...line, unit: source.invoice.lines[index]?.unit,
-  }]));
-  if (effects.size !== source.lineEffects.length) throw changedOrder();
+  const effects = new Map<number, { productId: number; quantity: number; unit: string }>();
+  for (const [index, effect] of source.lineEffects.entries()) {
+    const invoice = source.invoice.lines[index];
+    if (!invoice || !Number.isFinite(effect.quantity) || effect.quantity <= 0) throw changedOrder();
+    const unit = invoice.unit.trim();
+    const previous = effects.get(effect.orderLineId);
+    if (previous && (source.historical || !invoice.inventoryLayer || previous.unit !== unit || previous.productId !== effect.productId)) {
+      throw changedOrder();
+    }
+    effects.set(effect.orderLineId, { productId: effect.productId, unit, quantity: quantity((previous?.quantity ?? 0) + effect.quantity) });
+  }
   const lines = order.lines.map((line) => {
     const effect = effects.get(line.id);
     if (!effect) return line;
     effects.delete(line.id);
-    if (line.productId !== effect.productId || line.unit.trim() !== effect.unit?.trim()
-      || !Number.isFinite(effect.quantity) || effect.quantity <= 0 || quantity(line.fulfilled - effect.quantity) < 0) throw changedOrder();
+    if (line.productId !== effect.productId || line.unit.trim() !== effect.unit || quantity(line.fulfilled - effect.quantity) < 0) throw changedOrder();
     const fulfilled = quantity(line.fulfilled - effect.quantity);
     return { ...line, fulfilled, remaining: quantity(line.ordered - fulfilled) };
   });

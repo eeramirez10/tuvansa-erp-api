@@ -79,6 +79,16 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
         summary: { ordered: invoice.totals.quantity, fulfilled: invoice.totals.fulfilledQuantity },
       };
     }
+    if (key === 'lots') {
+      const items = invoice.lines.flatMap(({ id, productCode, description, fulfilledQuantity, inventoryLayer }) => {
+        if (!inventoryLayer) return [];
+        const { id: layerId, ...fields } = inventoryLayer;
+        return [{ ...fields, id, layerId, productCode, description, quantity: fulfilledQuantity }];
+      });
+      if (items.length) return {
+        ...base, available: true, source: 'postgres', items,
+      };
+    }
     if (key === 'seal') {
       const { status, cfdStatus, folio, canceled } = invoice;
       const stampingSimulation = await this.stamping.inspect(invoice);

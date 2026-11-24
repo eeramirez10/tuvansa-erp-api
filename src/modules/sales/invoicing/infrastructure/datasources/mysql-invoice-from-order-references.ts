@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import { clientCatalogRecord } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
+import { mexicoGlobalPepsCondition } from '../../../../inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js';
 import {
   catalogOtherData, catalogProductsById, isNewCatalogProduct,
 } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
@@ -24,6 +25,7 @@ interface ReferencesRow extends RowDataPacket {
   creditLimit: number;
   creditBalance: number;
   vat: number;
+  automaticPeps: number;
 }
 
 interface ProductRow extends RowDataPacket {
@@ -36,6 +38,10 @@ interface ProductRow extends RowDataPacket {
   legacyOnHand: number;
   legacyAssigned: number;
   supported: number;
+  peps: number;
+  average: number;
+  last: number;
+  adValorem: number;
 }
 
 const noReferences = 'La configuración de Remisión México (FA) no está disponible para este pedido.';
@@ -52,7 +58,8 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
          TRIM(cl.CLIAPLICAR) AS alternateCustomer, COALESCE(cl.CLIINTERCIA,0) AS intercompany,
          COALESCE(cl.CLIRETIVA,0) AS withheldVat, COALESCE(cl.CLIPLAZO0,0) AS customerTermsDays,
          COALESCE(cl.CLICREDIT,0) AS creditLimit, COALESCE(cl.CLISACT + cl.CLITSACT,0) AS creditBalance,
-         CASE COALESCE(cl.CLITIPOIVA,0) WHEN 0 THEN m.TIIVA0 WHEN 1 THEN m.TIIVA1 WHEN 2 THEN m.TIIVA2 END AS vat
+         CASE COALESCE(cl.CLITIPOIVA,0) WHEN 0 THEN m.TIIVA0 WHEN 1 THEN m.TIIVA1 WHEN 2 THEN m.TIIVA2 END AS vat,
+         (${mexicoGlobalPepsCondition}) AS automaticPeps
        FROM FCIA c
        JOIN FTIPMV m ON m.TICLA=c.CIATMFACT AND m.TIMULTICIA=c.CIASEQ AND m.TIMODULO=4
        LEFT JOIN FCLI cl ON cl.CLISEQ=?
@@ -95,18 +102,23 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
       const [items] = await legacyMysqlPool.execute<ProductRow[]>(
         `SELECT i.ISEQ AS id, TRIM(i.ICOD) AS code, TRIM(i.IUM) AS unit, TRIM(i.IEMPAQUE) AS package, TRIM(i.IFAM6) AS family,
           (i.ILISTA4 + i.IADVALOREM) AS cost, COALESCE(a.ALMCANT,0) AS legacyOnHand,
-          COALESCE(a.ALMASIGNADO,0) AS legacyAssigned,
+          COALESCE(a.ALMASIGNADO,0) AS legacyAssigned, i.ILISTA4 AS average, i.ILISTA5 AS last, i.IADVALOREM AS adValorem,
           (
             i.ITIPO IN (0,1) AND i.INOCAPAS=1 AND i.IBAJA='1900-12-31' AND i.IPORCIVA=0
             AND i.IPORCIEPES=0 AND i.IFIJOIEPS=0 AND i.IRETIVA=0 AND i.IPORCRETIVA=0
             AND NOT EXISTS (SELECT 1 FROM FLOTES l WHERE l.ISEQ=i.ISEQ AND l.LOALM=? AND l.LOCANT>0)
-          ) AS supported
+          ) AS supported,
+          (i.ITIPO IN (0,1) AND i.INOCAPAS<>1 AND i.IBAJA='1900-12-31' AND i.IINACTIVO=0
+            AND i.IPORCIVA=0 AND i.IPORCIEPES=0 AND i.IFIJOIEPS=0 AND i.IRETIVA=0 AND i.IPORCRETIVA=0
+            AND i.ICT=0 AND i.ICONTROLPZAS=0 AND i.IPORCARANC=0) AS peps
          FROM FINV i LEFT JOIN FALM a ON a.ALMKEY=CONCAT(RPAD(TRIM(i.ICOD),13,' '),?)
          WHERE i.ISEQ IN (${ids.map(() => '?').join(',')})`,
         [warehouse, warehouse, ...ids],
       );
       for (const item of items) {
-        products.set(item.id, { ...item, supported: Boolean(item.supported) });
+        const { peps, average, last, adValorem, supported, ...product } = item;
+        const pepsCostBasis = rules.automaticPeps && peps ? { average, last, adValorem } : undefined;
+        products.set(item.id, { ...product, supported: Boolean(supported || pepsCostBasis), ...(pepsCostBasis && { pepsCostBasis }) });
       }
       const [references, otherData] = await Promise.all([catalogProductsById(ids), catalogOtherData(ids)]);
       for (const [id, { document, deleted, revision }] of references) {
@@ -122,12 +134,24 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
           && Number(options.taxRateType ?? 0) === 0 && Number(options.iepsPercentage ?? 0) === 0
           && Number(options.vatWithholdingType ?? 0) === 0 && Number(options.tariffPercentage ?? 0) === 0
         );
+        const peps = legacy?.pepsCostBasis;
+        const pepsCostBasis = peps && !document.classification.usesColorAndSize
+          && options?.noInventoryLayer !== true && !options?.controlsPieces && !options?.tariff && !options?.tariffPercentage
+          && !options?.taxRateType && !options?.iepsPercentage && !options?.vatWithholdingType
+          ? {
+            average: typeof options?.list4 === 'number' ? options.list4 : document.prices.costs.average,
+            last: typeof options?.list5 === 'number' ? options.list5 : document.prices.costs.last,
+            adValorem: document.prices.costs.adValorem,
+          }
+          : undefined;
         products.set(id, {
           id, code: document.code, unit: document.classification.unit.code,
           cost: document.prices.costs.average + document.prices.costs.adValorem,
           package: legacy?.package ?? '', family: legacy?.family ?? '',
           legacyOnHand: legacy?.legacyOnHand ?? 0, legacyAssigned: legacy?.legacyAssigned ?? 0,
-          supported: supported && ['rawMaterial', 'finishedProduct'].includes(document.classification.type),
+          supported: supported && (!peps || pepsCostBasis !== undefined)
+            && ['rawMaterial', 'finishedProduct'].includes(document.classification.type),
+          ...(pepsCostBasis && { pepsCostBasis }),
         });
       }
     }

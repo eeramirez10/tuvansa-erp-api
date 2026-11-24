@@ -5,6 +5,7 @@ import { ReverseCustomerCollection } from '../src/modules/accounts-receivable/cl
 import { salesRemissionsOutstanding } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import { PostgresCustomerCollections } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { PostgresCustomerCollectionReversals } from '../src/modules/accounts-receivable/clients/infrastructure/datasources/postgres-customer-collection-reversals.js';
+import { currentAdjustmentLayers, inactivePepsOrder, type AdjustmentLayer } from '../src/modules/inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
 import { CancelSalesRemission } from '../src/modules/sales/invoicing/application/use-cases/cancel-sales-remission.js';
 import type {
   SalesRemissionCancellationInput, SalesRemissionCancellationSource,
@@ -35,8 +36,15 @@ it('cancels local FAW through K, protects fiscal and PA records, and regenerates
   const issuedAt = '2025-12-01';
   const fiscal = { fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' };
   const orders = new PostgresOrderOverlayDataSource(connect, () => true);
-  const sales = new PostgresSalesRemissions(orders, connect);
-  const storage = new PostgresSalesRemissionCancellations(orders, connect, () => true);
+  const layer = { productId: 7, date: '2025-11-25', cost: 22, adValorem: 0, document: 'RA123',
+    customsEntry: 'PED123', customsOffice: '240', expiresAt: null, lot: '', number: '', location: '' };
+  const opened: AdjustmentLayer[] = [
+    { ...layer, id: 100, warehouse: '11', initial: 1, available: 1, layerOrder: 1 },
+    { ...layer, id: 101, warehouse: '01', initial: 2, available: 2, layerOrder: 2 },
+  ];
+  const layers = { layers: async () => opened };
+  const sales = new PostgresSalesRemissions(orders, connect, layers);
+  const storage = new PostgresSalesRemissionCancellations(orders, connect, () => true, undefined, layers);
   const cancellations = new CancelSalesRemission(storage, { fiscalWindow: async () => fiscal });
   const simulations = new PostgresSalesStampingSimulations(connect);
   const orderFor = (id: number): OrderProps => ({
@@ -122,6 +130,60 @@ it('cancels local FAW through K, protects fiscal and PA records, and regenerates
       .toMatchObject([{ movement: { header: { type: 'K', document: 'KWV00000001', reference: number },
         lines: [{ quantity: 2, type: 'K' }], totals: { quantity: 2, cost: 50 } } }]);
     expect((await db.query('SELECT count(*)::integer AS originals FROM tuvansa.sales_remissions')).rows).toEqual([{ originals: 3 }]);
+
+    const pepsOrder = await orders.create(async (id) => orderFor(id));
+    const remit = (quantity: number, key: string) => sales.commit({
+      companyId, userId, requestKey: key, orderId: pepsOrder.id, orderNumber: pepsOrder.number,
+      revision: 1, fingerprint: 'a'.repeat(64),
+      post: async (current, balance) => postInvoiceFromOrder(current, {
+        ...fiscal, reason: null, vat: 16, customerTermsDays: 5, creditLimit: 1000, creditBalance: 0,
+        products: new Map([[7, { id: 7, code: 'A', unit: 'PZ', package: '', family: '', cost: 25,
+          legacyOnHand: 20, legacyAssigned: 0, supported: true, pepsCostBasis: { average: 30, last: 22, adValorem: 0.125 } }]]),
+      }, { orderNumber: pepsOrder.number, revision: 1, requestKey: key, issuedAt, lines: [{ orderLineId: 101, quantity }] },
+      companyId, userId, balance ?? 0),
+    });
+    const opening = await currentAdjustmentLayers(client, [7], opened);
+    await expect(remit(4, crypto.randomUUID())).rejects.toMatchObject({ code: 'INVENTORY_ADJUSTMENT_LAYER_INSUFFICIENT' });
+    expect(await currentAdjustmentLayers(client, [7], opened)).toEqual(opening);
+    expect(await orders.get(pepsOrder.id)).toMatchObject({ revision: 1 });
+    expect(await salesRemissionsOutstanding(client, companyId, customerId)).toBe(116);
+
+    const key = crypto.randomUUID();
+    const partial = await remit(2, key);
+    expect(await remit(2, key)).toEqual(partial);
+    expect(partial).toMatchObject({
+      orderComplete: false, invoice: { totals: { total: 116, fulfilledQuantity: 2 }, lines: [
+        { fulfilledQuantity: 1, quantity: -1, cost: 30.125, amount: 50, inventoryLayer: { id: 100, warehouse: '11', customsEntry: 'PED123' } },
+        { fulfilledQuantity: 1, quantity: -1, cost: 30.125, amount: 50, inventoryLayer: { id: 101, warehouse: '01' } },
+      ] },
+    });
+    expect(await orders.get(pepsOrder.id)).toMatchObject({ revision: 2, document: {
+      fulfilledAmount: 100, lines: [{ fulfilled: 2, remaining: 2, assigned: 2 }],
+    } });
+    expect(await currentAdjustmentLayers(client, [7], opened)).toMatchObject([
+      { id: 100, available: 0, layerOrder: inactivePepsOrder }, { id: 101, available: 1, layerOrder: 2 },
+    ]);
+    expect(await salesRemissionsOutstanding(client, companyId, customerId)).toBe(232);
+
+    const pepsId = partial.invoice.id;
+    expect(await cancellations.prepare(companyId, pepsId)).toMatchObject({ canWrite: true, order: { canRegenerate: true } });
+    const pepsInput = { ...input, requestKey: crypto.randomUUID() };
+    const returned = await cancellations.save(companyId, userId, pepsId, pepsInput);
+    expect(await cancellations.save(companyId, userId, pepsId, pepsInput)).toEqual(returned);
+    expect(await orders.get(pepsOrder.id)).toMatchObject({ revision: 3, document: {
+      fulfilledAmount: 0, lines: [{ fulfilled: 0, remaining: 4, assigned: 2 }],
+    } });
+    expect(await salesRemissionsOutstanding(client, companyId, customerId)).toBe(116);
+    expect(await currentAdjustmentLayers(client, [7], opened)).toMatchObject([
+      { id: 100, available: 1, initial: 1, layerOrder: 3 }, { id: 101, available: 2, initial: 2, layerOrder: 2 },
+    ]);
+    expect((await db.query('SELECT movement FROM tuvansa.sales_remission_cancellations WHERE id=$1', [returned.id])).rows)
+      .toMatchObject([{ movement: { lines: [
+        { quantity: 1, type: 'K', lotId: 100, warehouse: '01', lotWarehouse: '11' },
+        { quantity: 1, type: 'K', lotId: 101, warehouse: '01', lotWarehouse: '01' },
+      ], totals: { quantity: 2, cost: 60.25 } } }]);
+    expect((await db.query(`SELECT count(*)::int AS count,sum(quantity)::float8 AS balance
+      FROM tuvansa.inventory_adjustment_layer_stock WHERE remission_id=$1`, [pepsId])).rows).toEqual([{ count: 4, balance: 0 }]);
   } finally { await db.close(); }
 }, 15000);
 

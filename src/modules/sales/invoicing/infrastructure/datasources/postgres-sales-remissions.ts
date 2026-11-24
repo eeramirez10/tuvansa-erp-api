@@ -7,11 +7,14 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { connectPostgres, postgresConfigured, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type { MovementDocument } from '../../../../inventories/movements/domain/entities/inventory-movement.js';
+import { writeLayerStock } from '../../../../inventories/movements/infrastructure/datasources/inventory-adjustment-layers.js';
+import { MysqlInventoryAdjustmentReferences } from '../../../../inventories/movements/infrastructure/datasources/mysql-inventory-adjustment-references.js';
 import { normalizeOrderWarehouse } from '../../../orders/domain/entities/order-warehouse.js';
 import type { OrderProps } from '../../../orders/domain/entities/order.js';
 import { PostgresOrderOverlayDataSource } from '../../../orders/infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { assertSaleStock } from '../../../orders/infrastructure/datasources/sales-order-inventory-stock.js';
 import type { InvoiceFromOrderCommand, InvoiceFromOrderResult, InvoiceFromOrderStorage } from '../../domain/datasources/invoice-from-order-data-source.js';
+import { allocateSalesRemissionLayers, ensureSalesRemissionPepsSchema, type SalesRemissionLayerReferences } from './sales-remission-peps.js';
 
 const idStart = 7100000000000;
 const idEnd = idStart + 99999998;
@@ -55,7 +58,10 @@ const migrations = [{
   `,
 }];
 
-export const ensureSalesRemissionSchema = (client: PostgresClient) => migratePostgres(client, migrations);
+export async function ensureSalesRemissionSchema(client: PostgresClient) {
+  await migratePostgres(client, migrations);
+  await ensureSalesRemissionPepsSchema(client);
+}
 
 const unavailable = () => new ApplicationError('No fue posible consultar o guardar la remisión en PostgreSQL.', 'SALES_REMISSION_POSTGRES_UNAVAILABLE', 503);
 
@@ -83,7 +89,11 @@ export function readSalesRemissions<T>(fallback: T, callback: (client: PostgresC
 export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
   private migration?: Promise<void>;
 
-  constructor(private readonly orders = new PostgresOrderOverlayDataSource(), private readonly connect: PostgresConnectionFactory = connectPostgres) {}
+  constructor(
+    private readonly orders = new PostgresOrderOverlayDataSource(),
+    private readonly connect: PostgresConnectionFactory = connectPostgres,
+    private readonly layers: SalesRemissionLayerReferences = new MysqlInventoryAdjustmentReferences(),
+  ) {}
 
   writable() { return this.orders.configured; }
 
@@ -134,8 +144,9 @@ export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
       if (current.number !== orderNumber) throw new ConflictError('El folio del pedido cambió.', 'SALES_REMISSION_ORDER_CHANGED');
       await assertClientCatalogCreditAllowed(client, current.customer.id);
       const balance = await salesRemissionsOutstanding(client, companyId, current.customer.id);
-      const posting = await post(current, balance);
-      await assertSaleStock(client, current, posting.stock);
+      const draft = await post(current, balance);
+      await assertSaleStock(client, current, draft.stock);
+      const posting = await allocateSalesRemissionLayers(client, draft, this.layers);
       const { rows: [sequence] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.sales_remission_ids') AS id");
       const id = Number(sequence!.id);
       const number = 'FAW' + String(id - idStart + 1).padStart(8, '0');
@@ -163,6 +174,7 @@ export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
          SELECT $1,product,$2,-quantity FROM unnest($3::bigint[],$4::numeric[]) AS rows(product,quantity)`,
         [id, warehouse, posting.stock.map(({ productId }) => productId), posting.stock.map(({ quantity }) => quantity)],
       );
+      await writeLayerStock(client, 'remission_id', id, movement.lines, false, posting.queueChanges);
       return { order: posting.order, result };
     });
   }

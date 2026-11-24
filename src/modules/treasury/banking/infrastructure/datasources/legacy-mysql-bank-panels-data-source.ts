@@ -77,7 +77,7 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
         bankCanReconcile(accountData, 1));
       case 'automatic-reconciliation': return this.getAutomaticReconciliation(bankAccountId, options.asOfDate, accountData.balances.bank);
       case 'cost-center-ledger': return this.getCostCenterLedger(accountData.code, options.costCenter);
-      case 'authorization-review': return this.getAuthorizationReview(accountData.code);
+      case 'authorization-review': return this.getAuthorizationReview(bankAccountId);
       case 'classifiers': return this.getClassifiers();
       case 'supplier-expenses': return this.getSupplierExpenses(bankAccountId);
       case 'transfer': return this.getTransferConfiguration();
@@ -224,19 +224,19 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
     };
   }
 
-  private async getAuthorizationReview(code: string): Promise<BankPanelResponse> {
+  private async getAuthorizationReview(bankAccountId: number): Promise<BankPanelResponse> {
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
       `SELECT BATIP AS movementType, BAIMPOR AS charge, BAIMPORNEG AS credit,
               BAAUTORIZADO AS authorized, FBANMOV.BASEQ AS movementId,
               POBENEF AS beneficiary, BANUM AS bankNumber, PONUM AS policyNumber,
               POFECHA AS policyDate, POEST AS policyStatus,
-              POCHEQUE AS checkNumber, BAOKTRANSITO AS inTransit
+              POCHEQUE AS checkNumber, BAOKTRANSITO AS inTransit, FBANMOV.POSEQ AS policyId
          FROM FBANMOV
          LEFT JOIN FBENC ON FBANMOV.BSEQ = FBENC.BSEQ
          LEFT JOIN FPOLIZA ON FBANMOV.POSEQ = FPOLIZA.POSEQ
-        WHERE BCOD = ? AND POEST = 0 AND POCIA = 1 AND BAAUTORIZADO <> '*'
+        WHERE FBENC.BSEQ = ? AND POEST = 0 AND POCIA = 1 AND BAAUTORIZADO <> '*'
         ORDER BY BCOD, FBANMOV.BASEQ LIMIT 32767`,
-      [code],
+      [bankAccountId],
     );
     return { button: 'Revisar', section: 'actions', source: ['FBANMOV', 'FBENC', 'FPOLIZA'], available: true, readOnly: true, items: toItems(rows) };
   }

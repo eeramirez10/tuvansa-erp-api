@@ -5,6 +5,7 @@ import type { BankPanelSettingsDataSource } from '../../domain/datasources/bank-
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
 import { BankPanelsWithLocalPostingsDataSource } from './banks-with-local-postings-data-source.js';
 import { bankLedgerWithWebPostings } from './bank-ledger-postings.js';
+import { readBankTransit } from './bank-transit-reads.js';
 
 const classifierColumns = Array.from({ length: 9 }, (_, index) => `BPAR${index + 1}`);
 type ClassifierGroup = { type: string; items: { code: string; description: string; parent: string }[] };
@@ -62,16 +63,22 @@ export class BankPanelsWithActionsDataSource extends BankPanelsWithLocalPostings
   }
 
   private async review(id: number, panel: BankPanelResponse) {
-    const stored = await this.settings.read<number[]>({ accountId: id, action: 'review', scope: '' });
+    const [stored, transit] = await Promise.all([
+      this.settings.read<number[]>({ accountId: id, action: 'review', scope: '' }),
+      readBankTransit(1, id),
+    ]);
     const reviewed = new Set(stored?.values ?? []);
+    const transitMarks = new Map(transit.map((mark) => [mark.movementId, mark.inTransit]));
     const items = (panel.items as Record<string, unknown>[]).map((row) => {
-      if (!row.mode || row.applied !== 1 || typeof row.movementId !== 'number') return row;
+      if (typeof row.movementId !== 'number' || row.policyStatus !== 0 || (row.mode && row.applied !== 1)) return row;
       const marked = reviewed.has(row.movementId);
-      return { ...row, canReview: !marked && this.settings.writable(), reviewed: marked, authorized: marked ? '*' : row.authorized };
+      const inTransit = transitMarks.get(row.movementId) ?? row.inTransit === '*';
+      return { ...row, canReview: !marked && this.settings.writable(), reviewed: marked,
+        authorized: marked ? '*' : row.authorized, inTransit: inTransit ? '*' : '' };
     });
     return {
       ...panel, items, readOnly: !items.some((row) => row.canReview === true),
-      source: [...panel.source, ...(stored ? ['bank_panel_settings'] : [])],
+      source: [...panel.source, ...(stored ? ['bank_panel_settings'] : []), ...(transit.length ? ['bank_reconciliation_transit'] : [])],
       summary: { ...panel.summary, revision: stored?.revision ?? 0 },
     };
   }

@@ -41,7 +41,7 @@ export class ConfigureBankPanels {
     const movements = new Map((panel.items as { movementId: number; canReview?: boolean; reviewed?: boolean }[])
       .map((row) => [row.movementId, row]));
     if (ids.some((id) => !movements.get(id)?.canReview && !movements.get(id)?.reviewed)) {
-      throw new ApplicationError('Selecciona movimientos web aplicados de esta cuenta.', 'BANK_REVIEW_MOVEMENT_INVALID', 422);
+      throw new ApplicationError('Selecciona movimientos disponibles de esta cuenta.', 'BANK_REVIEW_MOVEMENT_INVALID', 422);
     }
     const key = { accountId, action: 'review' as const, scope: '' };
     const previous = (await this.settings.read<number[]>(key))?.values ?? [];

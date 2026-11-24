@@ -74,7 +74,7 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | Gastos por prv. | `/:bankAccountId/actions/supplier-expenses` | Consulta **Compras por proveedor** de la cuenta. **Pagar recepción** consulta pendientes en `/capture` y registra un PP por cheque con POST en la ruta del informe. |
 | Mayor | `/:bankAccountId/actions/general-ledger` | Meses de `FBENC` más cargos y abonos web del ejercicio. **Iguales** y **Cambiar** guardan los doce meses del primer periodo con PATCH en la misma ruta. |
 | Mayor C.C. | `/:bankAccountId/actions/cost-center-ledger?costCenter=1` | Centros de `FALMCAT` (`CATTIPO='CEN'`) y registro `FCCBENC.BCCKEY='01'+C.C.+BCOD`. El PATCH guarda el primer presupuesto del centro seleccionado. |
-| Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'`. El PATCH marca la revisión de partidas web aplicadas con `*`. |
+| Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'`. El PATCH guarda `*` para partidas históricas elegibles y partidas web aplicadas. |
 | Clasificar | `/:bankAccountId/actions/classifiers` | Nueve niveles de `FAG`, `AGT=1..9` y `AGTIPO=3`, con valores de `FBENC.BPAR1..9`. El PATCH guarda las claves disponibles. |
 | Traspasos entre Cuentas | `/:bankAccountId/actions/transfer/capture?direction=outgoing` | `FTIPMV.TICLA='3'` y `FCIA.CIAPOLIZACONT`. El POST en `/:bankAccountId/actions/transfer` registra Cheque o Traspas y la póliza de diario con dos partidas. |
 | Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0`. Consulta, comentarios e impresión si hay una póliza seleccionada. |
@@ -120,7 +120,22 @@ para la modalidad **Traspas**.
 
 **Concilia Automático** compara las partidas pendientes con un archivo CSV o TSV. El archivo debe contener las columnas `Fecha`, `Referencia`, `Ingresos` y `Egresos`, con fecha `AAAA-MM-DD` o `DD/MM/AAAA` y punto decimal. La vista selecciona coincidencias únicas por referencia e importe firmado. **Liga** permite resolver filas ambiguas con una partida pendiente del mismo importe y signo. Se pueden quitar coincidencias antes de registrar. La captura nativa `bank-full-24-auto-open.png` muestra la comparación de los dos auxiliares. El CSV y el TSV son formatos de intercambio de la web.
 
-La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. En **Revisar** la marca web aplica a partidas web registradas. La operación nativa **Traspasa +** queda pendiente.
+La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes. La operación nativa **Traspasa +** queda pendiente.
+
+**Revisar** abre **Autorizar** (`EBANCO#11`). Los procedimientos `/1`,
+`/2` y `/99` consultan la partida por `FBANMOV.BASEQ` y modifican
+`BAAUTORIZADO` mediante `MBASE/74`. La vista histórica de la cuenta
+`1102100001` mostró partidas con pólizas sin aplicar y permitió cambiar la
+marca en pantalla. La consulta adaptada conserva `POEST=0`, `POCIA=1` y
+`BAAUTORIZADO<>'*'`. La revisión web guarda la marca local y protege el
+conjunto por revisión. La cuenta, el corte y la póliza de origen conservan
+sus importes. Capturas `closure-bank-review-first-draft-ready.png` y
+`closure-bank-review-proc99.png`.
+
+La prueba web de `BASEQ=418562` registró `*`, abrió la póliza vinculada y
+volvió a mostrar la partida con **Filtra \***. El mismo PATCH fue
+idempotente. Una selección distinta con la revisión anterior recibió
+conflicto. Los saldos y la póliza conservaron los valores previos.
 
 **Bancos → Gastos por prv.** abre el informe **Compras por proveedor**
 (`EBANCO#1/8 → EBANCO#9`). `EBANCO#9/240` carga `FBANMOV` por la cuenta

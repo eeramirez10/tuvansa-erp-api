@@ -140,7 +140,7 @@ Content-Type: application/json
 
 { "revision": {{panelRevision}}, "values": ["","","","","","","","",""] }
 
-### Revisar, consultar partidas web elegibles
+### Revisar, consultar partidas elegibles y sus pólizas
 GET {{banks}}/{{bankAccountId}}/actions/authorization-review
 
 ### Revisar, registrar una partida elegible

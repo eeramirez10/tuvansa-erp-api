@@ -1,7 +1,9 @@
 import type { SupplierPanelKey, SupplierPanelResult } from '../../domain/repositories/supplier-panels-repository.js';
 import { readHistoricalReceptionCancellations, type HistoricalReceiptCancellation } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
+import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { LegacyMysqlSupplierPanelsDataSource } from './legacy-mysql-supplier-panels-data-source.js';
 import { supplierCatalogRecord } from './postgres-supplier-catalog-data-source.js';
+import { readSupplierClassifications } from './mysql-supplier-catalog-references.js';
 import {
   purchaseReceptionSupplierCharges, type SupplierPurchaseReceptionCharge, type SupplierPurchaseReceptionPayment,
 } from './purchase-reception-supplier-charges.js';
@@ -90,6 +92,19 @@ function historicalCancellationMovements(cancellations: HistoricalReceiptCancell
 }
 
 export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlSupplierPanelsDataSource {
+  override async findClassifications(id: number, position: number) {
+    const local = await supplierCatalogRecord(id);
+    if (!local) {
+      const panel = await super.findClassifications(id, position);
+      return panel && { ...panel, canWrite: postgresConfigured() && Boolean(panel.supplier.code) };
+    }
+    if (local.deleted) return null;
+    const current = local.classifications ?? (local.legacy ? await readSupplierClassifications(id) : Array<string>(9).fill(''));
+    if (!current) return null;
+    const { code, name, totals } = local.supplier;
+    return this.classificationPanel({ id, code, name, currentBalance: totals.currentBalance }, position, current, local.revision, true);
+  }
+
   override async findPanel(supplierId: number, key: SupplierPanelKey) {
     const local = await supplierCatalogRecord(supplierId);
     if (local?.deleted) return null;

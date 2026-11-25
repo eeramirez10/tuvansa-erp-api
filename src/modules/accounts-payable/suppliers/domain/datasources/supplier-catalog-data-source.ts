@@ -1,5 +1,6 @@
 import type { SupplierCatalogParameters, SupplierCatalogRecord } from '../entities/supplier-catalog.js';
 import type { Supplier } from '../entities/supplier.js';
+import type { SupplierClassificationOption } from '../repositories/supplier-panels-repository.js';
 
 export interface SupplierCatalogSettings {
   defaultAccount: string;
@@ -11,6 +12,8 @@ export interface SupplierCatalogReferences {
   settings(): Promise<SupplierCatalogSettings | null>;
   findById(id: number): Promise<Supplier | null>;
   parameters(id: number): Promise<SupplierCatalogParameters | null>;
+  classifications(id: number): Promise<string[] | null>;
+  classifiers(): Promise<SupplierClassificationOption[]>;
   codeExists(code: string, excludeId?: number): Promise<boolean>;
   leafAccount(code: string): Promise<boolean>;
   dependency(id: number, code: string): Promise<string | null>;

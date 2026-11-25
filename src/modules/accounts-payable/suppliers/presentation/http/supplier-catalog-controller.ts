@@ -23,6 +23,10 @@ const revision = z.string().regex(/^[0-9a-f]{64}$/);
 const createBody = z.strictObject({ requestKey: z.uuid().transform((key) => key.toLowerCase()), fields });
 const updateBody = z.strictObject({ revision, fields });
 const deleteBody = z.strictObject({ revision, confirmed: z.literal(true) });
+const classificationBody = z.strictObject({
+  revision: z.int().nonnegative().max(2147483646), requestKey: z.uuid().transform((key) => key.toLowerCase()),
+  current: z.array(z.string().max(5).refine((value) => !value.includes('\0'))).length(9),
+});
 
 export class SupplierCatalogController {
   constructor(private readonly catalog: WriteSupplierCatalog, private readonly suppliers: SuppliersDataSource) {}
@@ -47,6 +51,11 @@ export class SupplierCatalogController {
     const updated = await this.catalog.update(supplierId, revision, fields);
     const supplier = await this.suppliers.findById(supplierId);
     response.json({ data: supplier?.toPrimitives() ?? updated });
+  };
+
+  classify: RequestHandler = async (request, response) => {
+    const { supplierId } = supplierParams.parse(request.params);
+    response.json({ data: await this.catalog.classify(supplierId, classificationBody.parse(request.body)) });
   };
 
   remove: RequestHandler = async (request, response) => {

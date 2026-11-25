@@ -15,14 +15,27 @@ import type { PostgresConnectionFactory } from '../src/shared/infrastructure/dat
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 
 const db = new PGlite();
-const connect: PostgresConnectionFactory = async () => ({
-  async query<T extends object>(sql: string, values?: unknown[]) {
-    if (values) return db.query<T>(sql, values);
-    const result = await db.exec(sql);
-    return { rows: (result.at(-1)?.rows ?? []) as T[] };
-  },
-  release() {},
-});
+let failCommit = false;
+let next = Promise.resolve();
+const connect: PostgresConnectionFactory = async () => {
+  // PGlite runs a single SQL session. Independent HTTP requests queue at checkout.
+  const previous = next;
+  let release!: () => void;
+  next = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  return {
+    async query<T extends object>(sql: string, values?: unknown[]) {
+      if (sql === 'COMMIT' && failCommit) {
+        failCommit = false;
+        throw new Error('Fallo de prueba antes de confirmar');
+      }
+      if (values) return db.query<T>(sql, values);
+      const result = await db.exec(sql);
+      return { rows: (result.at(-1)?.rows ?? []) as T[] };
+    },
+    release,
+  };
+};
 
 vi.mock('../src/shared/infrastructure/database/postgres-pool.js', async (importOriginal) => ({
   ...await importOriginal<object>(), connectPostgres: () => connect(), postgresConfigured: () => true,
@@ -35,6 +48,12 @@ const references = {
   settings: async () => ({ defaultAccount: '2001001', accountingEnabled: true, accountingAccountRequired: true }),
   findById: async (id: number) => id === original.id ? Supplier.create(original) : null,
   parameters: async () => ({ ...nativeSupplierParameters, tolerancePercent: 35 }),
+  classifications: async () => ['1OLD', '', '', '', '', '', '', '', ''],
+  classifiers: async () => [
+    { id: 1, code: '1A', number: 'A', description: 'Agente A', type: '1' },
+    { id: 2, code: '2B', number: 'B', description: 'Tipo B', type: '2' },
+    { id: 3, code: '3C', number: 'C', description: 'Sucursal C', type: '3' },
+  ],
   codeExists: async (code: string, excludeId?: number) => code === original.code && original.id !== excludeId,
   leafAccount: async (code: string) => code === '2001001',
   dependency: async () => nativeDependency,
@@ -68,9 +87,40 @@ const controller = new SupplierCatalogController(edits, view);
 const app = express().use(express.json());
 app.get('/create', controller.getCreate).get('/:supplierId/edit', controller.getEdit);
 app.post('/', controller.create).patch('/:supplierId', controller.update).delete('/:supplierId', controller.remove);
+app.patch('/:supplierId/actions/classifications', controller.classify);
 app.use(errorHandler);
 
 afterAll(() => db.close());
+
+it('guarda nueve clasificadores juntos y conserva el resultado al reintentar o cambiar la ficha', async () => {
+  const command = { requestKey: randomUUID(), fields: { ...defaults, code: 'ZZC123', name: 'Temporal' } };
+  const created = await request(app).post('/').send(command).expect(201);
+  const { id } = created.body.data;
+  const path = `/${id}/actions/classifications`;
+  const proposal = { current: ['1A', '2B', '', '', '', '', '', '', ''], revision: 1, requestKey: randomUUID() };
+  const competing = { current: ['1A', '', '3C', '', '', '', '', '', ''], revision: 1, requestKey: randomUUID() };
+  try {
+    await request(app).patch(path).send({ ...proposal, current: ['2B', ...proposal.current.slice(1)] }).expect(422);
+    failCommit = true;
+    await request(app).patch(path).send(proposal).expect(503);
+    expect(await supplierCatalogRecord(id)).toMatchObject({ revision: 1, classifications: null });
+    const results = await Promise.all([request(app).patch(path).send(proposal), request(app).patch(path).send(competing)]);
+    expect(results.map(({ status }) => status).sort()).toEqual([200, 409]);
+    const winner = results[0]!.status === 200 ? proposal : competing;
+    const expected = { data: { current: winner.current, revision: 2 } };
+    expect((await request(app).patch(path).send(winner).expect(200)).body).toEqual(expected);
+    expect(await supplierCatalogRecord(id)).toMatchObject({ classifications: winner.current, revision: 2 });
+    const edit = await request(app).get(`/${id}/edit`).expect(200);
+    await request(app).patch(`/${id}`).send({
+      revision: edit.body.data.revision, fields: { ...command.fields, notes: 'Edición temporal' },
+    }).expect(200);
+    expect(await supplierCatalogRecord(id)).toMatchObject({ classifications: winner.current, revision: 3 });
+    expect((await request(app).patch(path).send(winner).expect(200)).body).toEqual(expected);
+  } finally {
+    const current = await request(app).get(`/${id}/edit`).expect(200);
+    await request(app).delete(`/${id}`).send({ revision: current.body.data.revision, confirmed: true }).expect(204);
+  }
+});
 
 it('registra un proveedor, valida la cuenta y mantiene revisiones y dependencias locales en Baja', async () => {
   const init = await request(app).get('/create').expect(200);

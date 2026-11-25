@@ -4,8 +4,8 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { SupplierCatalogReadSession, SupplierCatalogReferences, SupplierCatalogSettings, SupplierCatalogStorage, SupplierCatalogWriteSession } from '../../domain/datasources/supplier-catalog-data-source.js';
 import {
-  blankSupplierCatalog, nativeSupplierParameters, newSupplier, presentSupplierCatalog, supplierCatalogFields,
-  type SupplierCatalogFields, type SupplierCatalogRecord,
+  blankSupplierCatalog, nativeSupplierParameters, newSupplier, presentSupplierCatalog, supplierCatalogFields, supplierClassifierLength,
+  type SupplierCatalogFields, type SupplierCatalogRecord, type SupplierClassificationUpdate,
 } from '../../domain/entities/supplier-catalog.js';
 import type { Supplier, SupplierProps } from '../../domain/entities/supplier.js';
 
@@ -100,6 +100,7 @@ export class WriteSupplierCatalog {
     const { tolerancePercent, vatCode, withheldVat, withheldIncomeTax, intercompany } = parameters;
     return {
       tolerancePercent, vatCode, withheldVat, withheldIncomeTax, intercompany,
+      ...(local?.classifications ? { classifications: local.classifications, classificationWrite: local.classificationWrite ?? null } : {}),
       supplier: { ...supplier, ...fields }, legacy: local?.legacy ?? Boolean(base), deleted,
       revision: (local?.revision ?? 0) + 1, originalCode: local?.originalCode ?? base?.toPrimitives().code ?? null,
     } satisfies SupplierCatalogRecord;
@@ -126,6 +127,40 @@ export class WriteSupplierCatalog {
       const record = await this.nextRecord(supplier, overlay, fields, false);
       await session.save(record);
       return record.supplier;
+    });
+  }
+
+  classify(id: number, input: SupplierClassificationUpdate) {
+    return this.storage.write(async (session) => {
+      await session.lockSupplier(id);
+      const overlay = await this.overlay(id, session);
+      const supplier = this.visible(overlay);
+      if (!supplier.code) throw invalid('Selecciona un proveedor con código para clasificar.');
+      const { local, base } = overlay;
+      const current = local?.classifications
+        ?? (base ? await this.references.classifications(id) : null) ?? Array<string>(9).fill('');
+      const changed = input.current.flatMap((code, index) => code === current[index] ? [] : [{ code, position: index + 1 }]);
+      const replay = local?.classificationWrite;
+      if (replay?.requestKey === input.requestKey) {
+        if (replay.previousRevision === input.revision && changed.length === 0) {
+          return { current, revision: replay.previousRevision + 1 };
+        }
+        throw new ConflictError('La clave del guardado ya se usó para otra selección.', 'SUPPLIER_CLASSIFICATION_REQUEST_REUSED');
+      }
+      const revision = local?.revision ?? 0;
+      if (input.revision !== revision) throw stale();
+      if (!changed.length) return { current, revision };
+      const choices = await this.references.classifiers();
+      if (changed.some(({ code, position }) => !code || code.length > supplierClassifierLength(position)
+        || !choices.some((choice) => choice.type === String(position) && choice.code === code))) {
+        throw new ApplicationError('Selecciona un código del catálogo del clasificador correspondiente.', 'INVALID_SUPPLIER_CLASSIFIER', 422);
+      }
+      const record = await this.nextRecord(supplier, overlay, supplierCatalogFields(supplier), false);
+      await session.save({
+        ...record, classifications: input.current,
+        classificationWrite: { requestKey: input.requestKey, previousRevision: revision },
+      });
+      return { current: input.current, revision: record.revision };
     });
   }
 

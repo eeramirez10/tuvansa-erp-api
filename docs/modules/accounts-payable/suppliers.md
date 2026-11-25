@@ -42,13 +42,32 @@ cambio de código. El código de un proveedor dado de baja queda reservado.
 | Botón OMNIS | Endpoint GET | Fuente real |
 | --- | --- | --- |
 | Bloquear | `/:id/actions/block-status` | `FPRV.PRVBAJA` (estado solamente; no modifica) |
-| Clasificar | `/:id/actions/classifications?position=1..9` | `FPRV.PRVPAR1..9` y opciones de `FAG` por `AGT` |
+| Clasificar | `/:id/actions/classifications?position=1..9` | `FPRV.PRVPAR1..9`, opciones de `FAG` y selección web |
 | % Descuentos | `/:id/actions/discounts` | `FPRV.PRVDESC1`, `FPRV.PRVDESC2` |
 | Eventos | `/:id/actions/events` | `FEVENTOS` por `PRVSEQ` |
 | Varios | `/:id/actions/various` | campos bancarios, fiscales y varios ya almacenados en `FPRV` |
 | Contactos | `/:id/actions/contacts` | `FCONTACTOS` por `CONTKEY = PRVCOD` |
 
-`Foto` se omitió por decisión del proyecto. Los controles internos de las consultas y acciones conservan el alcance de lectura indicado en la tabla.
+`Foto` se omitió por decisión del proyecto.
+
+| Vista | Botón | Evidencia German | Procedencia | Endpoint | Tablas |
+| --- | --- | --- | --- | --- | --- |
+| Catálogo de proveedores | Clasificar | `EPRV#1/39`, `EPRV#9C/239–240`, `20261125-suppliers-class` | Lectura MySQL adaptada | `GET /:id/actions/classifications?position=1..9` | `FPRV`, `FAG` |
+| Selección de parámetros | Guardar todos | `20261125-EPRV9C-PROCEDURES`, acceso `EPRV#9C/33` y llamada `MBASE/69` | Escritura PostgreSQL derivada | `PATCH /:id/actions/classifications` | `tuvansa.supplier_catalog` |
+
+El doble clic pasa la opción del grupo a **Seleccionados**. Guardar todos envía
+los nueve `AGTNUM`, la revisión de la ficha y un UUID. Se valida `AGTIPO IN (0,2)`,
+el grupo `AGT` y la longitud del campo para cada código cambiado. Los valores
+históricos ausentes del catálogo se conservan cuando siguen seleccionados.
+PostgreSQL guarda los nueve valores en la misma transacción del catálogo.
+Las órdenes nuevas consultan los clasificadores efectivos al elegir proveedor
+y aplican la herencia de `EOC#1`.
+
+Chromium confirmó dos selecciones de grupos distintos en un solo guardado.
+La API devolvió las dos asignaciones y la baja del proveedor temporal ocultó
+su ficha y sus clasificadores. La prueba HTTP cubrió revisión vencida,
+reintento, dos solicitudes simultáneas y fallo antes de confirmar.
+Evidencia `ev_fbe6ed97c47764511b9a9fb106ecc193cc99413978c19a6b9b4a400be907a72a`.
 
 ## Consultas
 

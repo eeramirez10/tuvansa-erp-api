@@ -10,6 +10,19 @@ GET {{baseUrl}}/accounts-payable/suppliers/first
 ### Ficha
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}
 
+### Selección de parámetros, grupo 1
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/classifications?position=1
+
+### Guardar todos en PostgreSQL de pruebas. Toma la revisión y los nueve AGTNUM de la ventana.
+PATCH {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/classifications
+Content-Type: application/json
+
+{
+  "revision": {{supplierClassificationRevision}},
+  "requestKey": "{{supplierClassificationRequestKey}}",
+  "current": {{supplierClassificationValues}}
+}
+
 ### Anterior / siguiente
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/previous
 

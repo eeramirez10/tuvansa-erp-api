@@ -7,32 +7,13 @@ import type {
   SupplierPanelKey,
   SupplierPanelResult,
 } from '../../domain/repositories/supplier-panels-repository.js';
+import { readSupplierClassifications, readSupplierClassifiers } from './mysql-supplier-catalog-references.js';
 
 interface IdentityRow extends RowDataPacket {
   id: number;
   code: string;
   name: string;
   currentBalance: number;
-}
-
-interface ClassificationRow extends RowDataPacket {
-  id: number;
-  code: string;
-  description: string;
-  number: string;
-  type: string;
-}
-
-interface SelectedClassificationsRow extends RowDataPacket {
-  class1: string;
-  class2: string;
-  class3: string;
-  class4: string;
-  class5: string;
-  class6: string;
-  class7: string;
-  class8: string;
-  class9: string;
 }
 
 const classificationLabels = [
@@ -308,38 +289,26 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
   }
 
   async findClassifications(supplierId: number, position: number): Promise<SupplierClassificationResult | null> {
-    const supplier = await this.findSupplier(supplierId);
-    if (supplier === null) return null;
-    const [selectedRows] = await legacyMysqlPool.execute<SelectedClassificationsRow[]>(`
-      SELECT PRVPAR1 AS class1, PRVPAR2 AS class2, PRVPAR3 AS class3,
-             PRVPAR4 AS class4, PRVPAR5 AS class5, PRVPAR6 AS class6,
-             PRVPAR7 AS class7, PRVPAR8 AS class8, PRVPAR9 AS class9
-      FROM FPRV WHERE PRVSEQ = ? LIMIT 1
-    `, [supplierId]);
-    const selected = selectedRows[0];
-    if (selected === undefined) return null;
-    const [options] = await legacyMysqlPool.execute<ClassificationRow[]>(`
-      SELECT AGSEQ AS id, AGTNUM AS code, AGDESCR AS description,
-             AGNUM AS number, AGT AS type
-      FROM FAG WHERE AGT = ? AND AGTIPO IN (0, 2)
-      ORDER BY AGT, AGSEQ
-    `, [String(position)]);
-    const selectedCodes = [selected.class1, selected.class2, selected.class3, selected.class4,
-      selected.class5, selected.class6, selected.class7, selected.class8, selected.class9];
-    const descriptions = new Map(options.map((option) => [option.code, option.description]));
+    const [supplier, selected] = await Promise.all([this.findSupplier(supplierId), readSupplierClassifications(supplierId)]);
+    return supplier && selected ? this.classificationPanel(supplier, position, selected, 0, false) : null;
+  }
+
+  protected async classificationPanel(
+    supplier: SupplierPanelIdentity, position: number, selected: string[], revision: number, canWrite: boolean,
+  ): Promise<SupplierClassificationResult> {
+    const options = await readSupplierClassifiers();
+    const byCode = new Map(options.map((option) => [option.code, option]));
     return {
-      supplier,
-      classifications: selectedCodes.map((code, index) => ({
+      supplier, revision, canWrite: canWrite && Boolean(supplier.code),
+      classifications: selected.map((code, index) => ({
         position: index + 1,
         label: classificationLabels[index] ?? '',
         code,
-        description: descriptions.get(code) ?? '',
+        number: byCode.get(code)?.number ?? code,
+        description: byCode.get(code)?.description ?? '',
       })),
       selectedPosition: position,
-      options: options.map((option) => ({
-        id: option.id, code: option.code, description: option.description,
-        number: option.number, type: option.type,
-      })),
+      options: options.filter((option) => option.type === String(position)),
     };
   }
 }

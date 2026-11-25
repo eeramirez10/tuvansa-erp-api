@@ -39,10 +39,21 @@ export interface SupplierClassificationResult {
     position: number;
     label: string;
     code: string;
+    number: string;
     description: string;
   }>;
   selectedPosition: number;
-  options: Array<{ id: number; code: string; description: string; number: string; type: string }>;
+  options: SupplierClassificationOption[];
+  revision: number;
+  canWrite: boolean;
+}
+
+export interface SupplierClassificationOption {
+  id: number;
+  code: string;
+  description: string;
+  number: string;
+  type: string;
 }
 
 export interface SupplierPanelsRepository {

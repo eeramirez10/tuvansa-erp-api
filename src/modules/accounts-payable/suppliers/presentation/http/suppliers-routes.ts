@@ -15,6 +15,7 @@ export const createSuppliersRouter = (controller: SuppliersController, reversals
   router.get('/:supplierId/previous', controller.getPrevious);
   router.get('/:supplierId/next', controller.getNext);
   router.get('/:supplierId/actions/classifications', controller.getClassifications);
+  router.patch('/:supplierId/actions/classifications', catalog.classify);
   router.get('/:supplierId/actions/block-status', controller.panel('block-status'));
   router.get('/:supplierId/actions/discounts', controller.panel('discounts'));
   router.get('/:supplierId/actions/events', controller.panel('events'));

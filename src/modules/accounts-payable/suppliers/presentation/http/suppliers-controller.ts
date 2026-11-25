@@ -96,7 +96,7 @@ export class SuppliersController {
     try {
       const { supplierId } = supplierParamsSchema.parse(request.params);
       const { position } = classificationQuerySchema.parse(request.query);
-      response.json(await this.getSupplierClassifications.execute(supplierId, position));
+      response.set('Cache-Control', 'no-store').json(await this.getSupplierClassifications.execute(supplierId, position));
     } catch (error) { next(error); }
   };
 

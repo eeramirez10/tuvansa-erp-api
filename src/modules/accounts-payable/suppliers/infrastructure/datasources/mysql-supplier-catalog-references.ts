@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
 import type { SupplierCatalogReferences, SupplierCatalogSettings } from '../../domain/datasources/supplier-catalog-data-source.js';
 import type { SupplierCatalogParameters } from '../../domain/entities/supplier-catalog.js';
+import type { SupplierClassificationOption } from '../../domain/repositories/supplier-panels-repository.js';
 import { LegacyMysqlSuppliersDataSource } from './legacy-mysql-suppliers-data-source.js';
 
 const nativeDependencies = [
@@ -12,6 +13,24 @@ const nativeDependencies = [
   ['FPLIN', 'El proveedor tiene partidas de órdenes de compra.'],
   ['FCANU2', 'El proveedor tiene compras anuales.'],
 ] as const;
+
+export async function readSupplierClassifications(id: number): Promise<string[] | null> {
+  const fields = Array.from({ length: 9 }, (_, index) => `PRVPAR${index + 1}`);
+  const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+    `SELECT ${fields.join(',')} FROM FPRV WHERE PRVSEQ=? LIMIT 1`, [id],
+  );
+  return rows[0] ? fields.map((field) => String(rows[0]?.[field] ?? '').trimEnd()) : null;
+}
+
+// Adaptada a los nueve grupos que EPRV#9C/240 consulta por separado.
+export async function readSupplierClassifiers(): Promise<SupplierClassificationOption[]> {
+  const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & SupplierClassificationOption>>(
+    `SELECT AGSEQ AS id, AGTNUM AS code, AGDESCR AS description, AGNUM AS number, AGT AS type
+     FROM FAG WHERE AGT IN ('1','2','3','4','5','6','7','8','9') AND AGTIPO IN (0,2)
+     ORDER BY AGTNUM,AGSEQ`,
+  );
+  return rows.map(({ id, code, description, number, type }) => ({ id, code: code.trimEnd(), description, number, type }));
+}
 
 export class MysqlSupplierCatalogReferences implements SupplierCatalogReferences {
   constructor(private readonly legacy = new LegacyMysqlSuppliersDataSource()) {}
@@ -30,6 +49,9 @@ export class MysqlSupplierCatalogReferences implements SupplierCatalogReferences
   }
 
   findById(id: number) { return this.legacy.findById(id); }
+
+  classifications = readSupplierClassifications;
+  classifiers = readSupplierClassifiers;
 
   async parameters(id: number): Promise<SupplierCatalogParameters | null> {
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & SupplierCatalogParameters>>(

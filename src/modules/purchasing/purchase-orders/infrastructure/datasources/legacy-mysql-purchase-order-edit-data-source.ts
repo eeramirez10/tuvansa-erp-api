@@ -47,6 +47,8 @@ type SupplierRow = RulesRow & {
   id: number; code: string; name: string; terms: number; taxType: number;
 };
 const classifierColumns = [1, 2, 3, 4, 5, 6, 8, 9];
+const inheritedSupplierClassifications = (current: string[]) =>
+  Array.from({ length: 9 }, (_, index) => classifierColumns.includes(index + 1) ? current[index] ?? '' : '');
 
 // MRECEP/70. FUNIDAD.UEQUIV es relativo a la unidad base del producto.
 function unitsForProduct(row: ProductRow, catalog: UnitRow[]) {
@@ -190,6 +192,7 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
       if (exact ? code.toUpperCase() !== search : !code.toUpperCase().startsWith(search) && !name.toUpperCase().includes(search)) continue;
       merged.set(id, {
         ...entry, supplier: { id, code, name }, terms: terms.paymentTermDays, taxType: local.vatCode,
+        classifications: local.classifications ? inheritedSupplierClassifications(local.classifications) : entry.classifications,
         rules: { ...entry.rules, currencyId: terms.currencyId, supplierCode: code, supplierDiscounts: terms.discounts },
       });
     }
@@ -204,9 +207,10 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
          FROM FCIA WHERE CIASEQ=1 AND CIAALIAS='TUVANSA' LIMIT 1`,
       );
       const config = settings[0];
-      if (config) for (const { supplier: { id, code, name, terms }, vatCode } of missing) {
+      if (config) for (const { supplier: { id, code, name, terms }, vatCode, classifications } of missing) {
         merged.set(id, {
-          supplier: { id, code, name }, terms: terms.paymentTermDays, taxType: vatCode, classifications: Array<string>(9).fill(''),
+          supplier: { id, code, name }, terms: terms.paymentTermDays, taxType: vatCode,
+          classifications: inheritedSupplierClassifications(classifications ?? []),
           rules: {
             companyId: 1, activeCompanyId: 1, supplierCode: code, supplierDiscounts: terms.discounts,
             currencyId: terms.currencyId, currencyName: String(config[`CIAPDD${terms.currencyId}`] ?? ''),

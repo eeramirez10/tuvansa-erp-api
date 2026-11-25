@@ -16,7 +16,17 @@ export interface SupplierCatalogRecord extends SupplierCatalogParameters {
   deleted: boolean;
   revision: number;
   originalCode: string | null;
+  classifications?: string[] | null;
+  classificationWrite?: { requestKey: string; previousRevision: number } | null;
 }
+
+export interface SupplierClassificationUpdate {
+  current: string[];
+  revision: number;
+  requestKey: string;
+}
+
+export const supplierClassifierLength = (position: number) => position === 1 ? 5 : 4;
 
 export const supplierCatalogFields = ({ code, name, address, contact, fiscal, terms, notes }: SupplierProps): SupplierCatalogFields => ({
   code, name, address, contact, fiscal, terms, notes,

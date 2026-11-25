@@ -85,7 +85,7 @@ function positions(items: { id: number; groupingRevision: string }[]) {
 afterAll(async () => { await db.close(); });
 
 it('groups a partially paid source once with equal AT legs, updates Saldo and rejects obsolete writes', async () => {
-  const api = request(createApp());
+  const api = request(createApp((_request, _response, next) => next()));
   const balance = route(11) + '/balance';
   const [target, source, otherCurrency] = positions((await api.get(balance).expect(200)).body.data.items);
   expect(otherCurrency?.revision).toBeUndefined();
@@ -153,7 +153,7 @@ it('groups a partially paid source once with equal AT legs, updates Saldo and re
 });
 
 it('rolls back every leg and the request key if a later transfer fails', async () => {
-  const api = request(createApp());
+  const api = request(createApp((_request, _response, next) => next()));
   const balance = route(12) + '/balance';
   const [target, first, second] = positions((await api.get(balance).expect(200)).body.data.items);
   const body = { target, sources: [second, first], requestKey: randomUUID() };

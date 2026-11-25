@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { customerSql } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import type { InvoicesDataSource } from '../../domain/datasources/invoices-data-source.js';
 import { Invoice, type InvoiceLine } from '../../domain/entities/invoice.js';
 import type {
@@ -208,13 +209,14 @@ export class LegacyMysqlInvoicesDataSource implements InvoicesDataSource {
   }
 
   private async headerById(invoiceId: number): Promise<HeaderRow | undefined> {
+    const scope = customerSql('FDOC.CLISEQ');
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
       `SELECT ${selectHeader}
          FROM FDOC
          LEFT JOIN FCLI ON FDOC.CLISEQ = FCLI.CLISEQ
-        WHERE FDOC.DSEQ = ?
+        WHERE FDOC.DSEQ = ?${scope.condition}
         LIMIT 1`,
-      [invoiceId],
+      [invoiceId, ...scope.values],
     );
     return rows[0];
   }
@@ -225,34 +227,37 @@ export class LegacyMysqlInvoicesDataSource implements InvoicesDataSource {
   }
 
   async findByNumber(invoiceNumber: string): Promise<Invoice | null> {
+    const scope = customerSql('FDOC.CLISEQ');
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
       `SELECT ${selectHeader}
          FROM FDOC
          LEFT JOIN FCLI ON FDOC.CLISEQ = FCLI.CLISEQ
-        WHERE DNUM = ? AND ${eligibility}
+        WHERE DNUM = ? AND ${eligibility}${scope.condition}
         ORDER BY FDOC.DSEQ DESC
         LIMIT 1`,
-      [invoiceNumber],
+      [invoiceNumber, ...scope.values],
     );
     const row = rows[0];
     return row === undefined ? null : toInvoice(row, await this.lines(row.id));
   }
 
   async findFirst(): Promise<Invoice | null> {
+    const scope = customerSql('FDOC.CLISEQ');
     const [rows] = await legacyMysqlPool.execute<IdNumberRow[]>(
       `SELECT DSEQ AS id, DNUM AS number
          FROM FDOC
-        WHERE ${eligibility}
+        WHERE ${eligibility}${scope.condition}
         ORDER BY DNUM, DSEQ
-        LIMIT 1`,
+        LIMIT 1`, scope.values,
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
 
   async findNumberById(invoiceId: number): Promise<string | null> {
+    const scope = customerSql('FDOC.CLISEQ');
     const [currentRows] = await legacyMysqlPool.execute<IdNumberRow[]>(
-      'SELECT DSEQ AS id, DNUM AS number FROM FDOC WHERE DSEQ = ? LIMIT 1',
-      [invoiceId],
+      `SELECT DSEQ AS id, DNUM AS number FROM FDOC WHERE DSEQ = ?${scope.condition} LIMIT 1`,
+      [invoiceId, ...scope.values],
     );
     return currentRows[0]?.number ?? null;
   }
@@ -263,15 +268,16 @@ export class LegacyMysqlInvoicesDataSource implements InvoicesDataSource {
   }
 
   async findAdjacentByNumber(number: string, direction: InvoiceNavigationDirection): Promise<Invoice | null> {
+    const scope = customerSql('FDOC.CLISEQ');
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<IdNumberRow[]>(
       `SELECT DSEQ AS id, DNUM AS number
          FROM FDOC
-        WHERE ${eligibility} AND DNUM ${operator} ?
+        WHERE ${eligibility} AND DNUM ${operator} ?${scope.condition}
         ORDER BY DNUM ${order}, DSEQ ${order}
         LIMIT 1`,
-      [number],
+      [number, ...scope.values],
     );
     return rows[0] === undefined ? null : this.findById(rows[0].id);
   }
@@ -294,7 +300,9 @@ export class LegacyMysqlInvoicesDataSource implements InvoicesDataSource {
     if (criteria.customerCode !== undefined) { conditions.push('CLICOD LIKE ?'); parameters.push(`${criteria.customerCode}%`); }
     if (criteria.warehouseSeal !== undefined) { conditions.push('DCDNUM LIKE ?'); parameters.push(`${criteria.warehouseSeal}%`); }
     if (criteria.amount !== undefined) { conditions.push('DCANT = ?'); parameters.push(criteria.amount); }
-    const where = conditions.join(' AND ');
+    const scope = customerSql('FDOC.CLISEQ');
+    const where = conditions.join(' AND ') + scope.condition;
+    parameters.push(...scope.values);
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
       `SELECT ${selectHeader}
          FROM FDOC

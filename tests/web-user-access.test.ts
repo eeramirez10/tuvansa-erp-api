@@ -121,6 +121,24 @@ describe('Usuarios y permisos con PostgreSQL aislado', () => {
     await byGroup({ anchor: 'g-21' }).expect(400);
   });
 
+  it('guarda las restricciones por usuario y las aplica sin volver a iniciar sesión', async () => {
+    const profile = { identification: 'reglas-web', name: 'Reglas de prueba', group: 18, active: true, administrator: false };
+    const settings = { hideCosts: true, hideBalances: true, ownCustomersOnly: true, classifier: 3, parameter: '201' };
+    await change('post', route, adminCookie).send({ ...profile, settings: { ownCustomersOnly: true } })
+      .expect(400).expect(({ body }) => expect(body.error.code).toBe('WEB_USER_CLIENT_SCOPE_REQUIRED'));
+    const created = (await change('post', route, adminCookie).send({ ...profile, settings }).expect(201)).body.data;
+    const path = `${route}/${created.id}`;
+    const token = (await change('post', `${path}/activation`, adminCookie).send({ revision: 1 }).expect(200)).body.data.token;
+    await change('post', '/api/session/activation').send({ token, password }).expect(204);
+    const cookie = await login(profile.identification);
+    const session = () => request(app).get('/api/session').set('Cookie', cookie).expect(200);
+    expect((await session()).body.data.user.access).toMatchObject(settings);
+    await change('patch', path, adminCookie).send({ ...profile, revision: 3, settings: { hideCosts: false } }).expect(200);
+    expect((await session()).body.data.user.access).toMatchObject({ ...settings, hideCosts: false });
+    expect((await request(app).get(path).set('Cookie', adminCookie).expect(200)).body.data.settings)
+      .toMatchObject({ ...settings, hideCosts: false });
+  });
+
   it('activa usuarios de German y comprueba MPED5 vigente en cada operación', async () => {
     const response = await change('post', `${route}/g-21/activation`, adminCookie).send({ revision: 0 }).expect(200);
     const { token } = response.body.data;

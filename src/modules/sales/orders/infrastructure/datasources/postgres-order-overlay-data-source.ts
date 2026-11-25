@@ -1,4 +1,5 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
+import { customerScope, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import type { OrderAuthorizationEvent, OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
 import type { OrderProps } from '../../domain/entities/order.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
@@ -91,7 +92,9 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       const overlay = (await c.query<Stored>(`SELECT ${columns} FROM tuvansa.orders WHERE id=$1 FOR UPDATE`,[id])).rows[0];
       const stored = overlay ?? (base && { document: base, base, deleted: false, revision: 0 });
       if (!stored || stored.deleted) return null;
+      requireCustomer(stored.document.customer.id);
       const changed = await transform(structuredClone(stored.document), stored.revision);
+      if (changed) requireCustomer(changed.customer.id);
       if (operation === 'authorization' && changed?.authorization === stored.document.authorization) return stored;
       if (!overlay && base) {
         await c.query('INSERT INTO tuvansa.orders(id,legacy_id,number,document,base_document) VALUES ($1,$1,$2,$3::jsonb,$3::jsonb)', [id,base.number,JSON.stringify(base)]);
@@ -128,11 +131,15 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
   ): Promise<T> {
     return this.transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [id]);
-      const existing = await replay(client);
-      if (existing !== null) return existing;
       const { rows: [stored] } = await client.query<Stored>(
         `SELECT ${columns} FROM tuvansa.orders WHERE id=$1 AND legacy_id IS NULL FOR UPDATE`, [id],
       );
+      if (customerScope.getStore()) {
+        if (!stored || stored.deleted) throw new NotFoundError('Pedido local');
+        requireCustomer(stored.document.customer.id);
+      }
+      const existing = await replay(client);
+      if (existing !== null) return existing;
       if (!stored || stored.deleted) throw new NotFoundError('Pedido local');
       if (stored.revision !== expectedRevision) {
         throw new ConflictError('El pedido cambió. Vuelve a abrir la remisión.', 'SALES_REMISSION_ORDER_CHANGED');

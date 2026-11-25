@@ -95,6 +95,9 @@ CREATE TABLE tuvansa.web_access_changes (
   details jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+` }, { id: '003_web_user_settings', sql: `
+ALTER TABLE tuvansa.web_users ADD COLUMN settings jsonb NOT NULL DEFAULT '{}'::jsonb
+  CHECK (jsonb_typeof(settings) = 'object');
 ` }];
 
 export async function migratePostgres(

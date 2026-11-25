@@ -3,8 +3,9 @@ import { ApplicationError } from '../../../../shared/domain/errors/application-e
 import { connectPostgres, type PostgresClient, type PostgresConnectionFactory } from '../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres, webAccessMigrations } from '../../../../shared/infrastructure/datasources/postgres-schema.js';
 import {
-  accessGroups, generalDataPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
-  type DirectoryUser, type DirectoryUserDetail, type LegacyUserDirectory, type NativeUser, type PermissionChange, type UserProfile, type WebIdentity,
+  accessGroups, effectiveUserSettings, generalDataPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
+  type DirectoryUser, type DirectoryUserDetail, type LegacyUserDirectory, type NativeUser, type PermissionChange,
+  type UserProfile, type UserSettings, type WebIdentity,
 } from '../domain/user-directory.js';
 import { hashPassword, newToken, tokenDigest, verifyPassword } from './web-credentials.js';
 
@@ -19,9 +20,10 @@ const catalogDenied = () => new ApplicationError('Tu usuario no tiene acceso al 
 type UserRow = {
   id: string; legacyId: number | null; identification: string; name: string | null; group: number | null;
   active: boolean; administrator: boolean; password: string | null; revision: number;
+  settings: Partial<UserSettings>;
 };
 type GroupRow = { revision: number };
-const userColumns = 'id, legacy_id AS "legacyId", identification, name, group_id AS "group", active, administrator, password_hash AS password, revision';
+const userColumns = 'id, legacy_id AS "legacyId", identification, name, group_id AS "group", active, administrator, password_hash AS password, revision, settings';
 
 function directoryUser(row?: UserRow, native?: NativeUser): DirectoryUser {
   const legacyActive = native?.active ?? null;
@@ -79,10 +81,14 @@ export class PostgresWebAccess {
 
   private async identity(row?: UserRow): Promise<WebIdentity | null> {
     if (!row?.active || !row.password) return null;
-    const user = directoryUser(row, row.legacyId ? await this.native.user(row.legacyId) : undefined);
+    const native = row.legacyId ? await this.native.user(row.legacyId, true) : undefined;
+    const user = directoryUser(row, native);
     if (!user.effectiveActive || !accessGroups.includes(user.group)) return null;
+    const { hideCosts, hideBalances, ownCustomersOnly, classifier, parameter, company, supplierClassifiers, captureFrom, captureUntil } =
+      effectiveUserSettings(native?.details, row.settings);
     return { id: user.id, name: user.name, identification: user.identification, group: user.group,
-      legacyId: user.legacyId, administrator: user.administrator };
+      legacyId: user.legacyId, administrator: user.administrator,
+      access: { hideCosts, hideBalances, ownCustomersOnly, classifier, parameter, company, supplierClassifiers, captureFrom, captureUntil } };
   }
 
   private async permissions(client: PostgresClient, group: number, keys?: string[]) {
@@ -251,14 +257,25 @@ export class PostgresWebAccess {
     if (directory.some(user => user.id !== id && [user.identification, user.legacyIdentification].some(code => code && identification(code) === login))) {
       throw new ApplicationError('La identificación ya está en uso. Elige una identificación web distinta.', 'WEB_IDENTIFICATION_IN_USE', 409);
     }
-    const native = previous?.legacyId ? await this.native.user(previous.legacyId) : undefined;
-    const { rows } = await client.query<UserRow>(`INSERT INTO tuvansa.web_users(id,legacy_id,identification,name,group_id,active,administrator)
-      VALUES($1,$2,$3,$4,$5,$6,$7)
+    const native = previous?.legacyId ? await this.native.user(previous.legacyId, true) : undefined;
+    const { rows } = await client.query<UserRow>(`INSERT INTO tuvansa.web_users(id,legacy_id,identification,name,group_id,active,administrator,settings)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
       ON CONFLICT(id) DO UPDATE SET identification=excluded.identification,name=excluded.name,group_id=excluded.group_id,
-        active=excluded.active,administrator=excluded.administrator,revision=tuvansa.web_users.revision+1
+        active=excluded.active,administrator=excluded.administrator,settings=tuvansa.web_users.settings || excluded.settings,
+        revision=tuvansa.web_users.revision+1
       RETURNING ${userColumns}`, [id, previous?.legacyId ?? null, login, profile.name === native?.name ? null : profile.name,
-      profile.group === native?.group ? null : profile.group, profile.active, profile.administrator]);
-    return directoryUser(rows[0], native);
+      profile.group === native?.group ? null : profile.group, profile.active, profile.administrator, JSON.stringify(profile.settings ?? {})]);
+    const settings = effectiveUserSettings(native?.details, rows[0]?.settings);
+    if (profile.settings && settings.ownCustomersOnly && (!settings.classifier || !settings.parameter)) {
+      throw new ApplicationError('Indica el clasificador y su parámetro para restringir los clientes.', 'WEB_USER_CLIENT_SCOPE_REQUIRED', 400);
+    }
+    if (profile.settings && settings.supplierClassifiers && !settings.classifier) {
+      throw new ApplicationError('Indica el clasificador para los proveedores permitidos.', 'WEB_USER_SUPPLIER_SCOPE_REQUIRED', 400);
+    }
+    if (profile.settings && settings.captureFrom && settings.captureUntil && settings.captureFrom > settings.captureUntil) {
+      throw new ApplicationError('La fecha inicial de capturas debe ser anterior o igual a la final.', 'WEB_USER_CAPTURE_RANGE_INVALID', 400);
+    }
+    return { ...directoryUser(rows[0], native), settings };
   }
 
   createUser(actor: string, profile: UserProfile) {
@@ -272,9 +289,10 @@ export class PostgresWebAccess {
   private async resolveUser(client: PostgresClient, id: string, lock: boolean) {
     const row = await this.getUser(client, id, lock);
     const legacyId = id.startsWith('g-') ? Number(id.slice(2)) : undefined;
-    const native = legacyId ? await this.native.user(legacyId, !lock) : undefined;
+    const native = legacyId ? await this.native.user(legacyId, true) : undefined;
     if ((legacyId && !native) || (!row && !native)) throw new ApplicationError('Usuario no encontrado.', 'WEB_USER_NOT_FOUND', 404);
-    return { user: directoryUser(row, native), legacyDetails: native?.details ?? null };
+    return { user: { ...directoryUser(row, native), settings: effectiveUserSettings(native?.details, row?.settings) },
+      legacyDetails: native?.details ?? null };
   }
 
   getUserDetail(id: string): Promise<DirectoryUserDetail> {
@@ -321,7 +339,10 @@ export class PostgresWebAccess {
       let user = await this.selectedUser(client, id, revision);
       if (!user.effectiveActive) throw new ApplicationError('Activa la ficha del usuario antes de emitir el enlace.', 'WEB_USER_INACTIVE', 409);
       if (!accessGroups.includes(user.group)) throw new ApplicationError('Asigna un grupo válido al usuario antes de emitir el enlace.', 'WEB_USER_GROUP_INVALID', 409);
-      if (user.revision === 0) user = await this.saveProfile(client, id, user, user);
+      if (user.revision === 0) {
+        const { identification, name, group, active, administrator } = user;
+        user = await this.saveProfile(client, id, { identification, name, group, active, administrator }, user);
+      }
       return this.issueActivation(client, actor, user);
     });
   }

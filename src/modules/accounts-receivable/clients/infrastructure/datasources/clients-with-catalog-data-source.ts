@@ -1,4 +1,5 @@
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
+import { customerAllowed } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
@@ -31,12 +32,13 @@ export class ClientsWithCatalogDataSource implements ClientsDataSource {
   }
 
   async findById(id: number): Promise<Client | null> {
+    if (!customerAllowed(id)) return null;
     const state = await this.state(id);
     return presentCatalogClient(state.base, state.record);
   }
 
   private async projected() {
-    const records = await allClientCatalogRecords();
+    const records = (await allClientCatalogRecords()).filter(record => customerAllowed(record.document.id));
     const excluded = records.filter(({ legacy }) => legacy).map(({ document }) => document.id);
     const base = await this.legacy.findByIds(records.filter(({ legacy, deleted }) => legacy && !deleted).map(({ document }) => document.id));
     return { excluded, visible: records.map((record) => presentCatalogClient(base.get(record.document.id) ?? null, record)).filter((client) => client !== null) };

@@ -23,6 +23,7 @@ export interface NativeUserDetails {
   hideBalances: boolean | null;
   ownCustomersOnly: boolean | null;
   parameter: string | null;
+  classifier?: number | null;
   printer: string | null;
   labelPrinter: number | null;
   supplierClassifiers: string | null;
@@ -31,6 +32,27 @@ export interface NativeUserDetails {
   store: string | null;
   payrollNumber: string | null;
   position: string | null;
+}
+
+export type UserSettings = Omit<NativeUserDetails, 'hideCosts' | 'hideBalances' | 'ownCustomersOnly' | 'classifier'> & {
+  hideCosts: boolean;
+  hideBalances: boolean;
+  ownCustomersOnly: boolean;
+  classifier: number | null;
+};
+
+export type UserAccess = Pick<UserSettings, 'hideCosts' | 'hideBalances' | 'ownCustomersOnly' | 'classifier' |
+  'parameter' | 'company' | 'supplierClassifiers' | 'captureFrom' | 'captureUntil'>;
+
+export function effectiveUserSettings(legacy?: NativeUserDetails | null, saved?: Partial<UserSettings>): UserSettings {
+  return {
+    company: legacy?.company ?? null, department: legacy?.department ?? null, multiCompany: legacy?.multiCompany ?? null,
+    notes: legacy?.notes ?? null, hideCosts: legacy?.hideCosts ?? false, hideBalances: legacy?.hideBalances ?? false,
+    ownCustomersOnly: legacy?.ownCustomersOnly ?? false, parameter: legacy?.parameter ?? null, classifier: legacy?.classifier ?? null,
+    printer: legacy?.printer ?? null, labelPrinter: legacy?.labelPrinter ?? null, supplierClassifiers: legacy?.supplierClassifiers ?? null,
+    captureFrom: legacy?.captureFrom ?? null, captureUntil: legacy?.captureUntil ?? null, store: legacy?.store ?? null,
+    payrollNumber: legacy?.payrollNumber ?? null, position: legacy?.position ?? null, ...saved,
+  };
 }
 
 export interface NativePermission {
@@ -54,6 +76,7 @@ export interface WebIdentity {
   legacyId: number | null;
   group: number;
   administrator: boolean;
+  access: UserAccess;
 }
 
 export interface UserProfile {
@@ -62,9 +85,10 @@ export interface UserProfile {
   group: number;
   active: boolean;
   administrator: boolean;
+  settings?: { [K in keyof UserSettings]?: UserSettings[K] | undefined } | undefined;
 }
 
-export interface DirectoryUser extends UserProfile {
+export interface DirectoryUser extends Omit<UserProfile, 'settings'> {
   id: string;
   legacyId: number | null;
   legacyIdentification: string | null;
@@ -77,6 +101,7 @@ export interface DirectoryUser extends UserProfile {
 
 export interface DirectoryUserDetail extends DirectoryUser {
   legacyDetails: NativeUserDetails | null;
+  settings: UserSettings;
   activationExpiresAt: string | null;
 }
 

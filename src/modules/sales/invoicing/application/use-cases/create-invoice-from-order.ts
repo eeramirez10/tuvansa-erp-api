@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
+import { customerScope, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { normalizeOrderWarehouse } from '../../../orders/domain/entities/order-warehouse.js';
 import type {
   InvoiceFromOrderInput, InvoiceFromOrderReferences, InvoiceFromOrderStorage,
@@ -24,6 +25,7 @@ export class CreateInvoiceFromOrder {
   private async source(number: string) {
     const current = await this.storage.order(number);
     if (!current) throw new NotFoundError('Pedido local para remisión');
+    requireCustomer(current.order.customer.id);
     return current;
   }
 
@@ -62,7 +64,10 @@ export class CreateInvoiceFromOrder {
       lines: input.lines.map(({ orderLineId, quantity }) => ({ orderLineId, quantity })),
     })).digest('hex');
     const previous = await this.storage.findRequest(companyId, input.requestKey, fingerprint);
-    if (previous) return previous;
+    if (previous) {
+      if (customerScope.getStore()) await this.source(input.orderNumber);
+      return previous;
+    }
     const { order } = await this.source(input.orderNumber);
     return this.storage.commit({
       companyId, userId, requestKey: input.requestKey, fingerprint,

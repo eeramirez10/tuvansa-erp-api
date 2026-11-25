@@ -1,4 +1,5 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
+import { customerAllowed, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { orderPanelLabels } from '../../domain/entities/order-panel-labels.js';
 import { Order, type OrderProps } from '../../domain/entities/order.js';
 import { amountInWords, captureCurrencyId, captureCurrencyName, captureMinimumPrice, captureTotals, convertCaptureAmount, roundAmount, roundCapturePrice } from '../../domain/entities/order-capture-totals.js';
@@ -29,13 +30,14 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   async findById(id: number): Promise<Order | null> {
     const local = await this.local.get(id);
-    if (local) return local.deleted ? null : Order.create(localDocument(local));
-    return id >= 5_000_000_000 ? null : this.legacy.findById(id);
+    if (local) return local.deleted || !customerAllowed(local.document.customer.id) ? null : Order.create(localDocument(local));
+    const original = id >= 5_000_000_000 ? null : await this.legacy.findById(id);
+    return original && customerAllowed(original.toPrimitives().customer.id) ? original : null;
   }
   async findByNumber(number: string): Promise<Order | null> {
     const local = await this.local.list();
     const match = local.find(r => r.document.number.toUpperCase() === number.toUpperCase());
-    if (match) return match.deleted ? null : Order.create(localDocument(match));
+    if (match) return match.deleted || !customerAllowed(match.document.customer.id) ? null : Order.create(localDocument(match));
     const original = await this.legacy.findByNumber(number);
     return original ? this.findById(original.toPrimitives().id) : null;
   }
@@ -108,6 +110,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     const source = 'customerCode' in values ? values : await this.fromClassic(values);
     const input = {...source,warehouse:normalizeOrderWarehouse(source.warehouse)};
     const customer = await this.references.customer(input.customerCode);
+    requireCustomer(customer.id);
     const options = await this.references.options();
     if (!options.warehouses.some(w=>w.code===input.warehouse) || !options.agents.some(a=>a.code===input.agentCode)) {
       throw new ConflictError('Almacén o agente no válido.', 'ORDER_REFERENCE_INVALID');
@@ -161,6 +164,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       if (values.currencyId !== undefined && values.currencyId !== doc.currencyId) throw new ConflictError('El cambio de moneda requiere conversión de importes.');
       if (values.customerId !== undefined) {
         const c = await this.references.customerById(values.customerId);
+        requireCustomer(c.id);
         doc.customer = {id:c.id,code:c.code,name:c.name};
       }
       if (values.customerOrderNumber !== undefined) doc.customerOrderNumber=values.customerOrderNumber;

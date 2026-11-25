@@ -117,7 +117,7 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
   runtime.enabled = true;
   try {
     const { invoice, order } = await postFirstRemission(connect);
-    const api = request(createApp());
+    const api = request(createApp((_request, _response, next) => next()));
     const path = previewPath(invoice.id);
     const raw = async () => (await Promise.all([
       db.query('SELECT result,movement,line_effects,number,issued_at::text,charge::float8 FROM tuvansa.sales_remissions WHERE id=$1', [invoice.id]),

@@ -1,4 +1,4 @@
-import type { Router } from 'express';
+import { Router } from 'express';
 import { GetPurchaseOrderByNumber } from './application/use-cases/get-purchase-order-by-number.js';
 import { GetPurchaseOrderPanel } from './application/use-cases/get-purchase-order-panel.js';
 import { GetPurchaseOrder } from './application/use-cases/get-purchase-order.js';
@@ -28,6 +28,7 @@ import { HybridPurchaseOrdersDataSource } from './infrastructure/datasources/hyb
 import { PurchaseOrdersRepositoryImpl } from './infrastructure/repositories/purchase-orders-repository-impl.js';
 import { PurchaseOrdersController } from './presentation/http/purchase-orders-controller.js';
 import { createPurchaseOrdersRouter } from './presentation/http/purchase-orders-routes.js';
+import { purchaseSupplierAccess } from './presentation/http/purchase-order-supplier-access.js';
 
 export const createPurchaseOrdersModule = (): Router => {
   const legacy = new LegacyMysqlPurchaseOrdersDataSource();
@@ -59,5 +60,5 @@ export const createPurchaseOrdersModule = (): Router => {
     new ConfirmPurchaseOrderPieces(capture, edits, edits, repository),
     new MysqlPurchaseOrderPrintReferences(repository),
   );
-  return createPurchaseOrdersRouter(controller);
+  return Router().use(purchaseSupplierAccess(id => dataSource.findById(id)), createPurchaseOrdersRouter(controller));
 };

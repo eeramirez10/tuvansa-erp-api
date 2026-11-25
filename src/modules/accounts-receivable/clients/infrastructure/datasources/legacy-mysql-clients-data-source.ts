@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { customerSql } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { Client, type ClientProps } from '../../domain/entities/client.js';
 import type { ClientsDataSource } from '../../domain/datasources/clients-data-source.js';
 import type {
@@ -281,12 +282,13 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
   findFirstActive(): Promise<Client | null> { return this.findFirstActiveExcluding([]); }
 
   async findFirstActiveExcluding(ids: number[]): Promise<Client | null> {
+    const scope = customerSql('CLISEQ');
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields}
        FROM fcli
-       WHERE CLIBAJA = '1900-12-31'${excludeIds(ids)}
+       WHERE CLIBAJA = '1900-12-31'${excludeIds(ids)}${scope.condition}
        ORDER BY CLICOD, CLISEQ
-       LIMIT 1`, ids,
+       LIMIT 1`, [...ids, ...scope.values],
     );
     const row = rows[0];
     return row === undefined ? null : toClient(row);
@@ -298,9 +300,10 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
     const searchCondition = criteria.query === undefined
       ? ''
       : ' AND (CLICOD LIKE ? OR CLINOM LIKE ? OR CLIRFC LIKE ?)';
-    const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}${excludeIds(ids)}`;
+    const scope = customerSql('CLISEQ');
+    const where = `1 = 1${statusCondition(criteria.status)}${searchCondition}${excludeIds(ids)}${scope.condition}`;
     const searchValue = criteria.query === undefined ? [] : Array(3).fill(`%${criteria.query}%`);
-    const parameters = [...searchValue, ...ids];
+    const parameters = [...searchValue, ...ids, ...scope.values];
 
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields} FROM fcli WHERE ${where} ORDER BY CLICOD LIMIT ? OFFSET ?`,
@@ -331,15 +334,16 @@ export class LegacyMysqlClientsDataSource implements ClientsDataSource {
   }
 
   async findAdjacentByCode(code: string, direction: ClientNavigationDirection, ids: number[]): Promise<Client | null> {
+    const scope = customerSql('CLISEQ');
     const operator = direction === 'previous' ? '<' : '>';
     const order = direction === 'previous' ? 'DESC' : 'ASC';
     const [rows] = await legacyMysqlPool.execute<ClientRow[]>(
       `SELECT ${selectClientFields}
        FROM fcli
-       WHERE CLICOD ${operator} ?${excludeIds(ids)}
+       WHERE CLICOD ${operator} ?${excludeIds(ids)}${scope.condition}
        ORDER BY CLICOD ${order}, CLISEQ ${order}
        LIMIT 1`,
-      [code, ...ids],
+      [code, ...ids, ...scope.values],
     );
 
     const row = rows[0];

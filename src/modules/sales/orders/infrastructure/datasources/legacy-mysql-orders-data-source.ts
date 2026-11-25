@@ -1,6 +1,7 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { customerSql } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import type { OrdersDataSource } from '../../domain/datasources/orders-data-source.js';
 import { Order, type OrderLine, type OrderProps } from '../../domain/entities/order.js';
 import type {
@@ -233,7 +234,9 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
     }
     if (criteria.from !== undefined) { conditions.push('PEFECHA >= ?'); parameters.push(criteria.from); }
     if (criteria.to !== undefined) { conditions.push('PEFECHA <= ?'); parameters.push(criteria.to); }
-    const where = conditions.join(' AND ');
+    const scope = customerSql('FPENC.CLISEQ');
+    const where = conditions.join(' AND ') + scope.condition;
+    parameters.push(...scope.values);
     const [rows] = await legacyMysqlPool.execute<HeaderRow[]>(
       `SELECT ${selectHeader}
        FROM FPENC

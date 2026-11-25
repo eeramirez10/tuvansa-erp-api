@@ -11,9 +11,20 @@ const group = z.coerce.number().int().min(0).max(41);
 const revision = z.number().int().nonnegative();
 const userId = z.union([z.uuid(), z.string().regex(/^g-[1-9]\d{0,9}$/)
   .refine(value => Number(value.slice(2)) <= 2147483647)]);
+const optionalText = (length: number) => z.string().trim().min(1).max(length).nullable();
+const optionalNumber = (maximum: number) => z.number().int().min(0).max(maximum).nullable();
+const settings = z.strictObject({
+  company: optionalNumber(2147483647), department: optionalNumber(255), multiCompany: optionalNumber(1),
+  notes: optionalText(40), hideCosts: z.boolean(), hideBalances: z.boolean(), ownCustomersOnly: z.boolean(),
+  parameter: optionalText(4), classifier: z.number().int().min(1).max(9).nullable(),
+  printer: optionalText(1000), labelPrinter: optionalNumber(2147483647), supplierClassifiers: optionalText(300),
+  captureFrom: z.iso.date().nullable(), captureUntil: z.iso.date().nullable(), store: optionalText(3),
+  payrollNumber: optionalText(8), position: optionalText(50),
+}).partial();
 const profile = z.strictObject({
   identification: webIdentification, name: z.string().trim().min(1).max(46),
   group: z.number().int().min(0).max(41), active: z.boolean(), administrator: z.boolean(),
+  settings: settings.optional(),
 });
 const permissionChanges = z.array(z.strictObject({ key: z.string().trim().min(1).max(20), allowed: z.boolean().nullable() }))
   .min(1).max(2000).refine(changes => new Set(changes.map(change => change.key)).size === changes.length);

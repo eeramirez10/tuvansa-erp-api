@@ -1,7 +1,7 @@
 import { createAccountingReportsModule } from './modules/accounting/reports/accounting-reports-module.js';
 import cors from 'cors';
 import express from 'express';
-import type { Express } from 'express';
+import type { Express, RequestHandler } from 'express';
 import helmet from 'helmet';
 import { env } from './config/env.js';
 import { createClientsModule } from './modules/accounts-receivable/clients/clients-module.js';
@@ -20,11 +20,12 @@ import { createBankingModule } from './modules/treasury/banking/banking-module.j
 import { createCompaniesRouter } from './modules/companies/presentation/http/companies-routes.js';
 import { webAccess } from './modules/general-data/users/users-module.js';
 import { createUserDirectoryRouter, createWebSessionRouter } from './modules/general-data/users/presentation/web-access-router.js';
+import { createBusinessAccess } from './modules/general-data/users/presentation/business-access.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
 import { postgresWriteBoundary } from './shared/infrastructure/http/postgres-write-boundary.js';
 
-export const createApp = (): Express => {
+export const createApp = (businessAccess: RequestHandler = createBusinessAccess(token => webAccess.authenticate(token))): Express => {
   const app = express();
 
   app.disable('x-powered-by');
@@ -41,6 +42,7 @@ export const createApp = (): Express => {
   app.use(`${env.API_PREFIX}/companies`, createCompaniesRouter());
   app.use(`${env.API_PREFIX}/session`, createWebSessionRouter(webAccess));
   app.use(`${env.API_PREFIX}/general-data`, createUserDirectoryRouter(webAccess));
+  app.use(env.API_PREFIX, businessAccess);
   app.use(`${env.API_PREFIX}/accounts-receivable/clients`, createClientsModule());
   app.use(`${env.API_PREFIX}/accounts-payable/suppliers`, createSuppliersModule());
   app.use(`${env.API_PREFIX}/accounting/policies`, createAccountingPoliciesModule());

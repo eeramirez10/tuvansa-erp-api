@@ -1,4 +1,5 @@
 import type { OrderProps } from '../../domain/entities/order.js';
+import { customerAllowed } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import type { OrderSearchCriteria } from '../../domain/repositories/orders-repository.js';
 
 const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
@@ -15,6 +16,7 @@ const like = (value: string, pattern: string) => {
   return new RegExp(`^${regex}$`,'s').test(fold(value));
 };
 export function matchesOrder(o: OrderProps, c: OrderSearchCriteria): boolean {
+  if (!customerAllowed(o.customer.id)) return false;
   if (!['order','quote'].includes(o.documentKind)) return false;
   if (c.after && compareOrders(o,{...o,...c.after})<=0) return false;
   if (c.before && compareOrders(o,{...o,...c.before})>=0) return false;

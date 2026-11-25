@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { NotFoundError } from '../../../shared/domain/errors/not-found-error.js';
+import { customerScope } from '../../../shared/infrastructure/http/customer-scope.js';
 import { CaptureOrder } from './application/use-cases/capture-order.js';
 import { HybridOrdersDataSource } from './infrastructure/datasources/hybrid-orders-data-source.js';
 import { LegacyMysqlOrderReferenceDataSource } from './infrastructure/datasources/legacy-mysql-order-reference-data-source.js';
@@ -38,6 +40,13 @@ export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSo
     new GetOrderPanel(panelsRepository),
   );
   const router = Router();
+  router.use(async (request, _response, next) => {
+    if (customerScope.getStore()) {
+      const id = Number(decodeURIComponent(request.path).split('/')[1]);
+      if (Number.isSafeInteger(id) && id > 0 && !(await source.findById(id))) throw new NotFoundError('Pedido');
+    }
+    next();
+  });
   router.use(createOrderCaptureRouter(new CaptureOrder(new OrderCaptureRepositoryImpl(source), authorizationAccess)));
   router.use(createOrdersRouter(controller));
   return router;

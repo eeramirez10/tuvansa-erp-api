@@ -26,7 +26,9 @@ Queda pendiente el cotejo de ejecución de los botones nativos en una base aisla
   datos y la pertenencia y vigencia en la búsqueda. La consulta exacta
   agrega los campos de referencia de la ficha y **No ver costos**,
   **No ver saldos** y **Solo ver a sus clientes** desde `USRNOCOSTOS`,
-  `USRNOSALDOS` y `USRSOLOEL`, respectivamente, para mostrarlos en consulta.
+  `USRNOSALDOS` y `USRSOLOEL`. Alta y Cambio guardan las modificaciones de
+  cada cuenta en PostgreSQL y las cuentas existentes conservan los valores
+  heredados para los campos sin modificación web.
 - **Permisos.** La matriz se lee de `FHELP.HKEY, HUSER0…HUSER41` y
   `HVALIDACLAVE`. Los valores web pueden conservar el valor de German,
   concederlo o retirarlo. El grupo 0 requiere un permiso efectivo web como
@@ -38,6 +40,32 @@ Queda pendiente el cotejo de ejecución de los botones nativos en una base aisla
   `INICIO13` habilita Datos Generales, `MCATALOGOS8` y el rol de
   administrador habilitan Usuarios, y `MPED5` habilita Autorizar en
   Pedidos. Las demás claves están en el catálogo de grupos.
+
+## Restricciones en operación
+
+Los módulos de negocio requieren la sesión del mismo origen y verifican
+el perfil vigente en cada petición. La baja desde **Eliminar** revoca
+las sesiones de la cuenta y deja el historial disponible.
+
+- **No ver costos.** Oculta columnas e importes de costo y protege las
+  consultas con costos o valuaciones. Pedidos conserva su validación de
+  precio frente al costo en el servidor.
+- **No ver saldos.** Oculta saldos, disponible y límite en las fichas e
+  impide abrir los paneles y reportes de saldos.
+- **Solo ver a sus clientes.** Usa el clasificador `USRES` y el valor
+  `USRPAR`. German compara `mid(fld('CLIPAR',CIAUSRES),2,9)` con
+  `CIAUSRPAR`. La API aplica el filtro a Cliente, Pedidos y Facturación,
+  incluidos los accesos por identificador y la navegación. Las consultas
+  globales con datos de otros clientes requieren una cuenta sin este filtro.
+- **Proveedores y capturas.** El clasificador de proveedores se comprueba
+  al autorizar una orden de compra o cambiar proveedor desde autorización.
+  La API comprueba los límites Del y Al en las fechas de documentos
+  enviadas por los módulos de captura.
+
+Los datos de la ficha, incluidos impresora, SIP, observaciones y nómina,
+se conservan por perfil. Para conectar **Accesos POS**, **Huellas digitales**,
+correo e impresión directa se requieren los servicios y dispositivos
+correspondientes.
 
 ## Puesta en marcha
 
@@ -69,7 +97,7 @@ vinculado es `g-<USRSEQ>`.
 | GET, POST, DELETE | `/session` | Consultar, iniciar o cerrar sesión |
 | POST | `/session/activation` | Consumir enlace y establecer contraseña |
 | GET, POST | `/general-data/users` | Listar o crear cuentas |
-| GET | `/general-data/users/:userId` | Consultar la ficha exacta, las restricciones de German y el vencimiento del enlace pendiente |
+| GET | `/general-data/users/:userId` | Consultar la ficha exacta, los valores efectivos y el vencimiento del enlace pendiente |
 | PATCH | `/general-data/users/:userId` | Guardar la ficha con su revisión |
 | POST | `/general-data/users/:userId/activation` | Emitir enlace y revocar sesiones previas |
 | GET, PATCH | `/general-data/permission-groups/:group` | Consultar o cambiar permisos con revisión |

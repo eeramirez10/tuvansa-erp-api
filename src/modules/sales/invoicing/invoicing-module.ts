@@ -1,4 +1,6 @@
-import type { Router } from 'express';
+import { Router } from 'express';
+import { NotFoundError } from '../../../shared/domain/errors/not-found-error.js';
+import { customerScope } from '../../../shared/infrastructure/http/customer-scope.js';
 import { env } from '../../../config/env.js';
 import { postgresConfigured } from '../../../shared/infrastructure/database/postgres-pool.js';
 import { MysqlPostingReversalReferences } from '../../purchasing/purchase-receptions/infrastructure/datasources/mysql-posting-reversal-references.js';
@@ -55,5 +57,13 @@ export const createInvoicingModule = (): Router => {
     new EditInvoicePieces(pieces, (id) => panels.readPieceLines(id)),
     conversion,
   );
-  return createInvoicesRouter(controller);
+  const router = Router();
+  router.use(async (request, _response, next) => {
+    if (customerScope.getStore()) {
+      const id = Number(decodeURIComponent(request.path).split('/')[1]);
+      if (Number.isSafeInteger(id) && id > 0 && !(await repository.findById(id))) throw new NotFoundError('Factura');
+    }
+    next();
+  });
+  return router.use(createInvoicesRouter(controller));
 };

@@ -6,7 +6,8 @@ const userColumns = `USRSEQ AS legacyId, TRIM(USRCOD) AS identification, TRIM(US
   USRGROUP AS \`group\`, USRMULTICIA=0 AS shared, USRBAJA='1900-12-31' AS active`;
 const userDetails = `USRCIA AS company, USRDEPTO AS department, USRMULTICIA AS multiCompany, NULLIF(TRIM(USROBS),'') AS notes,
   USRNOCOSTOS AS hideCosts, USRNOSALDOS AS hideBalances, USRSOLOEL AS ownCustomersOnly,
-  NULLIF(TRIM(USRPAR),'') AS parameter, NULLIF(TRIM(USRPRINTERNAME),'') AS printer, NULLIF(USRSIPETIQ,0) AS labelPrinter,
+  NULLIF(TRIM(USRPAR),'') AS parameter, NULLIF(USRES,0) AS classifier,
+  NULLIF(TRIM(USRPRINTERNAME),'') AS printer, NULLIF(USRSIPETIQ,0) AS labelPrinter,
   NULLIF(TRIM(USRPROVS),'') AS supplierClassifiers, NULLIF(USRFI,'1900-12-31') AS captureFrom,
   NULLIF(USRFF,'1900-12-31') AS captureUntil, NULLIF(TRIM(USRTDA),'') AS store,
   NULLIF(TRIM(USRNOMINA),'') AS payrollNumber, NULLIF(TRIM(USRPUESTO),'') AS position`;
@@ -41,7 +42,8 @@ export const legacyUserDirectory: LegacyUserDirectory = {
       details: {
         company: row.company, department: row.department, multiCompany: row.multiCompany, notes: row.notes,
         hideCosts: flag(row.hideCosts), hideBalances: flag(row.hideBalances), ownCustomersOnly: flag(row.ownCustomersOnly),
-        parameter: row.parameter, printer: row.printer, labelPrinter: row.labelPrinter, supplierClassifiers: row.supplierClassifiers,
+        parameter: row.parameter, classifier: row.classifier ?? null, printer: row.printer,
+        labelPrinter: row.labelPrinter, supplierClassifiers: row.supplierClassifiers,
         captureFrom: row.captureFrom, captureUntil: row.captureUntil, store: row.store, payrollNumber: row.payrollNumber, position: row.position,
       },
     };

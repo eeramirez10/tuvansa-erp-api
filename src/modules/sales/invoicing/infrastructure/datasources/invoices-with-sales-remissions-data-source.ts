@@ -1,4 +1,5 @@
 import { postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { customerAllowed, customerScope } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { customerCollectionsAvailable, joinRemissionCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import type { InvoicesDataSource } from '../../domain/datasources/invoices-data-source.js';
 import { Invoice, type InvoiceProps } from '../../domain/entities/invoice.js';
@@ -58,8 +59,15 @@ function readLocalInvoice(field: 'id' | 'number', value: number | string): Promi
     const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
       `SELECT ${invoice} AS invoice, ${fields} ${from} AND ${filter}`, [value],
     );
-    return row ? { invoice: withCollectionTotals(row), charge: row.charge } : null;
+    return row && customerAllowed(row.invoice.customer.id) ? { invoice: withCollectionTotals(row), charge: row.charge } : null;
   });
+}
+
+function localCustomerFilter(invoice: string, values: Array<string | number | number[]>) {
+  const scope = customerScope.getStore();
+  if (!scope) return '';
+  values.push([...scope]);
+  return ` AND (${invoice}#>>'{customer,id}')::bigint = ANY($${values.length}::bigint[])`;
 }
 
 export function readSalesRemissionInvoice(id: number) {
@@ -137,10 +145,12 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     return readSalesRemissions<InvoiceProps | null>(null, async (client) => {
       const { from, fields, number: currentNumber, invoice } = await remissionScope(client);
       const filter = number === null ? '' : `AND ${currentNumber} ${previous ? '<' : '>'} $1`;
+      const values: Array<string | number[]> = number === null ? [] : [number.toUpperCase()];
+      const customers = localCustomerFilter(invoice, values);
       const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
-        `SELECT ${invoice} AS invoice, ${fields} ${from} ${filter}
+        `SELECT ${invoice} AS invoice, ${fields} ${from} ${filter}${customers}
          ORDER BY ${currentNumber} ${order}, remission.id ${order} LIMIT 1`,
-        number === null ? [] : [number.toUpperCase()],
+        values,
       );
       return row ? withCollectionTotals(row) : null;
     });
@@ -150,7 +160,7 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
     return readSalesRemissions<{ items: InvoiceHeader[]; total: number }>(empty, async (client) => {
       const { from, fields, number, issuedAt, invoice } = await remissionScope(client);
       const conditions: string[] = [];
-      const values: Array<string | number> = [];
+      const values: Array<string | number | number[]> = [];
       if (criteria.query !== undefined) {
         values.push(`%${criteria.query}%`);
         conditions.push(`(${number} ILIKE $1 OR remission.number ILIKE $1 OR order_number ILIKE $1
@@ -178,7 +188,7 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
         values.push(criteria.amount);
         conditions.push(`remission.charge = $${values.length}`);
       }
-      const where = conditions.length === 0 ? '' : `AND ${conditions.join(' AND ')}`;
+      const where = (conditions.length === 0 ? '' : `AND ${conditions.join(' AND ')}`) + localCustomerFilter(invoice, values);
       values.push(limit);
       // Derivada. Busca el encabezado de las remisiones web con los filtros de Facturación.
       const { rows: [row] } = await client.query<{ items: InvoiceCollectionRow<InvoiceHeader>[]; total: number }>(

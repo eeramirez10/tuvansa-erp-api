@@ -1,6 +1,7 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { customerAllowed, customerScope, customerSql, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { allClientCatalogRecords, findClientCatalogByCode } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
@@ -64,6 +65,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        FROM FCLI LEFT JOIN FAG ON FAG.AGTNUM=FCLI.CLIPAR1
        WHERE CLICOD=? ${unblocked ? '' : "AND CLIBAJA='1900-12-31'"} AND CLISOLOPOS<>2 LIMIT 1`, [code]);
     if (!rows[0]) throw new NotFoundError('Cliente');
+    requireCustomer(rows[0].id);
     const [branches] = await db.execute<Row<{code: number; name: string}>[]>(
       `SELECT SUCCOD AS code,SUCNOM AS name FROM FSUCURSALES
        WHERE CLISEQ=? AND SUCBAJA='1900-12-31' ORDER BY CLISEQ,SUCSEQ`, [rows[0].id]);
@@ -74,6 +76,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     if (!record) return this.readCustomer(legacyMysqlPool, code);
     if (record.deleted || record.blocked === true || record.document.code.toUpperCase() !== code.toUpperCase()) throw new NotFoundError('Cliente');
     const { id, name, terms } = record.document;
+    requireCustomer(id);
     if (!record.legacy) return { id, name, code: record.document.code, agentCode: '', agentName: '', store: '', classification: '', branches: [], termsDays: terms.paymentTermDays };
     const base = await this.readCustomer(legacyMysqlPool, record.originalCode ?? code, record.blocked === false);
     return { ...base, code: record.document.code, name: record.changes.name ?? base.name, termsDays: record.changes.paymentTermDays ?? base.termsDays };
@@ -84,6 +87,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const code = criteria.code ?? '';
     const name = criteria.name ?? '';
     const taxId = criteria.taxId ?? '';
+    const scope = customerSql('CLISEQ');
     const [rows] = await legacyMysqlPool.execute<Row<CaptureCustomerMatch>[]>(
       `SELECT CLISEQ AS id,CLICOD AS code,CLINOM AS name,CLISUCURSAL AS branch,
        CLIRFC AS taxId,CLIEAN AS ean,CLITEL AS phone,CLITEL3 AS mobile,CLICELULAR AS email
@@ -91,10 +95,10 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        WHERE CLICURP<>'T' AND CLIBAJA='1900-12-31' AND CLISOLOPOS<>2
        AND (?='' OR (CLICOD>=? AND CLICOD<=CONCAT(?,'zzzzzzzzzzzz')))
        AND (?='' OR CLINOM LIKE CONCAT('%',?,'%'))
-       AND (?='' OR CLIRFC LIKE CONCAT(?,'%'))
+       AND (?='' OR CLIRFC LIKE CONCAT(?,'%'))${scope.condition}
        ORDER BY CLICOD,FCLI.CLISEQ LIMIT ?`,
-      [code, code, code, name, name, taxId, taxId, limit]);
-    const local = await allClientCatalogRecords();
+      [code, code, code, name, name, taxId, taxId, ...scope.values, limit]);
+    const local = (await allClientCatalogRecords()).filter(record => customerAllowed(record.document.id));
     if (!local.length) return rows;
     const records = new Map(local.map((record) => [record.document.id, record]));
     const matches = new Map<number, CaptureCustomerMatch>();
@@ -294,6 +298,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       stock: onHand, assigned, available: scaledStock(onHand - assigned) };
   }
   async product(code: string, warehouse: string, typeCode: string, customerCode: string) {
+    if (customerScope.getStore()) await this.customer(customerCode);
     warehouse = normalizeOrderWarehouse(warehouse);
     return this.readProduct(legacyMysqlPool, code, warehouse, await this.movement(legacyMysqlPool, typeCode), customerCode);
   }

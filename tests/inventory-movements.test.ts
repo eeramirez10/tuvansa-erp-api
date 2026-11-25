@@ -197,8 +197,33 @@ describe('inventory movement printing', () => {
     expect(execute.mock.calls[3]).toEqual([expect.stringContaining('FROM FLOTES WHERE LOSEQ IN (?)'), [73]]);
   });
 
+  it('prints both sides of a TR in movement sequence with their warehouses and signed amounts', async () => {
+    execute.mockResolvedValueOnce([[{ ...header, document: 'TR0004', type: 'TR', reference2: '13' }]])
+      .mockResolvedValueOnce([[
+        { ...line, id: 216664, type: 'TR', warehouse: '13', quantity: -12.38, cost: 2561.0244 },
+        { ...line, id: 216665, type: 'TR', warehouse: '01', quantity: 12.38, cost: 2561.0244 },
+        { ...line, id: 216666, type: 'TR', warehouse: '13', quantity: -1513.8, cost: 187.3844 },
+        { ...line, id: 216667, type: 'TR', warehouse: '01', quantity: 1513.8, cost: 187.3844 },
+      ]])
+      .mockResolvedValueOnce([[settings]]);
+
+    const response = await request(app).get('/api/inventories/movements/125/actions/print');
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      format: 'QTUVANSA007', type: 'TR', document: 'TR0004', warehouse: '01', sourceWarehouse: '13',
+      lines: [
+        { id: 216664, warehouse: '13', quantity: -12.38, amount: -12.38 * 2561.0244 },
+        { id: 216665, warehouse: '01', quantity: 12.38, amount: 12.38 * 2561.0244 },
+        { id: 216666, warehouse: '13', quantity: -1513.8, amount: -1513.8 * 187.3844 },
+        { id: 216667, warehouse: '01', quantity: 1513.8, amount: 1513.8 * 187.3844 },
+      ],
+      total: 0,
+    });
+    expect(execute.mock.calls[2]?.[1]).toEqual(['01', 'TR', 1]);
+  });
+
   it.each([
-    { document: 'TR0004', type: 'TR' },
+    { document: 'RA09214', type: 'RA' },
     { company: 2 },
     { status: 1 },
   ])('rejects a document outside the verified print scope before reading its format', async (changes) => {
@@ -210,11 +235,12 @@ describe('inventory movement printing', () => {
   });
 
   it('rejects a cancelled document and an unsupported layout', async () => {
-    execute.mockResolvedValueOnce([[header]])
+    const transfer = { ...header, document: 'TR0005', type: 'TR' };
+    execute.mockResolvedValueOnce([[transfer]])
       .mockResolvedValueOnce([[{ ...line, type: 'K', quantity: 0, cost: 0 }]])
-      .mockResolvedValueOnce([[header]])
-      .mockResolvedValueOnce([[line]])
-      .mockResolvedValueOnce([[{ ...settings, format: 'OTRO_FORMATO' }]]);
+      .mockResolvedValueOnce([[transfer]])
+      .mockResolvedValueOnce([[{ ...line, type: 'TR' }]])
+      .mockResolvedValueOnce([[{ ...settings, format: 'QTUVANSA002' }]]);
     const cancelled = await request(app).get('/api/inventories/movements/125/actions/print');
     expect(cancelled.status).toBe(422);
     expect(cancelled.body.error.code).toBe('INVENTORY_MOVEMENT_PRINT_UNAVAILABLE');

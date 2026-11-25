@@ -71,6 +71,12 @@ conciliación y reversión se realizaron con datos temporales en PostgreSQL
 de pruebas. Las páginas de cada módulo registran sus efectos y los casos
 confirmados en German.
 
+Las pruebas HTTP de **Agrupar**, **FP** y **Eliminar** (RA histórico y RW
+web) usaron PostgreSQL 17 local con dos sesiones concurrentes observadas
+en `pg_locks`. Cada carrera produjo una operación exitosa y un conflicto
+`409`. También se verificaron las repeticiones idempotentes y la reversión
+de escrituras al forzar errores.
+
 El alcance vigente para TUVANSA México excluye los flujos de color y
 talla, incluidos los controles y consultas CT asociados, así como cajas
 y empaque. Esta exclusión aplica a implementación y verificación.
@@ -82,7 +88,7 @@ y empaque. Esta exclusión aplica a implementación y verificación.
 | Proveedores | Contactos → Cambio | **Guardar todos**, Eventos alta/cambio/baja, Contactos alta/baja, Cambio en Varios y **Agrupar** están implementados en PostgreSQL. Varios incluye los tres ID Banamex seleccionables. El procedimiento nativo de Contactos → Cambio apunta a `FSUCURSALES` y requiere un caso válido para confirmarlo. [Proveedores](modules/accounts-payable/suppliers.md) |
 | Clientes | Datos fiscales → Act. | La sesión de respaldo de México no mostró Verifica fiscal. Queda por confirmar que Act. actualice un catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
-| Inventarios | Documentos → Imprimir TR | **Imprimir** tiene vista previa para EI y SI con las especificaciones de los formatos. German devolvió `E101201` para `QTUVANSA007`, lo que impidió verificar las partidas y totales de TR. [Documentos de inventario](modules/inventories/movement-documents.md) |
+| Inventarios | Comparación visual de Imprimir TR en German | La vista previa web admite EI, SI y TR. En TR presenta ambos lados del traspaso según la búsqueda `SFACT` y la definición archivada. German devolvió `E101201` al cargar `QTUVANSA007`. [Documentos de inventario](modules/inventories/movement-documents.md) |
 | Ventas | Matriz de fotos y cálculo libre de Familias. Facturación → sumarios | **Alternos**, **Foto**, el selector de **Familias** por catálogo y **Edita pzas** están implementados. El T.M. P bloqueó la captura de Pedidos en la sesión de respaldo y el cálculo libre de `MEMFILQUERY` requiere otra regla. Los sumarios en alcance requieren un ticket, un documento de traspaso o insumos del colector según el procedimiento. [Pedidos](modules/sales/orders-behaviors-new-version.md), [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica

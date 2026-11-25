@@ -59,21 +59,38 @@ Procedimientos exportados el 20 y 23 de noviembre de 2026 en
 `20261120-EINV24-FIELDS-AND-PROCEDURES.txt` y
 `20261123-MFACT-SALES-PROCEDURES.txt`.
 
-La vista previa web cubre EI y SI vigentes de México con sus formatos
-configurados. Relee el folio con sus partidas ordenadas por origen, conserva
+La vista previa web cubre EI, SI y TR vigentes de México con sus formatos
+configurados. Relee el folio con sus partidas en el orden de la ficha, conserva
 el signo de la cantidad y calcula el importe como cantidad por costo.
 El pedimento, la fecha y la aduana se resuelven mediante el `LOSEQ` histórico
 o el identificador de la capa PostgreSQL. El navegador abre su diálogo de
-impresión al confirmar la vista previa. La operación es de lectura.
+impresión al confirmar la vista previa. En TR muestra el almacén origen
+desde `FDOC.DREFERELLOS`, el destino desde `FDOC.DALMACEN` y el almacén de
+cada partida. La operación es de lectura.
 
 Se comprobaron por lectura MySQL `EI1981` con `QTUVANSA007` y `SI1148`
 con `QTUVANSA002` y pedimento. Chromium abrió ambas vistas previas
-desde Documentos y ejecutó Imprimir para `SI1148`. El 25 de noviembre de 2026, Shift +
-**Imprimir** llegó a `MFACT/21` para `EI1981`. German mostró
-`[E101201] Unable to find format QTUVANSA007` en `Set report name [TIREPNAME]`
-(`closure-20261125-inv-ei-print-preview-settled.png`). `TR0004` tiene dos
-partidas positivas y dos negativas. Queda pendiente verificar qué partidas
-y totales presenta el formato `QTUVANSA007` en German para traspasos.
+desde Documentos y ejecutó Imprimir para `SI1148` y `TR0004`. El botón
+quedó deshabilitado para `TR0005`, cancelado, y su consulta de impresión
+devolvió `422`. Un `TRW` creado mediante la API con PGlite en memoria
+devolvió las dos partidas y el total neto de `0.00`.
+
+En German, **Documentos** aplica la búsqueda `SFACT` con la condición
+`DSEQ = [#40]` (`closure-tr-print-sfact-rule.png`). La impresión desde la
+pantalla de captura de **Traspasos** usa su propio filtro
+`AICANT > 0` en `EINV#17/405` para el flujo habitual de México.
+La definición archivada de `QTUVANSA007` usa la cantidad firmada, el importe
+por partida y su acumulado. La vista previa web de `TR0004` incluye cuatro
+partidas ordenadas por `AISEQ`, con dos salidas de `13` y dos entradas a
+`01`, y suma un importe neto de `0.00`.
+
+El 25 de noviembre de 2026, la ficha nativa de `TR0004` mostró las cuatro
+partidas (`closure-tr-print-open-tr0004.png`). Shift + **Imprimir** llegó a
+`MFACT/21`. German devolvió `[E101201] Unable to find format QTUVANSA007`
+en `Set report name [TIREPNAME]`, incluso con una copia de `FORMATOS.LBR`
+abierta en la sesión. Se observó el mismo error con `EI1981`
+(`closure-20261125-inv-ei-print-preview-settled.png`). La comparación
+visual del traspaso con la salida nativa queda pendiente.
 
 ### Evidencia histórica de CT
 

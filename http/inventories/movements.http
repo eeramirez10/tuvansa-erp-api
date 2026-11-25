@@ -19,6 +19,10 @@ Accept: application/json
 GET {{baseUrl}}/inventories/movements/343824/actions/print
 Accept: application/json
 
+### Consultas → Documentos → Imprimir TR0004 de México
+GET {{baseUrl}}/inventories/movements/115003/actions/print
+Accept: application/json
+
 ### Movimientos de inventario → Preparar captura de EI o SI
 GET {{baseUrl}}/inventories/movements/capture
 Accept: application/json

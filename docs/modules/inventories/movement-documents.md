@@ -93,22 +93,45 @@ abierta en la sesión. Se observó el mismo error con `EI1981`
 visual del traspaso con la salida nativa queda pendiente.
 
 El cotejo de las fichas de German con `GET /api/inventories/movements/:id/actions/print`
-confirmó este orden, los almacenes y el signo de cada cantidad. Los importes
-se muestran con dos decimales.
+confirmó este orden, los almacenes y el signo de inventario de cada cantidad.
 
-| Folio | Formato | Partidas en orden (almacén, cantidad) | Total web |
+| Folio | Formato | Partidas en orden (almacén, cantidad de inventario) | Total de vista previa |
 | --- | --- | --- | ---: |
 | `EI1981` | `QTUVANSA007` | `01301157` (`01`, +12.38) | 4,555.45 |
-| `SI1148` | `QTUVANSA002` | `01302290` (`01`, −1,620.00) | −1,867,293.00 |
+| `SI1148` | `QTUVANSA002` | `01302290` (`01`, −1,620.00) | 1,867,293.00 |
 | `TR0004` | `QTUVANSA007` | `01301070` (`13`, −12.38), `01301070` (`01`, +12.38), `01301135` (`13`, −1,513.80), `01301135` (`01`, +1,513.80) | 0.00 |
 
 `TR0004` suma 1,526.18 unidades por lado. El cotejo usa las fichas
 `closure-20261125-inv-ei-confirmed-native.png`,
 `closure-approved-plan-si-loaded-confirmed-settled.png` y
 `closure-tr-print-open-tr0004.png`. La distribución impresa de EI y TR
-sigue pendiente por `E101201`. En `SI1148`, el intento de vista en pantalla
-con Shift no produjo una salida visible en esa sesión. Falta cotejar la
-distribución nativa de `QTUVANSA002` con la vista previa web.
+sigue pendiente para estos folios por `E101201`. En `SI1148`, el intento
+de vista en pantalla con Shift no produjo una salida visible en esa sesión.
+
+Se volvió a localizar el catálogo de los dos formatos en
+`C:\PROSCAI\FORMATOS - copia.LBR` y `C:\PRUEBAS\FORMATOS--.LBR`.
+Los PDF históricos de `EI1664`, `SI1034` y `SI1056` confirman el orden
+de **Referencia** o **Salida de**, almacén y partidas. El pedimento sale
+bajo la descripción. El pie muestra cantidad total, fecha, comentarios,
+importe total y firmas. Ambos formatos muestran cantidades e importes
+con dos decimales. El costo unitario usa cuatro decimales en
+`QTUVANSA007` y dos en `QTUVANSA002`.
+
+La ficha y la respuesta API contienen el signo de inventario. La vista
+previa de `QTUVANSA002` invierte la cantidad y el importe para presentar
+las salidas en positivo, como en los PDF de `SI1034` y `SI1056`. La
+inversión conserva el sentido relativo de las partidas de signo contrario.
+Falta una referencia impresa de una partida de corrección con cantidad
+positiva en el respaldo. El importe total de impresión suma importes
+redondeados por partida. Esa suma reproduce `146,154.43` en `EI1664`,
+`221,859.80` en `SI1034` y `206,941.64` en `SI1056`.
+
+En Chromium, **Documentos → Imprimir** abrió seis folios con lectura del
+respaldo MySQL y una sesión web de prueba. Se compararon las partidas,
+almacenes, cantidades e importes de la vista previa. Se comprobó la
+invocación de impresión del navegador al confirmar en los seis folios.
+Queda pendiente obtener la salida nativa de `EI1981`, `SI1148` y
+`TR0004` directamente de German.
 
 ### Evidencia histórica de CT
 

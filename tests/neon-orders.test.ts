@@ -13,8 +13,10 @@ import type { PostgresConnectionFactory } from '../src/shared/infrastructure/dat
 import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgres-write-boundary.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 import { createOrdersModule } from '../src/modules/sales/orders/orders-module.js';
-import { ApplicationError } from '../src/shared/domain/errors/application-error.js';
-import { cookieName } from '../src/modules/general-data/users/presentation/web-session-http.js';
+import type { LegacyUserDirectory, NativeUser } from '../src/modules/general-data/users/domain/user-directory.js';
+import { PostgresWebAccess } from '../src/modules/general-data/users/infrastructure/postgres-web-access.js';
+import { createBusinessAccess } from '../src/modules/general-data/users/presentation/business-access.js';
+import { createUserDirectoryRouter, createWebSessionRouter } from '../src/modules/general-data/users/presentation/web-access-router.js';
 
 // Real PostgreSQL engine in isolated WASM memory: no Neon URL or MySQL credentials used.
 const db = new PGlite();
@@ -51,6 +53,7 @@ const references: OrderReferenceDataSource = {
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
   customer:async()=>customer,searchCustomers:async()=>[],searchProducts:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
   product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,costCurrencyId:1,taxPercentage:16,excisePercentage:0,currencyId:1,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
+  canAuthorizeCustomer: async () => true,
   authorizationCosts: async () => new Map([[13288, { cost: 40, costCurrencyId: 1 }]]),
 };
 const make = (s=store) => new HybridOrdersDataSource(legacy,s,references,{getPanel:async()=>null});
@@ -254,21 +257,65 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     order=(await approve(api,id,false)).toPrimitives();
     expect(order.authorization).toBe('');
   });
-  it('requires the approver session and a current revision, rechecks cost and records only successful changes', async () => {
-    const token = 'a'.repeat(43);
-    const verify = vi.fn(async (session?: string) => {
-      if (session !== token) throw new ApplicationError('Sesión requerida', 'WEB_SESSION_REQUIRED', 401);
-      return { userId: 21, webUserId: 'g-21' };
-    });
+  it('applies current Usuarios permissions and records only successful authorizations', async () => {
+    const admin: NativeUser = { legacyId: 1, identification: 'admin', name: 'Administrador', group: 0, active: true, shared: false };
+    const approver: NativeUser = { legacyId: 21, identification: 'aprueba', name: 'Persona autorizadora', group: 18, active: true, shared: false };
+    const users = [admin, approver];
+    const native: LegacyUserDirectory = {
+      users: async () => users,
+      user: async id => users.find(user => user.legacyId === id),
+      permissions: async (group, keys) => [
+        { key: 'INICIO13', label: 'Datos Generales', allowed: group === 0, requiresSupervisor: false },
+        { key: 'MCATALOGOS8', label: 'Usuarios', allowed: group === 0, requiresSupervisor: false },
+        { key: 'MPED5', label: 'Autorizar', allowed: false, requiresSupervisor: false },
+      ].filter(({ key }) => !keys || keys.includes(key)),
+    };
+    const access = new PostgresWebAccess(native, connect);
+    const canAuthorizeCustomer = vi.fn().mockResolvedValue(true);
     const costs = vi.fn().mockResolvedValue(new Map([[13288, { cost: 60, costCurrencyId: 1 }]]));
-    const dataSource = new HybridOrdersDataSource(legacy, store, { ...references, authorizationCosts: costs }, { getPanel: async () => null });
+    const dataSource = new HybridOrdersDataSource(legacy, store, {
+      ...references, canAuthorizeCustomer, authorizationCosts: costs,
+    }, { getPanel: async () => null });
     const order = (await dataSource.create({ ...input, documentKind: 'order' })).toPrimitives();
-    const app = express().use(express.json()).use(createOrdersModule(dataSource, { verify })).use(errorHandler);
-    const path = `/${order.id}/actions/authorization`;
-    const origin = () => request(app).post(path).set('Host', 'localhost:5173').set('Origin', 'http://localhost:5173');
-    const post = (authorized: boolean, revision: number) => origin().set('Cookie', `${cookieName}=${token}`).send({ authorized, revision });
-    await origin().set('Authorization', `Bearer ${'a'.repeat(64)}`).send({ authorized: true, revision: 1 }).expect(401);
+    const app = express().use(express.json()).use('/api', postgresWriteBoundary)
+      .use('/api/session', createWebSessionRouter(access))
+      .use('/api/general-data', createUserDirectoryRouter(access))
+      .use('/api', createBusinessAccess(token => access.authenticate(token)))
+      .use('/api/sales/orders', createOrdersModule(dataSource, { verify: token => access.orderActor(token) }))
+      .use(errorHandler);
+    const change = (method: 'post' | 'patch', path: string) =>
+      request(app)[method](path).set('Host', 'localhost:5173').set('Origin', 'http://localhost:5173');
+    const password = 'Test#21';
+    const activate = (token: string) => change('post', '/api/session/activation').send({ token, password }).expect(204);
+    const login = async (identification: string) => {
+      const { headers } = await change('post', '/api/session').send({ identification, password }).expect(200);
+      return (headers['set-cookie'] as unknown as string[])[0]!.split(';')[0]!;
+    };
+    await activate((await access.bootstrapAdministrator(1, 'sistemas-prueba')).token);
+    const adminCookie = await login('sistemas-prueba');
+    const userPath = '/api/general-data/users/g-21';
+    const profile = await change('patch', userPath).set('Cookie', adminCookie).send({
+      identification: approver.identification, name: approver.name, group: approver.group,
+      active: true, administrator: false, revision: 0, settings: { hideCosts: true },
+    }).expect(200);
+    const activation = await change('post', `${userPath}/activation`).set('Cookie', adminCookie)
+      .send({ revision: profile.body.data.revision }).expect(200);
+    await activate(activation.body.data.token);
+    const approverCookie = await login(approver.identification);
+    const permission = (revision: number, allowed: boolean) => change('patch', '/api/general-data/permission-groups/18')
+      .set('Cookie', adminCookie).send({ revision, changes: [{ key: 'MPED5', allowed }] }).expect(200);
+    const path = `/api/sales/orders/${order.id}/actions/authorization`;
+    const post = (authorized: boolean, revision: number) =>
+      change('post', path).set('Cookie', approverCookie).send({ authorized, revision });
+
+    await change('post', path).set('Authorization', `Bearer ${'a'.repeat(64)}`).send({ authorized: true, revision: 1 }).expect(401);
+    expect((await post(true, 1).expect(403)).body.error.code).toBe('ORDER_APPROVER_FORBIDDEN');
+    await permission(0, true);
     expect((await post(true, 0).expect(409)).body.error.code).toBe('ORDER_AUTHORIZATION_STALE');
+    expect(canAuthorizeCustomer).not.toHaveBeenCalled();
+    canAuthorizeCustomer.mockResolvedValueOnce(false);
+    expect((await post(true, 1).expect(409)).body.error.code).toBe('CLIENT_CREDIT_BLOCKED');
+    expect(canAuthorizeCustomer).toHaveBeenCalledWith(order.customer.id);
     expect(costs).not.toHaveBeenCalled();
     expect((await post(true, 1).expect(409)).body.error.code).toBe('ORDER_PRICE_BELOW_COST');
     expect(await store.get(order.id)).toMatchObject({ revision: 1, document: { authorization: '' } });
@@ -280,13 +327,20 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(await store.get(order.id)).toMatchObject({ revision: 1, document: { authorization: '' } });
     failAudit = false;
     const approved = await post(true, 1).expect(200);
-    expect(approved.body.data).toMatchObject({ authorization: 'O.K.', authorizedBy: 21, authorizationChange: { userId: 21, webUserId: 'g-21' }, storage: { revision: 2 } });
+    expect(approved.body.data).toMatchObject({
+      authorization: 'O.K.', authorizedBy: 21, authorizedByName: approver.name,
+      authorizationChange: { userId: 21, webUserId: 'g-21' }, storage: { revision: 2 },
+    });
     expect((await post(true, 2).expect(200)).body.data.storage.revision).toBe(2);
+    await permission(1, false);
+    expect((await post(false, 2).expect(403)).body.error.code).toBe('ORDER_APPROVER_FORBIDDEN');
+    await permission(2, true);
+    canAuthorizeCustomer.mockResolvedValue(false);
     expect((await post(false, 2).expect(200)).body.data).toMatchObject({ authorization: '', authorizedBy: 21, storage: { revision: 3 } });
     const comments = await dataSource.getPanel(order.id, 'comments');
     expect(comments).toMatchObject({ summary: { authorizedBy: 21 } });
     expect(String(comments?.items[0]?.auditTrail).split('\n')).toEqual([
-      expect.stringMatching(/^AUTORIZA · Usuario 21/), expect.stringMatching(/^DESAUTORIZA · Usuario 21/),
+      expect.stringMatching(/^AUTORIZA · Usuario aprueba/), expect.stringMatching(/^DESAUTORIZA · Usuario aprueba/),
     ]);
     const changes = await db.query('SELECT revision, document->>\'authorization\' AS authorization FROM tuvansa.order_changes WHERE order_id=$1 ORDER BY revision', [order.id]);
     expect(changes.rows).toEqual([{ revision: 1, authorization: '' }, { revision: 2, authorization: 'O.K.' }, { revision: 3, authorization: '' }]);

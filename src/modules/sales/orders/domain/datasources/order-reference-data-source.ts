@@ -11,6 +11,7 @@ export interface OrderReferenceDataSource {
   customerById(id: number): Promise<CaptureCustomer>;
   productCodeById(id: number): Promise<string>;
   product(code: string, warehouse: string, type: string, customerCode: string): Promise<CaptureProduct>;
+  canAuthorizeCustomer(id: number): Promise<boolean>;
   authorizationCosts(productIds: number[]): Promise<ReadonlyMap<number, OrderAuthorizationCost>>;
   hasInvoices(number: string): Promise<boolean>;
 }

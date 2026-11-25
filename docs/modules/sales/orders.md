@@ -143,9 +143,16 @@ comprobar el permiso efectivo `MPED5` de su grupo. Si el permiso requiere
 supervisor, la API devuelve `403`. Al faltar sesión, **Autorizar** abre el
 inicio de sesión y regresa a la ficha. [Usuarios y permisos](../general-data/users.md)
 
-La aprobación web vuelve a comprobar las partidas pendientes contra el costo
-vigente de `ILISTA5` o `ILISTA6` y el tipo de cambio del pedido. Compara el
-precio unitario antes de descuentos. Esta validación adicional es derivada.
+El permiso se administra en **Usuarios → Grupo → Permisos**. Lo guardado
+para `MPED5` se aplica en la siguiente operación del usuario.
+
+La API verifica la vigencia y disponibilidad del cliente con `FCLI.CLIBAJA`,
+`FCLI.CLISOLOPOS` y los bloqueos registrados en el catálogo web. Aplica la
+misma elegibilidad que en **Captura de pedido**. También vuelve a comprobar
+el precio unitario de las partidas pendientes antes de descuentos contra
+el costo vigente de `ILISTA5` o `ILISTA6`, con el tipo de cambio del pedido.
+Estas consultas de autorización son derivadas. **No ver costos** conserva
+la validación y el aviso sin revelar el importe del costo.
 Para desautorizar, se bloquean pedidos con asignación o surtido. PostgreSQL
 comprueba la revisión bajo el bloqueo del pedido y guarda el estado y el
 usuario de la transición en `tuvansa.order_changes`. **Comentarios** muestra
@@ -161,6 +168,11 @@ y conservó `O.K.`. Con dos sesiones concurrentes y la misma revisión, una
 firma prosperó, la otra devolvió `409` y quedó un solo evento de bitácora.
 Evidencia local en `captures/sales-authorization-result.txt` y
 `captures/sales-authorization-concurrency-result.txt`.
+
+La prueba actual con sesiones y PostgreSQL aislado verifica que conceder y
+retirar `MPED5` en Usuarios surte efecto sobre la misma sesión. También
+comprueba los rechazos por cliente bloqueado y precio bajo costo, y la firma
+en **Comentarios**. [Prueba de integración](../../../tests/neon-orders.test.ts)
 
 ### Almacenes de captura en México
 

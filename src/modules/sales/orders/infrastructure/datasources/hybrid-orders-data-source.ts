@@ -282,6 +282,9 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         throw new ConflictError('No se puede desautorizar un pedido ya surtido.', 'ORDER_ALREADY_FULFILLED');
       }
       if (authorized) {
+        if (!await this.references.canAuthorizeCustomer(doc.customer.id)) {
+          throw new ConflictError('El cliente está bloqueado o no está disponible para pedidos.', 'CLIENT_CREDIT_BLOCKED');
+        }
         await this.verifyAuthorizationCosts(doc, original !== null);
         if (actor.userId) doc.authorizedBy = actor.userId;
         else delete doc.authorizedBy;

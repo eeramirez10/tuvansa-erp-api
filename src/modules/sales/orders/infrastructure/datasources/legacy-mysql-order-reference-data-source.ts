@@ -18,6 +18,19 @@ export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSo
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }
   productFamilies() { return this.source.productFamilies(); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.source.product(code,warehouse,type,customerCode); }
+  async canAuthorizeCustomer(id: number): Promise<boolean> {
+    const client = await clientCatalogRecord(id);
+    if (client?.deleted || client?.blocked === true) return false;
+    if (client && !client.legacy) return client.blocked === false || client.document.isActive;
+
+    // Derivada: mismos criterios de elegibilidad que en la captura de pedidos.
+    type CustomerRow = RowDataPacket & { active: number; restrictedToPos: number };
+    const [[customer]] = await legacyMysqlPool.execute<CustomerRow[]>(
+      "SELECT CLIBAJA='1900-12-31' AS active, CLISOLOPOS=2 AS restrictedToPos FROM FCLI WHERE CLISEQ=?",
+      [id],
+    );
+    return !!customer && !customer.restrictedToPos && (client?.blocked === false || Boolean(customer.active));
+  }
   async authorizationCosts(productIds: number[]): Promise<ReadonlyMap<number, OrderAuthorizationCost>> {
     if (!productIds.length) return new Map();
     type CostRow = RowDataPacket & { id: number; currency: number; pesoCost: number | null; dollarCost: number | null };

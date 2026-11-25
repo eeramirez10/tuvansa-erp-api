@@ -31,7 +31,7 @@ Captura controlada del 2026-09-17 sobre la copia aislada de pruebas. Se creó `P
 | Comportamiento | Endpoint actual o propuesto | Estado después de la captura |
 | --- | --- | --- |
 | Estado de autorización | GET `/api/sales/orders/:orderId/actions/authorize` | Implementado; usa `PEPAR9` en la lectura legacy |
-| Autorizar / desautorizar | POST `/api/sales/orders/:orderId/actions/authorization` | PostgreSQL/Neon con clave personal, permiso `MPED5` y revisión. [Reglas web](orders.md#autorizar-o-desautorizar-con-ctrla) |
+| Autorizar / desautorizar | POST `/api/sales/orders/:orderId/actions/authorization` | PostgreSQL/Neon con sesión web, permiso `MPED5` y revisión. [Reglas web](orders.md#autorizar-o-desautorizar-con-ctrla) |
 | Consultar asignación | GET `/api/sales/orders/:orderId/actions/assign-all` | Existe |
 | Asignar / desasignar | POST `/api/sales/orders/:orderId/actions/assignment` | Implementado en PostgreSQL/Neon |
 | Cambiar partidas | PATCH `/api/sales/orders/:orderId` | Implementado; reemplaza el detalle completo y bloquea pedidos con `O.K.` |

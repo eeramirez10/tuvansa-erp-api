@@ -71,6 +71,11 @@ conciliación y reversión se realizaron con datos temporales en PostgreSQL
 de pruebas. Las páginas de cada módulo registran sus efectos y los casos
 confirmados en German.
 
+El alcance del plan de cierre conserva **15 de 21 flujos operativos (71%)** y
+**13 de 21 cerrados con evidencia (62%)**. La corrección de **Remisión México**
+verificó el ejercicio fiscal y el flujo de surtido parcial a factura pendiente
+de timbrar con un solo cargo en Chromium y PostgreSQL 17.12 local. [Facturación](modules/sales/invoices.md#remisión-méxico-desde-pedido)
+
 Las pruebas HTTP de **Agrupar**, **FP** y **Eliminar** (RA histórico y RW
 web) usaron PostgreSQL 17 local con dos sesiones concurrentes observadas
 en `pg_locks`. Cada carrera produjo una operación exitosa y un conflicto
@@ -83,12 +88,13 @@ y empaque. Esta exclusión aplica a implementación y verificación.
 
 | Módulo | Controles pendientes | Evidencia o dato que falta |
 | --- | --- | --- |
-| Bancos | Conciliar → Imprimir Cheque | **FP** guarda `POPOSTFECHA` de una póliza histórica y la muestra en Conciliar, Auxiliar y Pólizas. **Detalle** consulta el auxiliar de la partida por `FAX.BASEQ`. **Imprimir Cheque** requiere una partida mexicana en una cuenta con `BREPORTE`. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
-| Pólizas | Duplicar pasivo | **Guardar** admite `POPAR1` del grupo 4 de `FAG` validado por German. La prueba de duplicación requiere una póliza activa en México de familia `PASIVO*` para verificar redondeo y el cargo en Saldo y Movimientos. [Pólizas](modules/accounting/policies.md) |
-| Clientes | Datos fiscales → Act. | La sesión de respaldo de México no mostró Verifica fiscal. Queda por confirmar que Act. actualice un catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
+| Bancos | Conciliar → Imprimir Cheque | **FP** guarda `POPOSTFECHA` de una póliza histórica y la muestra en Conciliar, Auxiliar y Pólizas. **Detalle** consulta el auxiliar de la partida por `FAX.BASEQ`. Los respaldos de 2018 y 2019 contienen la misma partida mexicana con `BREPORTE`, importe cero y sin número de cheque. Falta una partida de cheque con formato aplicable a México. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
+| Pólizas | Duplicar pasivo | **Guardar** admite `POPAR1` del grupo 4 de `FAG` validado por German. Los respaldos examinados no contienen una póliza activa `PASIVO*` de México o Monterrey. Falta una copia con familia y proveedor para comprobar el redondeo y el cargo. [Pólizas](modules/accounting/policies.md) |
+| Clientes | Datos fiscales → Act. | Las sesiones de México revisadas, incluida la consulta de un cliente activo, no mostraron **Verifica fiscal**. Se requiere acceso a **Act.** para comprobar su efecto sobre el catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
-| Inventarios | Comparación visual de Imprimir TR en German | La vista previa web admite EI, SI y TR. En TR presenta ambos lados del traspaso según la búsqueda `SFACT` y la definición archivada. German devolvió `E101201` al cargar `QTUVANSA007`. [Documentos de inventario](modules/inventories/movement-documents.md) |
-| Ventas | Matriz de fotos y cálculo libre de Familias. Facturación → Traspaso y Liquidación camión | **Alternos**, **Foto**, Familias por catálogo, **Edita pzas** y **Tiket > Factura** para remisiones web están implementados. El T.M. P bloqueó la captura de Pedidos en la sesión de respaldo y `MEMFILQUERY` requiere otra regla. Los sumarios restantes requieren un documento de traspaso elegible o insumos del colector. [Pedidos](modules/sales/orders-behaviors-new-version.md), [Facturación](modules/sales/invoices.md) |
+| Inventarios | Distribución de Imprimir EI, SI y TR en German | Se cotejaron los renglones, almacenes, signos y totales de tres fichas. German devolvió `E101201` al cargar `QTUVANSA007` para EI y TR. La comparación de la salida impresa de `QTUVANSA002` para SI sigue pendiente. [Documentos de inventario](modules/inventories/movement-documents.md) |
+| Pedidos | Matriz de fotos y cálculo libre de Familias | SISTEMAS pudo entrar al buscador del T.M. P. La ficha de producto con foto y retorno de Matriz requieren una sesión que exponga el control. Para `MEMFILQUERY` falta una expresión usada en México con un resultado comprobable. [Pedidos](modules/sales/orders-behaviors-new-version.md) |
+| Facturación | Traspaso y Liquidación camión | Los respaldos consultados carecen de tipo `TITRASPASOS` habilitado y destino `TZ` para el flujo. Liquidación requiere un archivo tabulado de ruta y folios de entrega y devolución relacionados. [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica
 

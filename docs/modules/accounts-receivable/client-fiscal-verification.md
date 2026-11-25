@@ -53,6 +53,12 @@ el botón con un perfil que muestre **Verifica fiscal** y comprobar si la acció
 actualiza dicho catálogo. Evidencia local en
 `captures/ui/closure-20261125-sales-clients-no-fiscal.png`.
 
+El cotejo posterior en la sesión de México `1851` usó el buscador para abrir
+el cliente activo `000060`. **Acciones** volvió a terminar en **Contactos** y
+**Verifica fiscal** no apareció. Se necesita una sesión que exponga
+**Datos fiscales → Act.** para observar si el botón lee o actualiza el catálogo
+local. Evidencia en `captures/ui/closure-approved-plan-active-client-actions.png`.
+
 ## Investigación del proveedor (2026-09-14)
 
 La [documentación oficial de PROSCAI](https://ayuda.proscai.com/hc/es-419/articles/13163887156379-Modifica-y-verifica-los-datos-fiscales-de-clientes) describe la validación de datos del receptor ante el SAT, el flujo Ctrl + clic para actualizarlos y errores por RFC no listado, código postal incorrecto o régimen incompatible. También aclara que los asteriscos señalan los regímenes de capital más comunes; esto resuelve su significado general, aunque no el criterio para asignar cada cantidad. El artículo no publica endpoint, autenticación ni algoritmo de CLICFDI4CS. No equivale a un contrato de API.

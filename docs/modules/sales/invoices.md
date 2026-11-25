@@ -56,6 +56,18 @@ PostgreSQL verifica la revisión del pedido, las existencias y el crédito al
 confirmar. Una clave de solicitud repetida devuelve el folio original si todos
 los datos coinciden. Los requests están en `http/sales/invoices.http`.
 
+Chromium y PostgreSQL 17.12 local verificaron el ejercicio de México del
+`2025-01-01` al `2025-12-31`. La ventana arrancó con **Fecha** vacía, bloqueó
+**OK** fuera del intervalo y aceptó la fecha de cierre. Un pedido de tres
+unidades quedó con dos surtidas y una pendiente. Inventarios registró dos
+unidades de salida. **Tiket > Factura** dejó el folio FEW pendiente de timbrar
+y mantuvo un solo cargo de 464 MXN. La prueba confirmó el `422` para una
+fecha fuera de ejercicio, el `409` para revisión vencida, el mismo folio al
+reintentar y la reversión completa tras un fallo inyectado en el registro
+de inventario. Una carrera separada de dos POST para la unidad restante
+produjo un `201` y un `409` con los dos procesos observados en espera.
+Evidencia local en `captures/approved-plan-browser-result.txt`.
+
 Los depósitos de [Cobranza](../accounts-receivable/clients.md#cobrar-una-remisión-web) actualizan **Pagado** y **Saldo**. **Auxiliar** conserva el cargo FA, muestra los abonos PA por fecha y enlaza cada póliza. Al liquidar, Facturación muestra la fecha del último cobro aplicado.
 
 ### Remisión con PEPS global
@@ -275,11 +287,20 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   admita traspasos y trae `TZ` para la operación normal. Falta el folio elegible
   con el tipo de destino configurado para verificar los efectos sobre `FDOC`,
   `FAX`, `FAXINV` y piezas.
+  La búsqueda derivada leyó `FTIPMV` para Facturación en las compañías
+  `0`, `1` y `2` del respaldo actual, `pruebas2` y TUVANSA 2018–2021.
+  Ninguna de esas copias ofreció un tipo habilitado en `TITRASPASOS` ni el
+  destino `TZ`. La búsqueda de `FDOC` vigente por tipo habilitado devolvió
+  cero folios en México y Monterrey en el respaldo actual.
 - **Liquidación camión** requiere `EFACT#13/76` y abre `EFACT#23`, el formato de
   liquidación de camionetas Unifoods. Usa listas propias de entrega/devolución,
   con importación de archivo tabulado o colector COM1/COM2. Falta una sesión
   con liquidación de prueba y sus documentos de devolución. La lectura de ruta
   de la ficha de Facturación brinda contexto, mientras se comprueba el flujo.
+  Se revisaron los directorios locales de PROSCAI y pruebas por un archivo
+  identificable de liquidación o colector. El respaldo actual tiene `CA` en
+  México y `CB` en Monterrey. Hace falta un archivo tabulado de una ruta de
+  prueba, su fecha y los folios de entrega y devolución vinculados.
 
 ### Tiket > Factura en la web
 

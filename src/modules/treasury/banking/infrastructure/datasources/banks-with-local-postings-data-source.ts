@@ -6,7 +6,7 @@ import {
 import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
-import { activeManualPolicyLines, manualLineSettlement, manualPolicyAffectsAccount, readManualPolicies } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
+import { activeManualPolicyLines, manualLineSettlement, manualPolicyAffectsAccount, manualPolicyLines, readManualPolicies } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
 import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
@@ -115,7 +115,9 @@ interface BankPaymentRow extends LocalBankRow {
 }
 interface BankCollectionRow extends LocalBankRow { reference: string; offset: boolean; clientId: number; reversal: PurchasePostingReversalReference | null }
 interface BankTransferRow extends LocalBankRow { reference: string; policyId: string; movementType: string; mode: 'check' | 'transfer' }
-interface ManualBankRow extends LocalBankRow { linePolicyId: string; debit: string; credit: string; reference: string; center: number; movementType: string }
+interface ManualBankRow extends LocalBankRow {
+  linePolicyId: string; debit: string; credit: string; reference: string; center: number; movementType: string; applied: boolean;
+}
 
 const bankRow = ({ id, number, policyNumber, date, beneficiary, description, userId, statementDate }: LocalBankRow) => ({
   movementId: Number(id), policyId: Number(id), checkNumber: number,
@@ -146,6 +148,8 @@ const transferRow = (row: BankTransferRow) => ({
 const manualBankRow = (row: ManualBankRow) => ({
   ...bankRow(row), policyId: Number(row.linePolicyId), bankNumber: row.reference || row.number,
   checkNumber: '', movementType: row.movementType, charge: Number(row.debit), credit: Number(row.credit), mode: 'journal', costCenter: row.center,
+  applied: row.applied ? 1 : 0,
+  ...(!row.applied ? { canApplyPolicy: true, accumulated: 0 } : {}),
 });
 
 const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' || key === 'automatic-reconciliation';
@@ -153,14 +157,15 @@ const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' ||
 export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanelsDataSource {
   override async getPanel(id: number, key: BankPanelKey, options: BankPanelOptions): Promise<BankPanelResponse> {
     const base = await super.getPanel(id, key, options);
-    const keys: BankPanelKey[] = ['auxiliary', 'reconciliation', 'automatic-reconciliation', 'authorization-review', 'payments', 'deposits'];
+    const keys: BankPanelKey[] = ['auxiliary', 'unapplied-auxiliary', 'reconciliation', 'automatic-reconciliation', 'authorization-review', 'payments', 'deposits'];
     if (!keys.includes(key) || (!base.available && key !== 'payments' && key !== 'deposits')) return base;
     const fiscalYear = typeof base.summary?.fiscalYear === 'number' ? base.summary.fiscalYear : options.fiscalYear;
     const panelOptions = { ...options, fiscalYear };
+    const unapplied = key === 'unapplied-auxiliary';
     const [payments, collections, transfers, journals, reconciliation, transit] = await Promise.all([
-      key === 'deposits' ? [] : this.paymentRows(id, key, panelOptions),
-      key === 'payments' ? [] : this.collectionRows(id, key, panelOptions),
-      this.transferRows(id, key, panelOptions),
+      key === 'deposits' || unapplied ? [] : this.paymentRows(id, key, panelOptions),
+      key === 'payments' || unapplied ? [] : this.collectionRows(id, key, panelOptions),
+      unapplied ? [] : this.transferRows(id, key, panelOptions),
       key === 'deposits' || key === 'payments' ? [] : this.manualRows(id, key, panelOptions),
       pendingReconciliation(key) ? readBankReconciliationState(1, id) : null,
       pendingReconciliation(key) ? readBankTransit(1, id) : [],
@@ -172,7 +177,7 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     if (!local.length && !pendingReconciliation(key)) return base;
     const charges = local.reduce((total, { charge }) => total + charge, 0);
     const credits = local.reduce((total, { credit }) => total + credit, 0);
-    if (key === 'auxiliary' || key === 'payments' || key === 'deposits') {
+    if (key === 'auxiliary' || unapplied || key === 'payments' || key === 'deposits') {
       summary.credits = money(Number(summary.credits ?? 0) + credits);
       summary.charges = money(Number(summary.charges ?? 0) + charges);
       summary.balance = money(Number(summary.charges) - Number(summary.credits));
@@ -205,7 +210,8 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       delete summary.transitEligible;
     }
     const panel = { ...base, available: true, source,
-      readOnly: manual ? !items.some((row) => row.canChangeTransit || row.canReconcile) : base.readOnly, items, summary };
+      readOnly: manual || unapplied ? !items.some((row) => row.canChangeTransit || row.canReconcile || row.canApplyPolicy) : base.readOnly,
+      items, summary };
     delete panel.reason;
     return panel;
   }
@@ -324,7 +330,8 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
 
   private manualRows(id: number, key: BankPanelKey, { fiscalYear, asOfDate }: BankPanelOptions) {
     const pending = pendingReconciliation(key);
-    const start = key === 'auxiliary' && fiscalYear ? `${fiscalYear}-01-01` : null;
+    const unapplied = key === 'unapplied-auxiliary';
+    const start = (key === 'auxiliary' || unapplied) && fiscalYear ? `${fiscalYear}-01-01` : null;
     const end = key === 'automatic-reconciliation' ? asOfDate : null;
     return readManualPolicies<ReturnType<typeof manualBankRow>[]>([], async (client) => {
       const settlement = manualLineSettlement(await bankReconciliationsAvailable(client));
@@ -332,10 +339,11 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
         `SELECT l.id::text,p.id::text AS "linePolicyId",p.number,p.number AS "policyNumber",p.date::text,
           (l.debit-l.credit)::text AS amount,l.debit::text,l.credit::text,p.beneficiary,p.concept AS description,
           l.reference,l.cost_center AS center,0 AS "userId",settlement.statement_date::text AS "statementDate",
-          coalesce(to_jsonb(l)->>'bank_movement_type','3') AS "movementType"
-         ${activeManualPolicyLines} ${settlement} WHERE l.account_id=$1
+          coalesce(to_jsonb(l)->>'bank_movement_type','3') AS "movementType", p.applied
+         ${unapplied ? manualPolicyLines : activeManualPolicyLines} ${settlement} WHERE l.account_id=$1
            AND ($2::date IS NULL OR p.date >= $2) AND ($3::date IS NULL OR p.date <= $3)
            ${pending ? 'AND l.account_type=0 AND settlement.statement_date IS NULL' : ''}
+           ${unapplied ? 'AND l.account_type=0 AND NOT p.applied' : ''}
          ORDER BY p.date,l.id LIMIT 32767`, [id, start, end],
       );
       return rows.map(manualBankRow);

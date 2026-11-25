@@ -283,7 +283,7 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
     const items = toItems(rows);
     return {
       button: 'Aux. no aplicados', section: 'actions', source: ['FBANMOV', 'FBENC', 'FPOLIZA'], available: true, readOnly: true, items,
-      summary: { charges: sum(items, 'charge'), credits: sum(items, 'credit') },
+      summary: { fiscalYear, charges: sum(items, 'charge'), credits: sum(items, 'credit') },
     };
   }
 }

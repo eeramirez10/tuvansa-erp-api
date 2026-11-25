@@ -77,7 +77,7 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | Revisar | `/:bankAccountId/actions/authorization-review` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAAUTORIZADO<>'*'`. El PATCH guarda `*` para partidas históricas elegibles y partidas web aplicadas. |
 | Clasificar | `/:bankAccountId/actions/classifiers` | Nueve niveles de `FAG`, `AGT=1..9` y `AGTIPO=3`, con valores de `FBENC.BPAR1..9`. El PATCH guarda las claves disponibles. |
 | Traspasos entre Cuentas | `/:bankAccountId/actions/transfer/capture?direction=outgoing` | `FTIPMV.TICLA='3'` y `FCIA.CIAPOLIZACONT`. El POST en `/:bankAccountId/actions/transfer` registra Cheque o Traspas y la póliza de diario con dos partidas. |
-| Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0`. Consulta, comentarios e impresión si hay una póliza seleccionada. |
+| Aux. no aplicados | `/:bankAccountId/actions/unapplied-auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; `BAMES=1` y `POAPLICADA=0`. Suma las partidas del diario web sin aplicar. Consulta comentarios e impresión de la póliza seleccionada. |
 
 La reversión de un PP desde **Pagos** o Proveedores restablece el saldo del proveedor por el importe del pago elegido. **Pagos** y **Auxiliar** muestran el abono PP y el cargo RP por separado. Si el PP estaba pendiente, las dos partidas quedan fuera de **Conciliar**. Si estaba conciliado, conserva su marca X y su corte y el RP entra en **Conciliar** como cargo independiente. El saldo bancario del estado de cuenta incorpora la corrección cuando se registra el corte del RP. La póliza de reversión carga la misma cuenta bancaria y abona el pasivo.
 
@@ -120,7 +120,18 @@ para la modalidad **Traspas**.
 
 **Concilia Automático** compara las partidas pendientes con un archivo CSV o TSV. El archivo debe contener las columnas `Fecha`, `Referencia`, `Ingresos` y `Egresos`, con fecha `AAAA-MM-DD` o `DD/MM/AAAA` y punto decimal. La vista selecciona coincidencias únicas por referencia e importe firmado. **Liga** permite resolver filas ambiguas con una partida pendiente del mismo importe y signo. Se pueden quitar coincidencias antes de registrar. La captura nativa `bank-full-24-auto-open.png` muestra la comparación de los dos auxiliares. El CSV y el TSV son formatos de intercambio de la web.
 
-La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío. **Aplicar** en **Aux. no aplicados** depende de la migración de pólizas pendientes.
+La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío.
+
+**Aux. no aplicados → Aplicar** (`EBANCO#4A/21`) usa la póliza seleccionada,
+ejecuta `MPASIVOS/99` y recarga el auxiliar. La web aplica la póliza de
+diario local con `POST /api/accounting/policies/:id/actions/apply`. La
+partida sale del auxiliar pendiente, aparece en **Auxiliar** y queda
+disponible en **Conciliar**. El saldo contable incorpora el asiento.
+Capturas `closure-bank-unapplied-ready.png` y `closure-bank-aux-apply-proc21.png`.
+En el periodo activo del respaldo, la consulta de pólizas bancarias de
+México sin aplicar encontró una sola póliza con todas sus partidas
+bancarias en cero. La aplicación histórica queda pendiente de probar
+con una póliza elegible.
 
 **Revisar** abre **Autorizar** (`EBANCO#11`). Los procedimientos `/1`,
 `/2` y `/99` consultan la partida por `FBANMOV.BASEQ` y modifican

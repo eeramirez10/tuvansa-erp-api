@@ -159,3 +159,7 @@ La captura de Contabilidad → Reportes → Estado de resultados se documenta en
 conserva el centro de costo y el movimiento de origen. El alta de la póliza
 y el cambio de los movimientos a revisados se guardan en la misma
 transacción. Véase [Bancos](../treasury/banking.md#traspasos-y-conciliación-por-archivo).
+
+**Bancos → Aux. no aplicados → Aplicar** usa el mismo endpoint y la misma
+revisión que **Contabilidad → Aplicar** para pólizas de diario web. La
+confirmación valida el periodo y las cuentas antes de aplicar.

@@ -9,8 +9,9 @@ export const manualPolicyLineIdStart = 8000000000000;
 const range = 99999999;
 export const isManualPolicyId = (id: number) => id >= manualPolicyIdStart && id < manualPolicyIdStart + range;
 export const isManualPolicyLineId = (id: number) => id >= manualPolicyLineIdStart && id < manualPolicyLineIdStart + range;
-export const activeManualPolicyLines = `FROM tuvansa.manual_accounting_policy_lines l
-  JOIN tuvansa.manual_accounting_policies p ON p.id=l.policy_id AND p.company_id=1 AND p.applied AND p.canceled_at IS NULL`;
+export const manualPolicyLines = `FROM tuvansa.manual_accounting_policy_lines l
+  JOIN tuvansa.manual_accounting_policies p ON p.id=l.policy_id AND p.company_id=1 AND p.canceled_at IS NULL`;
+export const activeManualPolicyLines = `${manualPolicyLines} AND p.applied`;
 export const manualPolicyAffectsAccount = `(l.account_id=$1 OR l.parents @> jsonb_build_array(jsonb_build_object('id',$1::bigint)))`;
 
 export async function manualPoliciesAvailable(client: PostgresClient) {

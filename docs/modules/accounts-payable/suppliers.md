@@ -75,7 +75,7 @@ Evidencia `ev_fbe6ed97c47764511b9a9fb106ecc193cc99413978c19a6b9b4a400be907a72a`.
 | --- | --- | --- | --- | --- |
 | Eventos | Nuevo, Cambiar, Eliminar | `20261125-EPRV20-PROCEDURES`, `EPRV#1/45 → EPRV#20/9–11,240` | `POST /events`, `PATCH /events/:activityId`, `DELETE /events/:activityId` | `FEVENTOS`, `FPRV.PRVEVENTOS`, `tuvansa.supplier_catalog` |
 | Contactos | Alta, Baja | `20261125-EPRV44-PROCEDURES`, permisos `PRV#44/11` y `PRV#44/12` | `POST /contacts`, `DELETE /contacts/:activityId` | `FCONTACTOS`, `tuvansa.supplier_catalog` |
-| Contactos | Cambio | `EPRV#44/13` llama a `MBASE/69('FSUCURSALES', …)` | Pendiente de confirmar un cambio sobre el contacto | `FSUCURSALES` en el procedimiento |
+| Contactos | Cambio | `EPRV#44/13` abre los campos de edición con el permiso `PRV#44/13` | `PATCH /contacts/:activityId` | `FCONTACTOS` para lectura y `tuvansa.supplier_catalog` para guardado web derivado |
 
 Las lecturas se adaptan a los procedimientos. Eventos usa `PRVSEQ` y el
 generador vacío de la sesión sin identificación. Contactos usa el código de
@@ -84,6 +84,26 @@ bitácora derivada en PostgreSQL, manteniendo `EVSEQ` y `CONTSEQ` para las
 filas de origen. Las altas reciben UUID. Cada cambio o baja valida revisión
 y pertenencia y el reintento con el mismo UUID recupera el resultado.
 El último evento retirado quita el asterisco de la ficha en la vista web.
+
+El 25 de noviembre de 2026, **Cambio** en German abrió la captura de
+Contactos con **OK** y **Cancelar** (`closure-supplier-contact-change-editor-empty.png`).
+La revisión del procedimiento mostró que `EPRV#44/13` forma `SUCKEY` y
+envía el guardado a `MBASE/69('FSUCURSALES', …)`. El procedimiento de
+selección `EPRV#44/15` carga el contacto por `FCONTACTOS.CONTSEQ`.
+La edición web guarda los campos para el contacto seleccionado en
+PostgreSQL con su `CONTSEQ` histórico o su UUID web. La captura nativa
+se cerró con **Cancelar**.
+
+En Chromium, **Cambio** descartó un borrador al cancelar y guardó el
+puesto del segundo contacto histórico al volver a confirmar. La lista
+conservó el contacto seleccionado y la lectura MySQL confirmó el valor
+de origen. La escritura de esa prueba usó PGlite en memoria. Evidencia
+`ev_29c35d950059ccccdd32ba16d567ac6b5b88ebaff3069686571e0eaa79001e79`.
+Con PostgreSQL 17 local, dos sesiones compitieron sobre la misma revisión
+en un contacto web y en un contacto histórico simulado. En ambos casos
+una solicitud guardó y la otra recibió `409`. También se comprobó el
+reintento con el mismo UUID y el rollback después de actualizar y antes
+de confirmar (`captures/postgres-contact-change/verified-run.txt`).
 
 En Chromium se creó, cambió y eliminó un evento y se dio de alta y baja un
 contacto temporal. Evidencia `ev_4c23d33f9ff03e0ef31ae603d3b7c41a6c9a63fb1e4bc104ed83d9f4f2c7d3cb`

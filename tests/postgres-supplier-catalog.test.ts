@@ -92,9 +92,10 @@ app.post('/', controller.create).patch('/:supplierId', controller.update).delete
 app.patch('/:supplierId/actions/classifications', controller.classify);
 app.patch('/:supplierId/actions/various', controller.saveVarious);
 app.post('/:supplierId/actions/events', controller.addActivity('events'));
-app.patch('/:supplierId/actions/events/:activityId', controller.changeEvent);
+app.patch('/:supplierId/actions/events/:activityId', controller.changeActivity('events'));
 app.delete('/:supplierId/actions/events/:activityId', controller.removeActivity('events'));
 app.post('/:supplierId/actions/contacts', controller.addActivity('contacts'));
+app.patch('/:supplierId/actions/contacts/:activityId', controller.changeActivity('contacts'));
 app.delete('/:supplierId/actions/contacts/:activityId', controller.removeActivity('contacts'));
 app.use(errorHandler);
 
@@ -173,8 +174,24 @@ it('registra eventos y contactos sobre el proveedor con revisiones, reintento y 
     const saved = (await request(app).post(contacts).send(contact).expect(201)).body.data;
     expect(saved).toMatchObject({ name: 'Contacto temporal', ownerCode: 'ZZEV01', revision: 1 });
     expect(await rows('contacts')).toEqual([saved]);
-    await request(app).delete(`${contacts}/${saved.id}`).send({ ...remove, revision: 0, requestKey: randomUUID() }).expect(409);
-    await request(app).delete(`${contacts}/${saved.id}`).send({ ...remove, revision: 1, requestKey: randomUUID() }).expect(204);
+
+    const path = `${contacts}/${saved.id}`;
+    const edit = { requestKey: randomUUID(), revision: 1, fields: { ...contact.fields, position: 'Compras' } };
+    await request(app).patch(path).send({ ...edit, fields: { ...edit.fields, ownerCode: '002000' } }).expect(400);
+    failCommit = true;
+    await request(app).patch(path).send(edit).expect(503);
+    expect(await rows('contacts')).toEqual([saved]);
+
+    const rival = { ...edit, requestKey: randomUUID(), fields: { ...edit.fields, position: 'Logística' } };
+    const contactChanges = await Promise.all([request(app).patch(path).send(edit), request(app).patch(path).send(rival)]);
+    expect(contactChanges.map(({ status }) => status).sort()).toEqual([200, 409]);
+    const winningEdit = contactChanges[0]!.status === 200 ? edit : rival;
+    const updated = { ...saved, position: winningEdit.fields.position, revision: 2 };
+    expect(contactChanges.find(({ status }) => status === 200)!.body.data).toEqual(updated);
+    expect(await rows('contacts')).toEqual([updated]);
+    expect((await request(app).patch(path).send(winningEdit).expect(200)).body.data).toEqual(updated);
+    await request(app).delete(path).send({ ...remove, revision: 1, requestKey: randomUUID() }).expect(409);
+    await request(app).delete(path).send({ ...remove, revision: 2, requestKey: randomUUID() }).expect(204);
     expect(await rows('contacts')).toEqual([]);
   } finally {
     const current = await request(app).get(`/${id}/edit`).expect(200);

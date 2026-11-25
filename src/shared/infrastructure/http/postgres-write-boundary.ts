@@ -48,8 +48,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
      (['PATCH', 'DELETE'].includes(req.method) && /^\/accounts-payable\/suppliers\/[1-9]\d*$/.test(path)) ||
      (req.method === 'PATCH' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/(classifications|various)$/.test(path)) ||
      (req.method === 'POST' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/(actions\/(events|contacts)|balance\/grouping)$/.test(path)) ||
-     (req.method === 'PATCH' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/events\/[^/]+$/.test(path)) ||
-     (req.method === 'DELETE' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/(events|contacts)\/[^/]+$/.test(path)));
+     (['PATCH', 'DELETE'].includes(req.method) && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/(events|contacts)\/[^/]+$/.test(path)));
   const reversePurchasePosting = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     (/^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*\/reversal$/.test(path) ||
       /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/cancel-(expense|reception)$/.test(path));

@@ -62,6 +62,7 @@ const contactFields = z.strictObject({
 const createEvent = z.strictObject({ requestKey: key, fields: eventFields });
 const createContact = z.strictObject({ requestKey: key, fields: contactFields });
 const changeEvent = createEvent.extend({ revision: z.int().nonnegative().max(2147483646) });
+const changeContact = createContact.extend({ revision: z.int().nonnegative().max(2147483646) });
 const deleteActivity = z.strictObject({
   requestKey: key, revision: z.int().nonnegative().max(2147483646), confirmed: z.literal(true),
 });
@@ -109,9 +110,10 @@ export class SupplierCatalogController {
     response.status(201).json({ data });
   };
 
-  changeEvent: RequestHandler = async (request, response) => {
+  changeActivity = (kind: SupplierActivityKind): RequestHandler => async (request, response) => {
     const { supplierId, activityId } = activityParams.parse(request.params);
-    const data = await this.catalog.writeActivity(supplierId, 'events', 'change', activityId, changeEvent.parse(request.body));
+    const input = (kind === 'events' ? changeEvent : changeContact).parse(request.body);
+    const data = await this.catalog.writeActivity(supplierId, kind, 'change', activityId, input);
     response.json({ data });
   };
 

@@ -104,11 +104,22 @@ Content-Type: application/json
   "fields": {"name": "Temporal", "position": "", "phone1": "", "phone2": "", "fax": "", "email": "", "notes": "", "interests": "", "birthday": null}
 }
 
-### Baja de contacto temporal
+### Cambio de contacto temporal en PostgreSQL de pruebas
+# @name supplierTestContactEdit
+PATCH {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/contacts/{{supplierTestContact.response.body.$.data.id}}
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "revision": {{supplierTestContact.response.body.$.data.revision}},
+  "fields": {"name": "Temporal", "position": "Compras", "phone1": "", "phone2": "", "fax": "", "email": "", "notes": "", "interests": "", "birthday": null}
+}
+
+### Baja del contacto temporal después de Cambio
 DELETE {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/contacts/{{supplierTestContact.response.body.$.data.id}}
 Content-Type: application/json
 
-{"requestKey": "{{$guid}}", "revision": {{supplierTestContact.response.body.$.data.revision}}, "confirmed": true}
+{"requestKey": "{{$guid}}", "revision": {{supplierTestContactEdit.response.body.$.data.revision}}, "confirmed": true}
 
 ###
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/next

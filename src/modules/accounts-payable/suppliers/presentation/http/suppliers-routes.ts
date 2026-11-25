@@ -28,12 +28,13 @@ export const createSuppliersRouter = (controller: SuppliersController, reversals
   router.get('/:supplierId/actions/discounts', controller.panel('discounts'));
   router.get('/:supplierId/actions/events', controller.panel('events'));
   router.post('/:supplierId/actions/events', catalog.addActivity('events'));
-  router.patch('/:supplierId/actions/events/:activityId', catalog.changeEvent);
+  router.patch('/:supplierId/actions/events/:activityId', catalog.changeActivity('events'));
   router.delete('/:supplierId/actions/events/:activityId', catalog.removeActivity('events'));
   router.get('/:supplierId/actions/various', controller.panel('various'));
   router.patch('/:supplierId/actions/various', catalog.saveVarious);
   router.get('/:supplierId/actions/contacts', controller.panel('contacts'));
   router.post('/:supplierId/actions/contacts', catalog.addActivity('contacts'));
+  router.patch('/:supplierId/actions/contacts/:activityId', catalog.changeActivity('contacts'));
   router.delete('/:supplierId/actions/contacts/:activityId', catalog.removeActivity('contacts'));
   router.get('/:supplierId/balance', controller.panel('balance'));
   router.post('/:supplierId/balance/grouping', async (request, response) => {

@@ -46,8 +46,8 @@ La UI avisa que los cambios requieren verificación posterior en PROSCAI. A dife
 
 El 25 de noviembre de 2026, German de pruebas abrió el cliente `000001` en
 TUVANSA México tras pulsar **Cancelar** en el acceso. La ficha mostró las
-acciones del catálogo hasta **Contactos**. **Verifica fiscal** no apareció en
-esa sesión y **Act.** quedó fuera de alcance. La lectura histórica de
+acciones del catálogo hasta **Contactos**. **Act.** quedó inaccesible en
+esa sesión de German. La lectura histórica de
 `FYG.REGIMENES_DE_CAPITAL` confirma que existe un catálogo local. Falta observar
 el botón con un perfil que muestre **Verifica fiscal** y comprobar si la acción
 actualiza dicho catálogo. Evidencia local en
@@ -58,6 +58,13 @@ el cliente activo `000060`. **Acciones** volvió a terminar en **Contactos** y
 **Verifica fiscal** no apareció. Se necesita una sesión que exponga
 **Datos fiscales → Act.** para observar si el botón lee o actualiza el catálogo
 local. Evidencia en `captures/ui/closure-approved-plan-active-client-actions.png`.
+
+El exportado de `ECLI#1` del 24 de noviembre de la biblioteca **German -
+pruebas** coincide con la ficha observada hasta **Contactos**. Para el
+cotejo de **Act.** se requiere una sesión que exponga **Verifica fiscal**
+con acceso a **Datos fiscales** en un cliente de prueba. El efecto local
+se debe comprobar mediante una lectura de control antes y después del
+clic, incluyendo `FYG.REGIMENES_DE_CAPITAL` y la ficha fiscal del cliente.
 
 ## Investigación del proveedor (2026-09-14)
 

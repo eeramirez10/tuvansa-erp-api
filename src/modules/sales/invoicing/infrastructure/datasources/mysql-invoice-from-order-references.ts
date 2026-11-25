@@ -92,7 +92,7 @@ export class MysqlInvoiceFromOrderReferences implements InvoiceFromOrderReferenc
     else if (
       rules.customerCurrency > 1 || rules.intercompany || rules.withheldVat
       || (rules.alternateCustomer && rules.alternateCustomer !== rules.customerCode)
-      || rules.vat !== 16 || !rules.fiscalStart || !rules.fiscalEnd
+      || rules.vat !== 16 || !rules.fiscalStart || !rules.fiscalEnd || rules.fiscalStart > rules.fiscalEnd
       || !Number.isInteger(rules.customerTermsDays) || rules.customerTermsDays < 0
       || !Number.isInteger(order.termsDays) || order.termsDays < 0
     ) reason = 'El cliente requiere una moneda, cuenta, plazo o impuesto fuera de la remisión estándar.';

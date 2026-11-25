@@ -32,15 +32,21 @@ export class CreateInvoiceFromOrder {
     const { order, revision } = await this.source(orderNumber);
     let reason = invoiceOrderReason(order);
     let lines: ReturnType<typeof invoiceOrderLines> = [];
+    let fiscalStart: string | null = null;
+    let fiscalEnd: string | null = null;
     if (!reason) {
       const context = await this.references.context(companyId, order);
+      fiscalStart = context.fiscalStart || null;
+      fiscalEnd = context.fiscalEnd || null;
       lines = context.reason ? [] : invoiceOrderLines(order, context);
       reason = context.reason ?? (lines.length ? null : 'No hay partidas asignadas en su unidad base para la remisión estándar.');
     }
+    const today = mexicoDate.format(new Date());
     return {
       orderId: order.id, number: order.number, customer: order.customer,
       warehouse: normalizeOrderWarehouse(order.warehouse), revision, canWrite: reason === null, reason,
-      defaults: { issuedAt: mexicoDate.format() }, lines,
+      fiscalStart, fiscalEnd,
+      defaults: { issuedAt: fiscalStart && fiscalEnd && today >= fiscalStart && today <= fiscalEnd ? today : null }, lines,
     };
   }
 

@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { env } from '../src/config/env.js';
 import { ConvertSalesTicket } from '../src/modules/sales/invoicing/application/use-cases/convert-sales-ticket.js';
+import { CreateInvoiceFromOrder } from '../src/modules/sales/invoicing/application/use-cases/create-invoice-from-order.js';
 import type { SalesTicketConversionSource } from '../src/modules/sales/invoicing/domain/datasources/sales-ticket-conversion-data-source.js';
 import { postInvoiceFromOrder } from '../src/modules/sales/invoicing/domain/entities/invoice-from-order.js';
 import { PostgresSalesRemissions } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
@@ -37,10 +38,8 @@ const currentDate = () => new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short',
 const root = '/api/sales/invoices';
 const previewPath = (id: number) => `${root}/${id}/summaries/ticket-to-invoice`;
 
-async function postFirstRemission(connect: PostgresConnectionFactory) {
-  const orders = new PostgresOrderOverlayDataSource(connect, () => true);
-  const sales = new PostgresSalesRemissions(orders, connect, { layers: async () => [] });
-  const order = await orders.create(async (id): Promise<OrderProps> => ({
+function assignedOrder(id: number): OrderProps {
+  return {
     id, number: 'PW9001', customerOrderNumber: '', documentKind: 'order', status: '', fulfilledAmount: 0,
     customer: { id: 100, code: 'C001', name: 'Cliente de pruebas' }, branch: 0, department: '',
     dates: { orderedAt: originalDate, from: null, dueAt: null }, attention: '', termsDays: 30, authorization: 'O.K.',
@@ -52,7 +51,13 @@ async function postFirstRemission(connect: PostgresConnectionFactory) {
     lines: [{ id: 101, productId: 7, productCode: 'A', description: 'Producto A', ordered: 4,
       fulfilled: 0, remaining: 4, unit: 'PZ', assigned: 4, branch: 0, price: 50, classCode: '', currencyId: 0,
       piecesAssignment: '', discount: 0, publicPrice: 50, sku: '', color: '', size: '' }],
-  }));
+  };
+}
+
+async function postFirstRemission(connect: PostgresConnectionFactory) {
+  const orders = new PostgresOrderOverlayDataSource(connect, () => true);
+  const sales = new PostgresSalesRemissions(orders, connect, { layers: async () => [] });
+  const order = await orders.create(async (id) => assignedOrder(id));
   const requestKey = randomUUID();
   const input = { orderNumber: order.number, requestKey, revision: 1, issuedAt: originalDate, lines: [{ orderLineId: 101, quantity: 2 }] };
   const { invoice } = await sales.commit({
@@ -65,6 +70,36 @@ async function postFirstRemission(connect: PostgresConnectionFactory) {
   });
   return { invoice, order };
 }
+
+it('propone la fecha de México sólo dentro del ejercicio fiscal, incluidos ambos extremos', async () => {
+  const order = assignedOrder(1);
+  const fiscalStart = '2025-01-01';
+  const fiscalEnd = '2025-12-31';
+  const useCase = new CreateInvoiceFromOrder({
+    writable: () => true,
+    order: async () => ({ order, revision: 1 }),
+    findRequest: async () => null,
+    commit: async () => { throw new Error('La preparación no debe registrar una remisión'); },
+  }, { context: async () => ({
+    fiscalStart, fiscalEnd, reason: null, vat: 16, customerTermsDays: 30, creditLimit: 1000,
+    creditBalance: 0, products: new Map([[7, { id: 7, code: 'A', unit: 'PZ', package: '', family: '', cost: 25,
+      legacyOnHand: 20, legacyAssigned: 0, supported: true }]]),
+  }) });
+
+  try {
+    for (const [instant, issuedAt] of [
+      ['2025-01-01T05:59:59Z', null],
+      ['2025-01-01T06:00:00Z', fiscalStart],
+      ['2026-01-01T05:59:59Z', fiscalEnd],
+      ['2026-01-01T06:00:00Z', null],
+    ] as const) {
+      vi.setSystemTime(new Date(instant));
+      await expect(useCase.prepare(1, order.number)).resolves.toMatchObject({
+        canWrite: true, fiscalStart, fiscalEnd, defaults: { issuedAt },
+      });
+    }
+  } finally { vi.useRealTimers(); }
+});
 
 it('convierte una FAW en Facturación y conserva la remisión, el surtido y el cargo de origen', async () => {
   const db = new PGlite();

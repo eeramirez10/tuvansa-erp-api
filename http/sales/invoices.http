@@ -5,7 +5,7 @@
 @orderNumber = NP00001
 @orderRevision = 1
 @orderLineId = 1
-@issuedAt = 2026-11-23
+@issuedAt = fecha-dentro-del-ejercicio
 @requestKey = 0de010c1-ad5c-4e67-8f10-fbe09ee939c2
 @clientId = 15390
 @historicalRemissionId = 346421
@@ -19,7 +19,8 @@
 ### Preparar una Remisión México desde un pedido web autorizado y asignado
 GET {{baseUrl}}/sales/invoices/from-order?orderNumber={{orderNumber}}
 
-### Registrar la remisión. Tomar revisión y partidas del GET. Reusar la clave solo para reintentar el mismo envío.
+### Registrar la remisión. Tomar revisión y partidas del GET y elegir una fecha entre fiscalStart y fiscalEnd.
+# Reusar la clave solo para reintentar el mismo envío.
 POST {{baseUrl}}/sales/invoices/from-order
 Content-Type: application/json
 

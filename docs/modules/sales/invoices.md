@@ -41,13 +41,17 @@ emite en un paso independiente que requiere la integración de timbrado.
 
 | Operación | Endpoint | Efecto |
 | --- | --- | --- |
-| Preparar | `GET /api/sales/invoices/from-order?orderNumber=:number` | La revisión del pedido y el máximo que se puede remitir en cada partida |
+| Preparar | `GET /api/sales/invoices/from-order?orderNumber=:number` | Revisión, máximo por partida y ejercicio fiscal (`fiscalStart`, `fiscalEnd`) de `FCIA.CIAFI/CIAFF`, mediante la consulta derivada de referencias |
 | Registrar | `POST /api/sales/invoices/from-order` | Guarda folio FAW, salida y cargo. Aumenta lo surtido y libera la asignación aplicada |
 | Cancelar | Cierre de la captura | Descarta la fecha y las cantidades ingresadas |
 
 La captura web cubre pedidos locales de México en pesos, dentro del periodo
 fiscal, con IVA del 16 % y productos en su unidad base. Admite productos
 ordinarios y productos con PEPS global bajo la configuración de TUVANSA.
+La preparación propone la fecha de México en `defaults.issuedAt` únicamente
+si cae dentro del ejercicio, incluidos ambos extremos. Fuera del ejercicio
+devuelve `null`. Al confirmar se vuelve a leer el periodo y el POST rechaza
+una fecha fuera del rango con `422 SALES_REMISSION_INVALID`.
 PostgreSQL verifica la revisión del pedido, las existencias y el crédito al
 confirmar. Una clave de solicitud repetida devuelve el folio original si todos
 los datos coinciden. Los requests están en `http/sales/invoices.http`.

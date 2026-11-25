@@ -9,6 +9,7 @@ propios filtros, independientemente del producto que se estaba consultando.
 | Búsqueda | `GET /api/inventories/movements` | FDOC, FCLI, FPRV | Derivada de `EINV#24/243` → `EMOVSINVFIND/100`; reglas en `/131` y lista en `/133` |
 | Abrir el documento | `GET /api/inventories/movements/:id` | FDOC, FAXINV, FINV, FCLI, FPRV | Adaptación basada en el procedimiento `EINV#24/240` |
 | Comentarios | `GET /api/inventories/movements/:id` | `FCOMENT.COML1` por `COMSEQFACT = FDOC.DSEQ` | Consulta de la nota del folio sin guardar cambios |
+| Imprimir | `GET /api/inventories/movements/:id/actions/print` | Documento vigente, `FTIPMV`, `FCIA`, `FALMCAT`, `FLOTES` o capas web | Consulta derivada de `EINV#24/495` y `MFACT/21` con los formatos de México |
 | Cancelar | `DELETE /api/inventories/movements/:id` | `tuvansa.inventory_movement_documents` y los saldos de apertura de PostgreSQL | Derivada de `EINV#24/41`, `MFACT/112` y `MCPAR03/21` |
 
 El marcador histórico [INV_QUERY_DOCUMENTOS_RETRY](product-buttons-capture.md#inv_query_documentos_retry)
@@ -39,6 +40,45 @@ cuando el documento tiene una nota de origen. Una apertura PostgreSQL
 o un documento web puede omitir ese campo. La consulta conserva `DFECHA`
 como fecha para que MySQL 5.1 la devuelva en formato ISO. **CT** no mostró
 un panel para la entrada `EI1981`.
+
+## Documentos → Imprimir y CT
+
+**Imprimir** controla el permiso `EINV#24/495` en German, carga el `DSEQ`
+actual y llama a `MFACT/21`. La variante con Shift envía el reporte a
+pantalla. Para México, `FTIPMV.TIREPNAME` tiene `QTUVANSA007` en EI y TR
+y `QTUVANSA002` en SI. Los tres tipos tienen cero copias adicionales
+y usan el dispositivo predeterminado.
+
+`FORMATOS.LBR` contiene los rótulos de ambos reportes, incluidos almacén,
+fecha, referencia, número de partida, cantidad, código, descripción, costo
+unitario, importe, comentarios, total y firmas. Las definiciones están en las páginas
+`0x979–0x9E1` para `QTUVANSA007` y `0x892–0x8FA` para `QTUVANSA002`.
+La evidencia está vinculada al SHA-256
+`E27867BD2FEE8FE74DC39043783F29F0FB9ABCC76A0D926F30F928E9174BA0C5`.
+Procedimientos exportados el 20 y 23 de noviembre de 2026 en
+`20261120-EINV24-FIELDS-AND-PROCEDURES.txt` y
+`20261123-MFACT-SALES-PROCEDURES.txt`.
+
+La vista previa web cubre EI y SI vigentes de México con sus formatos
+configurados. Relee el folio con sus partidas ordenadas por origen, conserva
+el signo de la cantidad y calcula el importe como cantidad por costo.
+El pedimento, la fecha y la aduana se resuelven mediante el `LOSEQ` histórico
+o el identificador de la capa PostgreSQL. El navegador abre su diálogo de
+impresión al confirmar la vista previa. La operación es de lectura.
+
+Se comprobaron por lectura MySQL `EI1981` con `QTUVANSA007` y `SI1148`
+con `QTUVANSA002` y pedimento. El 25 de noviembre de 2026, Shift +
+**Imprimir** llegó a `MFACT/21` para `EI1981`. German mostró
+`[E101201] Unable to find format QTUVANSA007` en `Set report name [TIREPNAME]`
+(`closure-20261125-inv-ei-print-preview-settled.png`). `TR0004` tiene dos
+partidas positivas y dos negativas. Queda pendiente verificar qué partidas
+y totales presenta el formato `QTUVANSA007` en German para traspasos.
+
+**CT** pide el permiso `EFACT#13/38` y abre `EFACT#6AA`, el formato
+de factura por color y talla. La consulta histórica de México no encontró
+partidas vigentes de EI, SI o TR asociadas a un producto con `FINV.ICT`
+activo. German tampoco mostró un panel al pulsar CT con `EI1981`. La
+habilitación depende de verificar el flujo con un folio de color y talla.
 
 ## Prueba de cancelación en Omnis 7
 

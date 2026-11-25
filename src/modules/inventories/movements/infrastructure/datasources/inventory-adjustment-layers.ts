@@ -23,8 +23,12 @@ export async function readLocalInventoryAdjustments<T>(fallback: T, read: (clien
   } finally { client?.release(); }
 }
 
+const firstLocalLayerId = 7_971_000_000_000;
+const lastLocalLayerId = 7_971_999_999_999;
+export const isLocalInventoryLayerId = (id: number) => id >= firstLocalLayerId && id <= lastLocalLayerId;
+
 export const inventoryLayerMigration = { id: 'inventory_adjustment_layers', sql: `
-  CREATE SEQUENCE tuvansa.inventory_adjustment_layer_ids START WITH 7971000000000 MAXVALUE 7971999999999;
+  CREATE SEQUENCE tuvansa.inventory_adjustment_layer_ids START WITH ${firstLocalLayerId} MAXVALUE ${lastLocalLayerId};
   CREATE TABLE tuvansa.inventory_adjustment_layers (
     id bigint PRIMARY KEY,
     product_id bigint NOT NULL,

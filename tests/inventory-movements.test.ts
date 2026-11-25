@@ -154,3 +154,74 @@ describe('inventory movement lookup', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe('inventory movement printing', () => {
+  const settings = {
+    format: 'QTUVANSA007', adHoc: 0, companyName: 'TUVANSA', city: 'México', state: 'CDMX', warehouseName: 'Almacén central',
+  };
+
+  it('prepares the selected EI using the effective type format and the ordered movement lines', async () => {
+    execute.mockResolvedValueOnce([[{ ...header, comment: ' Ajuste de inventario ' }]])
+      .mockResolvedValueOnce([[line]])
+      .mockResolvedValueOnce([[settings]]);
+
+    const response = await request(app).get('/api/inventories/movements/125/actions/print');
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      format: 'QTUVANSA007', type: 'EI', document: 'EI1000', date: '2019-08-27',
+      warehouse: '01', warehouseName: 'Almacén central', place: 'México, CDMX',
+      comment: 'Ajuste de inventario',
+      lines: [{ id: 91, productCode: line.productCode, quantity: 2, cost: 5777.085, amount: 11554.17, customs: null }],
+      total: 11554.17,
+    });
+    expect(execute.mock.calls[2]).toEqual([
+      expect.stringContaining('ORDER BY t.TIMULTICIA DESC,t.TISEQ LIMIT 1'),
+      ['01', 'EI', 1],
+    ]);
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it('prepares the signed SI and reads the customs data only for its linked lot', async () => {
+    execute.mockResolvedValueOnce([[{ ...header, document: 'SI1148', type: 'SI' }]])
+      .mockResolvedValueOnce([[{ ...line, quantity: -2, type: 'SI', lotId: 73 }]])
+      .mockResolvedValueOnce([[{ ...settings, format: 'QTUVANSA002' }]])
+      .mockResolvedValueOnce([[{ id: 73, entry: 'PEDIMENTO PRUEBA', date: '2019-08-01', office: 'ADUANA' }]]);
+
+    const response = await request(app).get('/api/inventories/movements/125/actions/print');
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      format: 'QTUVANSA002', type: 'SI', document: 'SI1148',
+      lines: [{ quantity: -2, amount: -11554.17, customs: { entry: 'PEDIMENTO PRUEBA', date: '2019-08-01', office: 'ADUANA' } }],
+      total: -11554.17,
+    });
+    expect(execute.mock.calls[3]).toEqual([expect.stringContaining('FROM FLOTES WHERE LOSEQ IN (?)'), [73]]);
+  });
+
+  it.each([
+    { document: 'TR0004', type: 'TR' },
+    { company: 2 },
+    { status: 1 },
+  ])('rejects a document outside the verified print scope before reading its format', async (changes) => {
+    execute.mockResolvedValueOnce([[{ ...header, ...changes }]]).mockResolvedValueOnce([[line]]);
+    const response = await request(app).get('/api/inventories/movements/125/actions/print');
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe('INVENTORY_MOVEMENT_PRINT_UNAVAILABLE');
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a cancelled document and an unsupported layout', async () => {
+    execute.mockResolvedValueOnce([[header]])
+      .mockResolvedValueOnce([[{ ...line, type: 'K', quantity: 0, cost: 0 }]])
+      .mockResolvedValueOnce([[header]])
+      .mockResolvedValueOnce([[line]])
+      .mockResolvedValueOnce([[{ ...settings, format: 'OTRO_FORMATO' }]]);
+    const cancelled = await request(app).get('/api/inventories/movements/125/actions/print');
+    expect(cancelled.status).toBe(422);
+    expect(cancelled.body.error.code).toBe('INVENTORY_MOVEMENT_PRINT_UNAVAILABLE');
+    expect(execute).toHaveBeenCalledTimes(2);
+    const otherFormat = await request(app).get('/api/inventories/movements/125/actions/print');
+    expect(otherFormat.status).toBe(422);
+    expect(otherFormat.body.error.code).toBe('INVENTORY_MOVEMENT_PRINT_UNAVAILABLE');
+    expect(execute).toHaveBeenCalledTimes(5);
+  });
+});

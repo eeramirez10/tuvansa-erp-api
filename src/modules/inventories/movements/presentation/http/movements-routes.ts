@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { CancelInventoryMovement } from '../../application/use-cases/cancel-inventory-movement.js';
 import type { CaptureInventoryMovements } from '../../application/use-cases/capture-inventory-movements.js';
+import type { ReadInventoryMovementPrint } from '../../application/use-cases/read-inventory-movement-print.js';
 import type { ReadInventoryMovements } from '../../application/use-cases/read-inventory-movements.js';
 
 const textFilter = z.string().trim().min(1).max(64).optional();
@@ -42,6 +43,7 @@ export const createMovementsRouter = (
   movements: ReadInventoryMovements,
   cancellation?: CancelInventoryMovement,
   capture?: CaptureInventoryMovements,
+  print?: ReadInventoryMovementPrint,
 ): Router => {
   const router = Router();
   router.get('/', async (request, response) => {
@@ -61,6 +63,12 @@ export const createMovementsRouter = (
         lines: lines.map(({ cost, ...line }) => cost === undefined ? line : { ...line, cost }),
       });
       response.status(201).json(result);
+    });
+  }
+  if (print !== undefined) {
+    router.get('/:id/actions/print', async (request, response) => {
+      const { id } = idParamsSchema.parse(request.params);
+      response.json(await print.execute(id));
     });
   }
   router.get('/:id', async (request, response) => {

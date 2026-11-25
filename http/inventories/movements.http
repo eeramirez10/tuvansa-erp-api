@@ -11,6 +11,14 @@ Accept: application/json
 GET {{baseUrl}}/inventories/movements/{{movementSearch.response.body.$.data[0].id}}
 Accept: application/json
 
+### Consultas → Documentos → Imprimir EI1981 de México
+GET {{baseUrl}}/inventories/movements/346463/actions/print
+Accept: application/json
+
+### Consultas → Documentos → Imprimir SI1148 de México
+GET {{baseUrl}}/inventories/movements/343824/actions/print
+Accept: application/json
+
 ### Movimientos de inventario → Preparar captura de EI o SI
 GET {{baseUrl}}/inventories/movements/capture
 Accept: application/json

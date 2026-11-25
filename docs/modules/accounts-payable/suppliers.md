@@ -69,6 +69,49 @@ su ficha y sus clasificadores. La prueba HTTP cubrió revisión vencida,
 reintento, dos solicitudes simultáneas y fallo antes de confirmar.
 Evidencia `ev_fbe6ed97c47764511b9a9fb106ecc193cc99413978c19a6b9b4a400be907a72a`.
 
+### Eventos y contactos
+
+| Vista | Botón | Evidencia German | Endpoint bajo `/:id/actions` | Tablas |
+| --- | --- | --- | --- | --- |
+| Eventos | Nuevo, Cambiar, Eliminar | `20261125-EPRV20-PROCEDURES`, `EPRV#1/45 → EPRV#20/9–11,240` | `POST /events`, `PATCH /events/:activityId`, `DELETE /events/:activityId` | `FEVENTOS`, `FPRV.PRVEVENTOS`, `tuvansa.supplier_catalog` |
+| Contactos | Alta, Baja | `20261125-EPRV44-PROCEDURES`, permisos `PRV#44/11` y `PRV#44/12` | `POST /contacts`, `DELETE /contacts/:activityId` | `FCONTACTOS`, `tuvansa.supplier_catalog` |
+| Contactos | Cambio | `EPRV#44/13` llama a `MBASE/69('FSUCURSALES', …)` | Pendiente de confirmar un cambio sobre el contacto | `FSUCURSALES` en el procedimiento |
+
+Las lecturas se adaptan a los procedimientos. Eventos usa `PRVSEQ` y el
+generador vacío de la sesión sin identificación. Contactos usa el código de
+origen del proveedor y `CONTES=1`. Se guardan las ediciones web con una
+bitácora derivada en PostgreSQL, manteniendo `EVSEQ` y `CONTSEQ` para las
+filas de origen. Las altas reciben UUID. Cada cambio o baja valida revisión
+y pertenencia y el reintento con el mismo UUID recupera el resultado.
+El último evento retirado quita el asterisco de la ficha en la vista web.
+
+En Chromium se creó, cambió y eliminó un evento y se dio de alta y baja un
+contacto temporal. Evidencia `ev_4c23d33f9ff03e0ef31ae603d3b7c41a6c9a63fb1e4bc104ed83d9f4f2c7d3cb`
+y `ev_084fa42d56c028c1c9e95aefac00a72fd6a6df7082d2357e9263ae33e4d13d0f`.
+La prueba HTTP forzó un fallo antes de confirmar y verificó el contenido y
+el indicador después del rollback. Dos solicitudes sobre la misma revisión
+produjeron un guardado y un conflicto.
+
+### Varios
+
+| Vista | Botón | Evidencia German | Procedencia | Endpoint | Tablas |
+| --- | --- | --- | --- | --- | --- |
+| Enviar a | Varios / Cambio / OK | `20261125-eprv-varios-change-ready`, `EPRV2#1/31`, acceso `EPRV2#1/27` | Lectura adaptada y guardado derivado | `GET` y `PATCH /:id/actions/various` | `FPRV`, `FCIA`, `tuvansa.supplier_catalog` |
+
+German entra en captura y al confirmar actualiza los campos y
+`PRVFECHACAMBIO`. El editor web guarda datos bancarios, plazos y tolerancia,
+IVA y retenciones, valores diarios, los doce campos varios y los códigos de
+Informativa SAT. Proyecta tolerancia, IVA, retenciones e Intercia en los
+parámetros efectivos que ya consumen Compras y Pagos. La correspondencia entre
+las opciones de ID Banamex y los valores `PRVBMXID` 3 y 4 quedó pendiente de
+verificar.
+
+El PATCH valida revisión y UUID en la transacción del proveedor. La prueba
+HTTP cubre reintento, revisión vencida, dos solicitudes y rollback, además de
+un cambio posterior en la ficha. En Chromium se guardaron siete días de
+entrega en un proveedor temporal y la ficha volvió a consulta.
+Evidencia `ev_2ec5e78cb47890169581647b9120242185ac3ffd32710869d82410d901074581`.
+
 ## Consultas
 
 | Botón OMNIS | Endpoint GET | Tablas principales / filtros capturados |

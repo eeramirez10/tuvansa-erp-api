@@ -5,7 +5,8 @@ import request from 'supertest';
 import { afterAll, expect, it, vi } from 'vitest';
 import { WriteSupplierCatalog } from '../src/modules/accounts-payable/suppliers/application/use-cases/write-supplier-catalog.js';
 import { Supplier } from '../src/modules/accounts-payable/suppliers/domain/entities/supplier.js';
-import { blankSupplierCatalog, nativeSupplierParameters, newSupplier } from '../src/modules/accounts-payable/suppliers/domain/entities/supplier-catalog.js';
+import { blankSupplierCatalog, blankSupplierVarious, nativeSupplierParameters, newSupplier } from '../src/modules/accounts-payable/suppliers/domain/entities/supplier-catalog.js';
+import { projectSupplierActivity } from '../src/modules/accounts-payable/suppliers/domain/entities/supplier-activity.js';
 import type { SupplierSearchCriteria } from '../src/modules/accounts-payable/suppliers/domain/repositories/suppliers-repository.js';
 import { LegacyMysqlSuppliersDataSource } from '../src/modules/accounts-payable/suppliers/infrastructure/datasources/legacy-mysql-suppliers-data-source.js';
 import { PostgresSupplierCatalogDataSource, searchSupplierCatalogRecords, supplierCatalogRecord } from '../src/modules/accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-catalog-data-source.js';
@@ -54,6 +55,7 @@ const references = {
     { id: 2, code: '2B', number: 'B', description: 'Tipo B', type: '2' },
     { id: 3, code: '3C', number: 'C', description: 'Sucursal C', type: '3' },
   ],
+  activity: async () => [],
   codeExists: async (code: string, excludeId?: number) => code === original.code && original.id !== excludeId,
   leafAccount: async (code: string) => code === '2001001',
   dependency: async () => nativeDependency,
@@ -88,9 +90,93 @@ const app = express().use(express.json());
 app.get('/create', controller.getCreate).get('/:supplierId/edit', controller.getEdit);
 app.post('/', controller.create).patch('/:supplierId', controller.update).delete('/:supplierId', controller.remove);
 app.patch('/:supplierId/actions/classifications', controller.classify);
+app.patch('/:supplierId/actions/various', controller.saveVarious);
+app.post('/:supplierId/actions/events', controller.addActivity('events'));
+app.patch('/:supplierId/actions/events/:activityId', controller.changeEvent);
+app.delete('/:supplierId/actions/events/:activityId', controller.removeActivity('events'));
+app.post('/:supplierId/actions/contacts', controller.addActivity('contacts'));
+app.delete('/:supplierId/actions/contacts/:activityId', controller.removeActivity('contacts'));
 app.use(errorHandler);
 
 afterAll(() => db.close());
+
+it('guarda Varios junto con los parámetros usados por Compras y conserva la revisión ante fallos', async () => {
+  const creation = { requestKey: randomUUID(), fields: { ...defaults, code: 'ZZVR01', name: 'Varios temporal' } };
+  const created = (await request(app).post('/').send(creation).expect(201)).body.data;
+  const id = Number(created.id);
+  const various = `/${id}/actions/various`;
+  const command = {
+    requestKey: randomUUID(), revision: 1,
+    fields: { ...blankSupplierVarious(nativeSupplierParameters), tolerancePercent: 27, vatType: 1, vatWithholdingPercent: 1.0625 },
+  };
+  try {
+    failCommit = true;
+    await request(app).patch(various).send(command).expect(503);
+    expect(await supplierCatalogRecord(id)).toMatchObject({ various: null, revision: 1, ...nativeSupplierParameters });
+    const rival = { ...command, requestKey: randomUUID(), fields: { ...command.fields, tolerancePercent: 42 } };
+    const responses = await Promise.all([request(app).patch(various).send(command), request(app).patch(various).send(rival)]);
+    expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
+    const winner = responses[0]!.status === 200 ? command : rival;
+    const result = responses.find(({ status }) => status === 200)!.body;
+    expect((await request(app).patch(various).send(winner).expect(200)).body).toEqual(result);
+    const edit = await request(app).get(`/${id}/edit`).expect(200);
+    await request(app).patch(`/${id}`).send({ revision: edit.body.data.revision, fields: { ...creation.fields, notes: 'Temporal' } }).expect(200);
+    expect(await supplierCatalogRecord(id)).toMatchObject({
+      revision: 3, various: winner.fields, tolerancePercent: winner.fields.tolerancePercent, withheldVat: 1.0625, vatCode: 1,
+    });
+  } finally {
+    const edit = await request(app).get(`/${id}/edit`).expect(200);
+    await request(app).delete(`/${id}`).send({ revision: edit.body.data.revision, confirmed: true }).expect(204);
+  }
+});
+
+it('registra eventos y contactos sobre el proveedor con revisiones, reintento y rollback', async () => {
+  const command = { requestKey: randomUUID(), fields: { ...defaults, code: 'ZZEV01', name: 'Actividad temporal' } };
+  const { body } = await request(app).post('/').send(command).expect(201);
+  const id = Number(body.data.id);
+  const events = `/${id}/actions/events`;
+  const contacts = `/${id}/actions/contacts`;
+  const draft = { requestKey: randomUUID(), fields: {
+    date: '2026-11-25', title: 'Evento de prueba', description: 'Temporal', followUpAt: null, dueAt: null, project: '',
+  } };
+  const rows = async (kind: 'events' | 'contacts') =>
+    [...projectSupplierActivity([], (await supplierCatalogRecord(id))?.activity ?? [], kind).values()];
+  try {
+    failCommit = true;
+    await request(app).post(events).send(draft).expect(503);
+    expect(await rows('events')).toEqual([]);
+    expect((await view.findById(id))?.toPrimitives().indicators.hasEvents).toBe(false);
+    const created = (await request(app).post(events).send(draft).expect(201)).body.data;
+    expect((await request(app).post(events).send(draft).expect(201)).body.data).toEqual(created);
+    expect((await view.findById(id))?.toPrimitives().indicators.hasEvents).toBe(true);
+
+    const change = { requestKey: randomUUID(), revision: 1, fields: { ...draft.fields, title: 'Cambió' } };
+    const conflicting = { ...change, requestKey: randomUUID(), fields: { ...draft.fields, title: 'Dos sesiones' } };
+    const changes = await Promise.all([
+      request(app).patch(`${events}/${created.id}`).send(change),
+      request(app).patch(`${events}/${created.id}`).send(conflicting),
+    ]);
+    expect(changes.map(({ status }) => status).sort()).toEqual([200, 409]);
+    expect(await rows('events')).toEqual([changes.find(({ status }) => status === 200)!.body.data]);
+    const remove = { requestKey: randomUUID(), revision: 2, confirmed: true };
+    await request(app).delete(`${events}/${created.id}`).send(remove).expect(204);
+    await request(app).delete(`${events}/${created.id}`).send(remove).expect(204);
+    expect(await rows('events')).toEqual([]);
+    expect((await view.findById(id))?.toPrimitives().indicators.hasEvents).toBe(false);
+
+    const contact = { requestKey: randomUUID(), fields: { name: 'Contacto temporal', position: '', phone1: '', phone2: '', fax: '',
+      email: '', notes: '', interests: '', birthday: null } };
+    const saved = (await request(app).post(contacts).send(contact).expect(201)).body.data;
+    expect(saved).toMatchObject({ name: 'Contacto temporal', ownerCode: 'ZZEV01', revision: 1 });
+    expect(await rows('contacts')).toEqual([saved]);
+    await request(app).delete(`${contacts}/${saved.id}`).send({ ...remove, revision: 0, requestKey: randomUUID() }).expect(409);
+    await request(app).delete(`${contacts}/${saved.id}`).send({ ...remove, revision: 1, requestKey: randomUUID() }).expect(204);
+    expect(await rows('contacts')).toEqual([]);
+  } finally {
+    const current = await request(app).get(`/${id}/edit`).expect(200);
+    await request(app).delete(`/${id}`).send({ revision: current.body.data.revision, confirmed: true }).expect(204);
+  }
+});
 
 it('guarda nueve clasificadores juntos y conserva el resultado al reintentar o cambiar la ficha', async () => {
   const command = { requestKey: randomUUID(), fields: { ...defaults, code: 'ZZC123', name: 'Temporal' } };

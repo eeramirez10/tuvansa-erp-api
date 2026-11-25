@@ -7,7 +7,7 @@ import type {
   SupplierPanelKey,
   SupplierPanelResult,
 } from '../../domain/repositories/supplier-panels-repository.js';
-import { readSupplierClassifications, readSupplierClassifiers } from './mysql-supplier-catalog-references.js';
+import { readSupplierActivity, readSupplierClassifications, readSupplierClassifiers } from './mysql-supplier-catalog-references.js';
 
 interface IdentityRow extends RowDataPacket {
   id: number;
@@ -44,6 +44,10 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
       };
     }
 
+    if (key === 'events' || key === 'contacts') {
+      return { supplier, items: await readSupplierActivity(supplierId, supplier.code, key) };
+    }
+
     if (key === 'block-status') {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(`
         SELECT PRVBAJA = '1900-12-31' AS isActive,
@@ -77,10 +81,21 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
                PRVVARIOS5 AS minimum5, PRVVARIOS6 AS minimum6,
                PRVVARIOS7 AS minimum7, PRVVARIOS8 AS minimum8,
                PRVVARIOS9 AS amount1, PRVVARIOS10 AS amount2,
-               PRVVARIOS11 AS amount3, PRVVARIOS12 AS amount4
+               PRVVARIOS11 AS amount3, PRVVARIOS12 AS amount4,
+               DATE_FORMAT(NULLIF(PRVFECHACAMBIO,'1900-12-31'),'%Y-%m-%d') AS changedOn,
+               ${Array.from({ length: 8 }, (_, index) => `PRVTRAB${index} AS workMinimum${index}`).join(', ')},
+               (SELECT CIATITPRVS FROM FCIA WHERE CIASEQ=1) AS variousTitles
         FROM FPRV WHERE PRVSEQ = ? LIMIT 1
       `, [supplierId]);
-      return { supplier, items: [], detail: { ...(rows[0] ?? {}) } };
+      const row = rows[0];
+      return {
+        supplier, items: [], detail: row ? {
+          ...row,
+          minimums: Array.from({ length: 8 }, (_, index) => Number(row[`workMinimum${index}`])),
+          values: Array.from({ length: 12 }, (_, index) => Number(row[index < 8 ? `minimum${index + 1}` : `amount${index - 7}`])),
+          labels: String(row.variousTitles ?? '').split(',').slice(0, 12),
+        } : {},
+      };
     }
 
     const [rows] = await this.executePanelQuery(supplierId, supplier.code, key);
@@ -92,28 +107,9 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
   private executePanelQuery(
     supplierId: number,
     supplierCode: string,
-    key: Exclude<SupplierPanelKey, 'block-status' | 'discounts' | 'various' | 'work-in-progress'>,
+    key: Exclude<SupplierPanelKey, 'block-status' | 'discounts' | 'various' | 'work-in-progress' | 'events' | 'contacts'>,
   ): Promise<[RowDataPacket[], unknown]> {
     switch (key) {
-      case 'events':
-        return legacyMysqlPool.execute<RowDataPacket[]>(`
-          SELECT EVSEQ AS id, DATE(EVFECHA) AS date, EVTITULO AS title,
-                 EVDESCR AS description, DATE(EVFOLLOW) AS followUpAt,
-                 DATE(EVENCE) AS dueAt, EVTIPO AS type, EVRESPONSABLE AS responsible,
-                 EVSOLICITA AS requestedBy, EVIMPORTANCIA AS importance,
-                 EVCOMPLEJIDAD AS complexity, EVDONE AS done, EVPROYECTO AS project,
-                 EVNUM AS number, EVFACTURA AS invoice, EVCOSTO AS cost,
-                 EVEJECUTA AS executedBy, EVSUC AS branch, EVDEPTO AS department
-          FROM FEVENTOS WHERE PRVSEQ = ? ORDER BY EVSEQ
-        `, [supplierId]);
-      case 'contacts':
-        return legacyMysqlPool.execute<RowDataPacket[]>(`
-          SELECT CONTSEQ AS id, CONTNOMBRE AS name, CONTPUESTO AS position,
-                 CONTTEL1 AS phone1, CONTTEL2 AS phone2, CONTTEL3 AS fax,
-                 CONTMAIL AS email, CONTOBS AS notes, DATE(CONTCUMPLE) AS birthday,
-                 CONTINTERES AS interests, CONTEXT AS extension, CONTCEL AS mobile
-          FROM FCONTACTOS WHERE CONTKEY = ? ORDER BY CONTSEQ
-        `, [supplierCode]);
       case 'balance':
         return legacyMysqlPool.execute<RowDataPacket[]>(`
           SELECT FDOC.DSEQ AS id, DMULTICIA AS company, DNUM AS document,

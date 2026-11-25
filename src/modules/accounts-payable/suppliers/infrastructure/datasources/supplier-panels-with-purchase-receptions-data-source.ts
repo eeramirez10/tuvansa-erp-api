@@ -1,6 +1,8 @@
 import type { SupplierPanelKey, SupplierPanelResult } from '../../domain/repositories/supplier-panels-repository.js';
 import { readHistoricalReceptionCancellations, type HistoricalReceiptCancellation } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
 import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { projectSupplierActivity } from '../../domain/entities/supplier-activity.js';
+import { blankSupplierVarious } from '../../domain/entities/supplier-catalog.js';
 import { LegacyMysqlSupplierPanelsDataSource } from './legacy-mysql-supplier-panels-data-source.js';
 import { supplierCatalogRecord } from './postgres-supplier-catalog-data-source.js';
 import { readSupplierClassifications } from './mysql-supplier-catalog-references.js';
@@ -115,11 +117,24 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
       supplier: { id: record.id, code: record.code, name: record.name, currentBalance: base?.supplier.currentBalance ?? 0 },
       ...(key === 'discounts' ? { detail: { discount1: record.terms.discounts[0], discount2: record.terms.discounts[1] } } : {}),
       ...(key === 'block-status' && !local.legacy ? { detail: { isActive: record.isActive, deactivatedAt: record.deactivatedAt } } : {}),
-      ...(key === 'various' && !local.legacy ? { detail: {
-        tolerancePercent: local.tolerancePercent, vatType: local.vatCode, vatWithholdingPercent: local.withheldVat,
-        incomeTaxWithholdingPercent: local.withheldIncomeTax, interCompany: local.intercompany,
-      } } : {}),
     } : base;
+    if (result && key === 'various') {
+      const fields = local?.various ?? (local && !local.legacy ? blankSupplierVarious(local) : result.detail);
+      return {
+        ...result,
+        detail: {
+          ...result.detail, ...fields,
+          ...(local?.variousWrite ? { changedOn: local.variousWrite.date } : {}),
+          revision: local?.revision ?? 0, canWrite: postgresConfigured() && Boolean(result.supplier.code),
+        },
+      };
+    }
+    if (result && (key === 'events' || key === 'contacts')) {
+      return {
+        ...result, items: [...projectSupplierActivity(result.items, local?.activity ?? [], key).values()],
+        detail: { canWrite: postgresConfigured() && Boolean(result.supplier.code) },
+      };
+    }
     if (!result || (key !== 'balance' && key !== 'movements')) return result;
     const [charges, historical] = await Promise.all([
       purchaseReceptionSupplierCharges(supplierId), readHistoricalReceptionCancellations({ supplierIds: [supplierId] }),

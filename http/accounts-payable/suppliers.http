@@ -10,6 +10,26 @@ GET {{baseUrl}}/accounts-payable/suppliers/first
 ### Ficha
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}
 
+### Varios → Enviar a
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/various
+
+### Varios → Cambio / OK sobre un proveedor de prueba. Toma los campos y revisión del GET.
+PATCH {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/various
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "revision": {{supplierVariousRevision}},
+  "fields": {
+    "branch": "", "bankAccount": "", "bankCode": "", "city": "", "state": "", "cieReference": "", "internetPassword": "",
+    "multiCompany": 0, "interCompany": 0, "deliveryDays": 7, "purchaseFrequencyDays": 0, "tolerancePercent": 10,
+    "vatType": 0, "vatWithholdingPercent": 0, "incomeTaxWithholdingPercent": 0,
+    "thirdPartyType": "", "operationType": "", "countryCode": "",
+    "minimums": [0, 0, 0, 0, 0, 0, 0, 0],
+    "values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  }
+}
+
 ### Selección de parámetros, grupo 1
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/classifications?position=1
 
@@ -25,6 +45,54 @@ Content-Type: application/json
 
 ### Anterior / siguiente
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/previous
+
+### Eventos del proveedor
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/events
+
+### Evento temporal en PostgreSQL de pruebas
+# @name supplierTestEvent
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/events
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "fields": {"date": "2026-11-25", "title": "Temporal", "description": "", "followUpAt": null, "dueAt": null, "project": ""}
+}
+
+### Cambiar evento temporal
+PATCH {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/events/{{supplierTestEvent.response.body.$.data.id}}
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "revision": {{supplierTestEvent.response.body.$.data.revision}},
+  "fields": {"date": "2026-11-25", "title": "Temporal editado", "description": "", "followUpAt": null, "dueAt": null, "project": ""}
+}
+
+### Eliminar evento temporal con revisión vigente
+DELETE {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/events/{{supplierTestEvent.response.body.$.data.id}}
+Content-Type: application/json
+
+{"requestKey": "{{$guid}}", "revision": {{supplierActivityRevision}}, "confirmed": true}
+
+### Contactos del proveedor
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/contacts
+
+### Alta de contacto temporal en PostgreSQL de pruebas
+# @name supplierTestContact
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/contacts
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "fields": {"name": "Temporal", "position": "", "phone1": "", "phone2": "", "fax": "", "email": "", "notes": "", "interests": "", "birthday": null}
+}
+
+### Baja de contacto temporal
+DELETE {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/contacts/{{supplierTestContact.response.body.$.data.id}}
+Content-Type: application/json
+
+{"requestKey": "{{$guid}}", "revision": {{supplierTestContact.response.body.$.data.revision}}, "confirmed": true}
 
 ###
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/next

@@ -34,7 +34,9 @@ const columns = `id::float8 AS id,supplier,legacy,original_code AS "originalCode
   (parameters->>'tolerancePercent')::float8 AS "tolerancePercent",(parameters->>'vatCode')::float8 AS "vatCode",
   (parameters->>'withheldVat')::float8 AS "withheldVat",(parameters->>'withheldIncomeTax')::float8 AS "withheldIncomeTax",
   (parameters->>'intercompany')::float8 AS intercompany,
-  parameters->'classifications' AS classifications,parameters->'classificationWrite' AS "classificationWrite"`;
+  parameters->'classifications' AS classifications,parameters->'classificationWrite' AS "classificationWrite",
+  parameters->'activity' AS activity,parameters->'various' AS various,
+  parameters->'variousWrite' AS "variousWrite"`;
 const failed = () => new ApplicationError('No fue posible consultar o guardar proveedores en PostgreSQL.', 'SUPPLIER_CATALOG_POSTGRES_UNAVAILABLE', 503);
 
 async function available(client: PostgresClient) {

@@ -1,4 +1,5 @@
 import { Supplier, type SupplierProps } from './supplier.js';
+import type { SupplierActivityChange } from './supplier-activity.js';
 
 export type SupplierCatalogFields = Pick<SupplierProps, 'code' | 'name' | 'address' | 'contact' | 'fiscal' | 'terms' | 'notes'>;
 
@@ -18,6 +19,42 @@ export interface SupplierCatalogRecord extends SupplierCatalogParameters {
   originalCode: string | null;
   classifications?: string[] | null;
   classificationWrite?: { requestKey: string; previousRevision: number } | null;
+  activity?: SupplierActivityChange[] | null;
+  various?: SupplierVariousFields | null;
+  variousWrite?: { requestKey: string; fingerprint: string; revision: number; date: string } | null;
+}
+
+export interface SupplierVariousFields {
+  branch: string;
+  bankAccount: string;
+  bankCode: string;
+  city: string;
+  state: string;
+  cieReference: string;
+  internetPassword: string;
+  multiCompany: number;
+  interCompany: number;
+  deliveryDays: number;
+  purchaseFrequencyDays: number;
+  tolerancePercent: number;
+  vatType: number;
+  vatWithholdingPercent: number;
+  incomeTaxWithholdingPercent: number;
+  thirdPartyType: string;
+  operationType: string;
+  countryCode: string;
+  minimums: number[];
+  values: number[];
+}
+
+export function blankSupplierVarious(parameters: SupplierCatalogParameters): SupplierVariousFields {
+  return {
+    branch: '', bankAccount: '', bankCode: '', city: '', state: '', cieReference: '', internetPassword: '',
+    multiCompany: 0, interCompany: parameters.intercompany, deliveryDays: 0, purchaseFrequencyDays: 0,
+    tolerancePercent: parameters.tolerancePercent, vatType: parameters.vatCode,
+    vatWithholdingPercent: parameters.withheldVat, incomeTaxWithholdingPercent: parameters.withheldIncomeTax,
+    thirdPartyType: '', operationType: '', countryCode: '', minimums: Array<number>(8).fill(0), values: Array<number>(12).fill(0),
+  };
 }
 
 export interface SupplierClassificationUpdate {
@@ -58,5 +95,8 @@ export function presentSupplierCatalog(base: Supplier | null, record: SupplierCa
   if (!record) return base;
   if (record.deleted) return null;
   if (!record.legacy) return Supplier.create(record.supplier);
-  return base ? Supplier.create({ ...base.toPrimitives(), ...supplierCatalogFields(record.supplier) }) : null;
+  return base ? Supplier.create({
+    ...base.toPrimitives(), ...supplierCatalogFields(record.supplier),
+    ...(record.activity?.some(({ kind }) => kind === 'events') ? { indicators: record.supplier.indicators } : {}),
+  }) : null;
 }

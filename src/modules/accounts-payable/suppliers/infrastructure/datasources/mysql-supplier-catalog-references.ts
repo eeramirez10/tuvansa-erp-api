@@ -3,6 +3,7 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import type { SupplierCatalogReferences, SupplierCatalogSettings } from '../../domain/datasources/supplier-catalog-data-source.js';
 import type { SupplierCatalogParameters } from '../../domain/entities/supplier-catalog.js';
 import type { SupplierClassificationOption } from '../../domain/repositories/supplier-panels-repository.js';
+import type { SupplierActivityKind } from '../../domain/entities/supplier-activity.js';
 import { LegacyMysqlSuppliersDataSource } from './legacy-mysql-suppliers-data-source.js';
 
 const nativeDependencies = [
@@ -32,6 +33,31 @@ export async function readSupplierClassifiers(): Promise<SupplierClassificationO
   return rows.map(({ id, code, description, number, type }) => ({ id, code: code.trimEnd(), description, number, type }));
 }
 
+export async function readSupplierActivity(id: number, code: string, kind: SupplierActivityKind) {
+  // Adaptada de EPRV#20/240 para la sesión sin identificación de usuario de German.
+  if (kind === 'events') {
+    const [events] = await legacyMysqlPool.execute<RowDataPacket[]>(
+      `SELECT EVSEQ AS id, CAST(EVFECHA AS CHAR) AS date, EVTITULO AS title, EVDESCR AS description,
+              CAST(NULLIF(EVFOLLOW,'1900-12-31') AS CHAR) AS followUpAt,
+              CAST(NULLIF(EVENCE,'1900-12-31') AS CHAR) AS dueAt,
+              EVTIPO AS type, EVRESPONSABLE AS responsible, EVSOLICITA AS requestedBy,
+              EVIMPORTANCIA AS importance, EVCOMPLEJIDAD AS complexity, EVDONE AS done, EVPROYECTO AS project,
+              EVNUM AS number, EVFACTURA AS invoice, EVCOSTO AS cost, EVEJECUTA AS executedBy, EVSUC AS branch, EVDEPTO AS department
+       FROM FEVENTOS WHERE PRVSEQ=? AND EVSOLICITA='' ORDER BY EVSEQ`, [id],
+    );
+    return events.map((row) => ({ ...row }));
+  }
+  // Adaptada de EPRV#44/240. CONTES=1 identifica los contactos del proveedor.
+  const [contacts] = await legacyMysqlPool.execute<RowDataPacket[]>(
+    `SELECT CONTSEQ AS id, CONTKEY AS ownerCode, CONTNOMBRE AS name, CONTPUESTO AS position,
+            CONTTEL1 AS phone1, CONTTEL2 AS phone2, CONTTEL3 AS fax, CONTMAIL AS email, CONTOBS AS notes,
+            CAST(NULLIF(CONTCUMPLE,'1900-12-31') AS CHAR) AS birthday,
+            CONTINTERES AS interests, CONTEXT AS extension, CONTCEL AS mobile
+     FROM FCONTACTOS WHERE CONTKEY=? AND CONTES=1 ORDER BY CONTSEQ`, [code],
+  );
+  return contacts.map((row) => ({ ...row }));
+}
+
 export class MysqlSupplierCatalogReferences implements SupplierCatalogReferences {
   constructor(private readonly legacy = new LegacyMysqlSuppliersDataSource()) {}
 
@@ -52,6 +78,7 @@ export class MysqlSupplierCatalogReferences implements SupplierCatalogReferences
 
   classifications = readSupplierClassifications;
   classifiers = readSupplierClassifiers;
+  activity = readSupplierActivity;
 
   async parameters(id: number): Promise<SupplierCatalogParameters | null> {
     const [rows] = await legacyMysqlPool.execute<Array<RowDataPacket & SupplierCatalogParameters>>(

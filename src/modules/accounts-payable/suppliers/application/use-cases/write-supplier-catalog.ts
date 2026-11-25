@@ -5,9 +5,13 @@ import { NotFoundError } from '../../../../../shared/domain/errors/not-found-err
 import type { SupplierCatalogReadSession, SupplierCatalogReferences, SupplierCatalogSettings, SupplierCatalogStorage, SupplierCatalogWriteSession } from '../../domain/datasources/supplier-catalog-data-source.js';
 import {
   blankSupplierCatalog, nativeSupplierParameters, newSupplier, presentSupplierCatalog, supplierCatalogFields, supplierClassifierLength,
-  type SupplierCatalogFields, type SupplierCatalogRecord, type SupplierClassificationUpdate,
+  type SupplierCatalogFields, type SupplierCatalogRecord, type SupplierClassificationUpdate, type SupplierVariousFields,
 } from '../../domain/entities/supplier-catalog.js';
 import type { Supplier, SupplierProps } from '../../domain/entities/supplier.js';
+import {
+  projectSupplierActivity, type SupplierActivityChange, type SupplierActivityCommand,
+  type SupplierActivityKind, type SupplierActivityOperation,
+} from '../../domain/entities/supplier-activity.js';
 
 type Overlay = { base: Supplier | null; local: SupplierCatalogRecord | null };
 
@@ -95,12 +99,14 @@ export class WriteSupplierCatalog {
 
   private async nextRecord(supplier: SupplierProps, overlay: Overlay, fields: SupplierCatalogFields, deleted: boolean) {
     const { local, base } = overlay;
-    const parameters = base ? await this.references.parameters(supplier.id) : local;
+    const parameters = local ?? (base ? await this.references.parameters(supplier.id) : null);
     if (!parameters) throw new NotFoundError('Proveedor');
     const { tolerancePercent, vatCode, withheldVat, withheldIncomeTax, intercompany } = parameters;
     return {
       tolerancePercent, vatCode, withheldVat, withheldIncomeTax, intercompany,
       ...(local?.classifications ? { classifications: local.classifications, classificationWrite: local.classificationWrite ?? null } : {}),
+      ...(local?.activity ? { activity: local.activity } : {}),
+      ...(local?.various ? { various: local.various, variousWrite: local.variousWrite ?? null } : {}),
       supplier: { ...supplier, ...fields }, legacy: local?.legacy ?? Boolean(base), deleted,
       revision: (local?.revision ?? 0) + 1, originalCode: local?.originalCode ?? base?.toPrimitives().code ?? null,
     } satisfies SupplierCatalogRecord;
@@ -161,6 +167,69 @@ export class WriteSupplierCatalog {
         classificationWrite: { requestKey: input.requestKey, previousRevision: revision },
       });
       return { current: input.current, revision: record.revision };
+    });
+  }
+
+  writeActivity(
+    id: number, kind: SupplierActivityKind, operation: SupplierActivityOperation, rowId: string | number, input: SupplierActivityCommand,
+  ) {
+    return this.storage.write(async (session) => {
+      await session.lockSupplier(id);
+      const overlay = await this.overlay(id, session);
+      const supplier = this.visible(overlay);
+      if (!supplier.code) throw invalid('Selecciona un proveedor con código.');
+      const history = overlay.local?.activity ?? [];
+      const fingerprint = hash([kind, operation, rowId, input]);
+      const replay = history.find(({ requestKey }) => requestKey === input.requestKey);
+      if (replay) {
+        if (replay.fingerprint === fingerprint) return replay.item;
+        throw new ConflictError('La clave se usó para otra operación del proveedor.', 'SUPPLIER_ACTIVITY_REQUEST_REUSED');
+      }
+
+      const native = overlay.base?.toPrimitives();
+      const baseline = native ? await this.references.activity(id, native.code, kind) : [];
+      const visible = projectSupplierActivity(baseline, history, kind);
+      const previous = visible.get(String(rowId));
+      if (operation !== 'create') {
+        if (!previous) throw new NotFoundError(kind === 'events' ? 'Evento' : 'Contacto');
+        if (previous.revision !== input.revision) {
+          throw new ConflictError('El registro cambió. Vuelve a abrir la ventana.', 'SUPPLIER_ACTIVITY_STALE');
+        }
+      }
+      const defaults = kind === 'events' ? { requestedBy: '' } : { ownerCode: supplier.code, extension: '', mobile: '' };
+      const item = { ...(previous ?? defaults), ...input.fields, id: rowId, revision: input.revision + 1 };
+      const change: SupplierActivityChange = { kind, operation, id: rowId, requestKey: input.requestKey, fingerprint, item };
+      const record = await this.nextRecord(supplier, overlay, supplierCatalogFields(supplier), false);
+      if (kind === 'events') {
+        const hasEvents = operation !== 'remove' || visible.size > 1;
+        record.supplier.indicators = { ...record.supplier.indicators, hasEvents };
+      }
+      await session.save({ ...record, activity: [...history, change] });
+      return item;
+    });
+  }
+
+  saveVarious(id: number, revision: number, requestKey: string, fields: SupplierVariousFields) {
+    return this.storage.write(async (session) => {
+      await session.lockSupplier(id);
+      const overlay = await this.overlay(id, session);
+      const supplier = this.visible(overlay);
+      if (!supplier.code) throw invalid('Selecciona un proveedor con código.');
+      const fingerprint = hash([revision, fields]);
+      const previous = overlay.local?.variousWrite;
+      if (previous?.requestKey === requestKey) {
+        if (previous.fingerprint === fingerprint) return { revision: previous.revision, changedOn: previous.date };
+        throw new ConflictError('La clave se usó para otros datos del proveedor.', 'SUPPLIER_VARIOUS_REQUEST_REUSED');
+      }
+      if ((overlay.local?.revision ?? 0) !== revision) throw stale();
+      const record = await this.nextRecord(supplier, overlay, supplierCatalogFields(supplier), false);
+      const changedOn = formatDate.format();
+      await session.save({
+        ...record, various: fields, variousWrite: { requestKey, fingerprint, revision: record.revision, date: changedOn },
+        tolerancePercent: fields.tolerancePercent, vatCode: fields.vatType, intercompany: fields.interCompany,
+        withheldVat: fields.vatWithholdingPercent, withheldIncomeTax: fields.incomeTaxWithholdingPercent,
+      });
+      return { revision: record.revision, changedOn };
     });
   }
 

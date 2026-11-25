@@ -126,6 +126,7 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
         ...result,
         detail: {
           ...result.detail, ...fields,
+          banamexId: fields?.banamexId ?? result.detail?.banamexId ?? 0,
           ...(local?.variousWrite ? { changedOn: local.variousWrite.date } : {}),
           revision: local?.revision ?? 0, canWrite: postgresConfigured() && Boolean(result.supplier.code),
         },

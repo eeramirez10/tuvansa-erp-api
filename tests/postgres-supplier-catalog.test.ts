@@ -107,9 +107,10 @@ it('guarda Varios junto con los parámetros usados por Compras y conserva la rev
   const various = `/${id}/actions/various`;
   const command = {
     requestKey: randomUUID(), revision: 1,
-    fields: { ...blankSupplierVarious(nativeSupplierParameters), tolerancePercent: 27, vatType: 1, vatWithholdingPercent: 1.0625 },
+    fields: { ...blankSupplierVarious(nativeSupplierParameters), banamexId: 2, tolerancePercent: 27, vatType: 1, vatWithholdingPercent: 1.0625 },
   };
   try {
+    await request(app).patch(various).send({ ...command, fields: { ...command.fields, banamexId: 3 } }).expect(400);
     failCommit = true;
     await request(app).patch(various).send(command).expect(503);
     expect(await supplierCatalogRecord(id)).toMatchObject({ various: null, revision: 1, ...nativeSupplierParameters });
@@ -124,6 +125,9 @@ it('guarda Varios junto con los parámetros usados por Compras y conserva la rev
     expect(await supplierCatalogRecord(id)).toMatchObject({
       revision: 3, various: winner.fields, tolerancePercent: winner.fields.tolerancePercent, withheldVat: 1.0625, vatCode: 1,
     });
+    const { banamexId, ...rest } = winner.fields;
+    await request(app).patch(various).send({ requestKey: randomUUID(), revision: 3, fields: { ...rest, branch: '1234' } }).expect(200);
+    expect(await supplierCatalogRecord(id)).toMatchObject({ revision: 4, various: { branch: '1234', banamexId } });
   } finally {
     const edit = await request(app).get(`/${id}/edit`).expect(200);
     await request(app).delete(`/${id}`).send({ revision: edit.body.data.revision, confirmed: true }).expect(204);

@@ -41,6 +41,7 @@ const workInteger = z.int().min(-2147483648).max(2147483647);
 const variousBody = z.strictObject({
   requestKey: key, revision: z.int().nonnegative().max(2147483646),
   fields: z.strictObject({
+    banamexId: z.int().min(0).max(2).optional(),
     branch: localText(4), bankAccount: localText(20), bankCode: localText(5), city: localText(4), state: localText(2),
     cieReference: localText(20), internetPassword: localText(8), multiCompany: unsignedByte, interCompany: z.int().min(0).max(1),
     deliveryDays: dayCount, purchaseFrequencyDays: dayCount, tolerancePercent: z.int().nonnegative(), vatType: z.int().min(0).max(2),

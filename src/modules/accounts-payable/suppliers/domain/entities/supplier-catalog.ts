@@ -25,6 +25,7 @@ export interface SupplierCatalogRecord extends SupplierCatalogParameters {
 }
 
 export interface SupplierVariousFields {
+  banamexId?: number | undefined;
   branch: string;
   bankAccount: string;
   bankCode: string;
@@ -49,7 +50,7 @@ export interface SupplierVariousFields {
 
 export function blankSupplierVarious(parameters: SupplierCatalogParameters): SupplierVariousFields {
   return {
-    branch: '', bankAccount: '', bankCode: '', city: '', state: '', cieReference: '', internetPassword: '',
+    banamexId: 0, branch: '', bankAccount: '', bankCode: '', city: '', state: '', cieReference: '', internetPassword: '',
     multiCompany: 0, interCompany: parameters.intercompany, deliveryDays: 0, purchaseFrequencyDays: 0,
     tolerancePercent: parameters.tolerancePercent, vatType: parameters.vatCode,
     vatWithholdingPercent: parameters.withheldVat, incomeTaxWithholdingPercent: parameters.withheldIncomeTax,

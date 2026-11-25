@@ -224,8 +224,9 @@ export class WriteSupplierCatalog {
       if ((overlay.local?.revision ?? 0) !== revision) throw stale();
       const record = await this.nextRecord(supplier, overlay, supplierCatalogFields(supplier), false);
       const changedOn = formatDate.format();
+      const banamexId = fields.banamexId ?? overlay.local?.various?.banamexId;
       await session.save({
-        ...record, various: fields, variousWrite: { requestKey, fingerprint, revision: record.revision, date: changedOn },
+        ...record, various: { ...fields, banamexId }, variousWrite: { requestKey, fingerprint, revision: record.revision, date: changedOn },
         tolerancePercent: fields.tolerancePercent, vatCode: fields.vatType, intercompany: fields.interCompany,
         withheldVat: fields.vatWithholdingPercent, withheldIncomeTax: fields.incomeTaxWithholdingPercent,
       });

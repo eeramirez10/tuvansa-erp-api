@@ -102,9 +102,15 @@ German entra en captura y al confirmar actualiza los campos y
 `PRVFECHACAMBIO`. El editor web guarda datos bancarios, plazos y tolerancia,
 IVA y retenciones, valores diarios, los doce campos varios y los códigos de
 Informativa SAT. Proyecta tolerancia, IVA, retenciones e Intercia en los
-parámetros efectivos que ya consumen Compras y Pagos. La correspondencia entre
-las opciones de ID Banamex y los valores `PRVBMXID` 3 y 4 quedó pendiente de
-verificar.
+parámetros efectivos que ya consumen Compras y Pagos. El grupo de radio de
+`EPRV2#1` guarda `PRVBMXID` 0 para Cheques, 1 para Plasticos y 2 para
+Interbancos. Las etiquetas, el enlace al campo y la descripción de sus
+valores están en la biblioteca German de pruebas. Los valores históricos
+3 y 4 se conservan al guardar otros campos. Si el operador elige una
+opción del grupo, se guarda el nuevo valor de 0 a 2.
+En Chromium, la opción Interbancos quedó guardada como 2. La prueba
+HTTP de otro proveedor conservó el valor histórico 4 al guardar una
+sucursal. Ambos ensayos usaron PostgreSQL temporal.
 
 El PATCH valida revisión y UUID en la transacción del proveedor. La prueba
 HTTP cubre reintento, revisión vencida, dos solicitudes y rollback, además de

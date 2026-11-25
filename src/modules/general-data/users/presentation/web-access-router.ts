@@ -6,7 +6,7 @@ import { tokenPattern } from '../infrastructure/web-credentials.js';
 import { cookieName, noSessionCache, requireSessionOrigin, sessionCookie, sessionToken } from './web-session-http.js';
 
 export const webIdentification = z.string().trim().min(1).max(32).regex(webIdentificationPattern);
-const password = z.string().min(12).max(128);
+const password = z.string().min(6, 'Usa al menos 6 caracteres').max(128);
 const group = z.coerce.number().int().min(0).max(41);
 const revision = z.number().int().nonnegative();
 const userId = z.union([z.uuid(), z.string().regex(/^g-[1-9]\d{0,9}$/)

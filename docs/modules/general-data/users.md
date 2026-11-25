@@ -70,6 +70,7 @@ vinculado es `g-<USRSEQ>`.
 | GET, PATCH | `/general-data/permission-groups/:group` | Consultar o cambiar permisos con revisión |
 
 Las sesiones vencen a los 30 minutos de inactividad o a las 8 horas de
-iniciadas. **Restablecer** invalida las sesiones y la contraseña anteriores
+iniciadas. La contraseña web debe tener entre 6 y 128 caracteres.
+**Restablecer** invalida las sesiones y la contraseña anteriores
 al generar el enlace. La gestión de cuentas y permisos usa el actor de
 la sesión y conserva los cambios en `tuvansa.web_access_changes`.

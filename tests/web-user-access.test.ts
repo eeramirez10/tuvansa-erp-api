@@ -45,7 +45,7 @@ const app = express().use(express.json()).use('/api', postgresWriteBoundary)
   .use('/api/general-data', createUserDirectoryRouter(access)).use(errorHandler);
 const route = '/api/general-data/users';
 const groups = '/api/general-data/permission-groups';
-const password = 'contraseña de prueba';
+const password = 'Pru6#1';
 let adminCookie = '';
 const cookieToken = (cookie: string) => cookie.split('=')[1]!;
 const host = 'localhost:5173';
@@ -68,6 +68,8 @@ beforeAll(async () => {
   await expect(access.bootstrapAdministrator(1)).rejects.toMatchObject({ code: 'WEB_IDENTIFICATION_IN_USE' });
   const { token } = await access.bootstrapAdministrator(1, 'administrador-web');
   await expect(access.bootstrapAdministrator(21)).rejects.toMatchObject({ code: 'WEB_ADMIN_EXISTS' });
+  await change('post', '/api/session/activation').send({ token, password: password.slice(0, -1) })
+    .expect(400).expect(({ body }) => expect(body.error.code).toBe('VALIDATION_ERROR'));
   await change('post', '/api/session/activation').send({ token, password }).expect(204);
   await change('post', '/api/session/activation').send({ token, password }).expect(400);
   adminCookie = await login('ADMINISTRADOR-WEB');

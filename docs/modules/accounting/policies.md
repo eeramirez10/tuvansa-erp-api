@@ -54,7 +54,7 @@ diario web detalla el alcance de Comentarios, Duplicar, Aplicar y Desaplicar.
 
 La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, dos movimientos y balance de cargos/abonos.
 
-**Duplicar pasivo.** `EPASIV#13/4` requiere una familia que empieza por
+**Duplicar pasivo.** `EPASIV#13/4` requiere que `FPOLIZA.POFAMILIA` empiece por
 `PASIVO`, pide permiso `EPASIV#13/19` y abre `ECIA#11H`. El procedimiento
 usa el plazo y la moneda del proveedor, toma el tipo de cambio de `FCIA` y
 calcula el IVA en proporción a los cargos de cuentas cuyo nombre contiene IVA.
@@ -64,14 +64,15 @@ póliza de otra familia. El respaldo México consultado tiene cero pólizas
 vigentes de esta familia. Quedan pendientes el redondeo con un folio elegible
 y el cotejo de la póliza y su cargo en Saldo y Movimientos.
 
-La revisión por `FPOLIZA.POEST=0`, `POCIA` y el prefijo de `POPAR1`
-encontró cero candidatos entre 122,196 pólizas activas de México y 103,312
-de Monterrey en `tuvansa`. También devolvió cero en los respaldos de
-TUVANSA de 2018 a 2021 y en las 461 pólizas activas de México de `pruebas2`.
-El catálogo actual de `FAG` carece de un `AGTNUM` con ese prefijo para
-`AGT='4'` y `AGTIPO=3`. Para preparar una póliza por **Clasifica → Guardar**
-en German se necesita una copia aislada con la familia disponible y un
-proveedor que permita comprobar el cargo.
+La revisión derivada por `FPOLIZA.POEST=0`, `POCIA` y
+`POFAMILIA LIKE 'PASIVO%'` encontró cero candidatos de México y Monterrey
+en `tuvansa`, los respaldos de 2018 a 2021 y `pruebas2`. **Clasifica →
+Guardar** modifica `POPAR1`, mientras que la condición de **Duplicar
+pasivo** consulta `POFAMILIA`. La **Generación de pasivos** de
+`MPASIVOS/31` abre `EPASIV#1` e inicia la póliza con la familia `PASIVO`
+mediante `MPOLIZAS/24`. Es la ruta identificada para generar el folio que
+falta en la copia aislada y cotejar redondeo, vencimiento y cargo al
+proveedor.
 
 ## Pólizas de recepciones web
 

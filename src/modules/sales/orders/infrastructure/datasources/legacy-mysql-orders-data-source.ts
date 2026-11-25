@@ -14,11 +14,11 @@ import type {
 } from '../../domain/repositories/orders-repository.js';
 
 interface HeaderRow extends RowDataPacket {
-  id: number; number: string; customerOrderNumber: string; customerId: number;
+  id: number; number: string; companyId: number; customerOrderNumber: string; customerId: number;
   customerCode: string | null; customerName: string | null; documentType: number;
   status: string; fulfilledAmount: number; branch: number; department: string;
   orderedAt: string; fromDate: string; dueAt: string; attention: string;
-  termsDays: number; authorization: string; initial: number; warehouse: string;
+  termsDays: number; authorization: string; authorizedBy: number; initial: number; warehouse: string;
   currencyId: number; exchangeRate: number; minimumFulfillmentPercentage: number;
   observations: string; classification0: string; classification1: string;
   classification2: string; classification3: string; classification4: string;
@@ -38,6 +38,7 @@ interface DeleteHeaderRow extends IdNumberRow { customerId: number }
 const selectHeader = `
   FPENC.PESEQ AS id,
   PENUM AS number,
+  PEMULTICIA AS companyId,
   PENUMELLOS AS customerOrderNumber,
   FPENC.CLISEQ AS customerId,
   FCLI.CLICOD AS customerCode,
@@ -53,6 +54,7 @@ const selectHeader = `
   COALESCE((SELECT AGDESCR FROM FAG WHERE AGTNUM = PEPAR1 LIMIT 1), PEPAR1) AS attention,
   PEPLAZO AS termsDays,
   CASE WHEN PEPAR9 = 'O.K.' THEN 'O.K.' ELSE '' END AS authorization,
+  PEUSRAUT AS authorizedBy,
   PEINICIAL AS initial,
   PEALMACEN AS warehouse,
   PEMONEDA AS currencyId,
@@ -105,6 +107,7 @@ const documentKind = (value: number): OrderProps['documentKind'] =>
 const toOrder = (row: HeaderRow, lines: OrderLine[]): Order => Order.create({
   id: row.id,
   number: row.number,
+  ...(row.companyId === undefined ? {} : { companyId: row.companyId }),
   customerOrderNumber: row.customerOrderNumber,
   customer: { id: row.customerId, code: row.customerCode ?? '', name: row.customerName ?? '' },
   documentKind: documentKind(row.documentType),
@@ -120,6 +123,7 @@ const toOrder = (row: HeaderRow, lines: OrderLine[]): Order => Order.create({
   attention: row.attention,
   termsDays: Number(row.termsDays),
   authorization: row.authorization,
+  ...(row.authorizedBy > 0 ? { authorizedBy: row.authorizedBy } : {}),
   initial: row.initial === 1,
   warehouse: normalizeOrderWarehouse(row.warehouse),
   currencyId: row.currencyId,

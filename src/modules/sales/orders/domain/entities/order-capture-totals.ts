@@ -11,7 +11,7 @@ export function convertCaptureAmount(amount: number, from: CaptureCurrencyId, to
   return from === 2 ? amount * exchangeRate : amount / exchangeRate;
 }
 
-export function captureMinimumPrice(product: CaptureProduct, priceCurrencyId: CaptureCurrencyId, exchangeRate: number) {
+export function captureMinimumPrice(product: Pick<CaptureProduct, 'cost' | 'costCurrencyId'>, priceCurrencyId: CaptureCurrencyId, exchangeRate: number) {
   return convertCaptureAmount(product.cost, product.costCurrencyId, priceCurrencyId, exchangeRate);
 }
 

@@ -1,6 +1,8 @@
 @baseUrl = http://localhost:3000/api
 @orderId = 72391
 @orderNumber = P010773
+@orderRevision = 0
+@orderApproverKey = clave-personal-de-prueba
 
 ### Entrada inicial de la vista Pedidos (detalle directo, sin búsqueda ni COUNT)
 GET {{baseUrl}}/sales/orders/by-number/{{orderNumber}}
@@ -27,6 +29,21 @@ GET {{baseUrl}}/sales/orders/{{orderId}}/next
 GET {{baseUrl}}/sales/orders/{{orderId}}/actions/assign-all
 ###
 GET {{baseUrl}}/sales/orders/{{orderId}}/actions/authorize
+
+### Autorizar. Copiar storage.revision de la ficha, o 0 para un pedido heredado sin revisión web.
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
+Authorization: Bearer {{orderApproverKey}}
+Content-Type: application/json
+
+{"authorized":true,"revision":{{orderRevision}}}
+
+### Desautorizar. Consultar la revisión vigente antes de enviar.
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
+Authorization: Bearer {{orderApproverKey}}
+Content-Type: application/json
+
+{"authorized":false,"revision":{{orderRevision}}}
+
 ### Auxiliar
 GET {{baseUrl}}/sales/orders/{{orderId}}/actions/auxiliar
 ###

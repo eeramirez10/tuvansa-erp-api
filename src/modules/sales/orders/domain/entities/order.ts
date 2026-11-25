@@ -28,6 +28,7 @@ export interface OrderProps {
   storage?: { source: 'postgres'; legacyId: number | null; revision: number };
   id: number;
   number: string;
+  companyId?: number;
   customerOrderNumber: string;
   customer: { id: number; code: string; name: string };
   documentKind: OrderDocumentKind;
@@ -39,6 +40,8 @@ export interface OrderProps {
   attention: string;
   termsDays: number;
   authorization: string;
+  authorizedBy?: number;
+  authorizationChange?: { userId: number; changedAt: string; revision: number };
   initial: boolean;
   warehouse: string;
   currencyId: number;

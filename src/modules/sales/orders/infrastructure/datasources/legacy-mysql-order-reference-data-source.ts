@@ -4,7 +4,7 @@ import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/l
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { clientCatalogRecord } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
 import { catalogProductsById } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
-import type { OrderReferenceDataSource } from '../../domain/datasources/order-reference-data-source.js';
+import type { OrderAuthorizationCost, OrderReferenceDataSource } from '../../domain/datasources/order-reference-data-source.js';
 import type { CaptureCustomerSearchCriteria, CaptureProductSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
 import { LegacyMysqlOrderCaptureDataSource } from './legacy-mysql-order-capture-data-source.js';
 
@@ -18,6 +18,32 @@ export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSo
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }
   productFamilies() { return this.source.productFamilies(); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.source.product(code,warehouse,type,customerCode); }
+  async authorizationCosts(productIds: number[]): Promise<ReadonlyMap<number, OrderAuthorizationCost>> {
+    if (!productIds.length) return new Map();
+    type CostRow = RowDataPacket & { id: number; currency: number; pesoCost: number | null; dollarCost: number | null };
+    // Derivada: consulta en lote de las mismas listas de costo que usa Captura.
+    const [[rows], catalog] = await Promise.all([
+      legacyMysqlPool.query<CostRow[]>(
+        'SELECT ISEQ AS id, IMONEDA1 AS currency, ILISTA5 AS pesoCost, ILISTA6 AS dollarCost FROM FINV WHERE ISEQ IN (?)',
+        [productIds],
+      ),
+      catalogProductsById(productIds),
+    ]);
+    const legacy = new Map(rows.map((row) => [row.id, row]));
+    const costs = new Map<number, OrderAuthorizationCost>();
+    for (const id of productIds) {
+      const reference = catalog.get(id);
+      if (reference?.deleted || reference?.document.isActive === false) continue;
+      const base = legacy.get(id);
+      const prices = reference && (reference.revision > 0 || !base) ? reference.document.prices : undefined;
+      const currency = prices?.sale[0]?.currencyId ?? base?.currency;
+      if (currency !== 1 && currency !== 2) continue;
+      const cost = currency === 1 ? (prices ? prices.costs.last : base?.pesoCost)
+        : (prices ? prices.costs.previous : base?.dollarCost);
+      if (cost != null && Number.isFinite(cost) && cost >= 0) costs.set(id, { cost, costCurrencyId: currency });
+    }
+    return costs;
+  }
   async customerById(id: number) {
     const record = await clientCatalogRecord(id);
     if (record) return this.customer(record.document.code);

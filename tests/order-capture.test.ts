@@ -33,7 +33,8 @@ const repository = (): OrderCaptureRepository => ({
   productFamilies: vi.fn(),
   setAuthorization: vi.fn(), setAssignment: vi.fn(),
 });
-const app = (repo: OrderCaptureRepository) => express().use(express.json()).use(createOrderCaptureRouter(new CaptureOrder(repo))).use(errorHandler);
+const app = (repo: OrderCaptureRepository) => express().use(express.json())
+  .use(createOrderCaptureRouter(new CaptureOrder(repo, { verify: async () => 21 }))).use(errorHandler);
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe('Alta de pedidos capturada', () => {

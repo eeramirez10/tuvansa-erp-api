@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { CaptureOrder } from './application/use-cases/capture-order.js';
 import { HybridOrdersDataSource } from './infrastructure/datasources/hybrid-orders-data-source.js';
 import { LegacyMysqlOrderReferenceDataSource } from './infrastructure/datasources/legacy-mysql-order-reference-data-source.js';
+import { MysqlOrderAuthorizationAccess } from './infrastructure/datasources/mysql-order-authorization-access.js';
 import { PostgresOrderOverlayDataSource } from './infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { OrderCaptureRepositoryImpl } from './infrastructure/repositories/order-capture-repository-impl.js';
 import { createOrderCaptureRouter } from './presentation/http/order-capture-router.js';
@@ -22,10 +23,12 @@ import { createOrdersRouter } from './presentation/http/orders-routes.js';
 import type { OrdersDataSource } from './domain/datasources/orders-data-source.js';
 import type { OrderCaptureDataSource } from './domain/datasources/order-capture-data-source.js';
 import type { OrderPanelsDataSource } from './domain/datasources/order-panels-data-source.js';
+import type { OrderAuthorizationAccess } from './domain/datasources/order-authorization-access.js';
 
 export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSource & OrderPanelsDataSource =
   new HybridOrdersDataSource(new LegacyMysqlOrdersDataSource(), new PostgresOrderOverlayDataSource(),
-    new LegacyMysqlOrderReferenceDataSource(), new LegacyMysqlOrderPanelsDataSource())): Router => {
+    new LegacyMysqlOrderReferenceDataSource(), new LegacyMysqlOrderPanelsDataSource()),
+  authorizationAccess: OrderAuthorizationAccess = new MysqlOrderAuthorizationAccess()): Router => {
   const repository = new OrdersRepositoryImpl(source);
   const panelsRepository = new OrderPanelsRepositoryImpl(source);
   const controller = new OrdersController(
@@ -35,7 +38,7 @@ export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSo
     new GetOrderPanel(panelsRepository),
   );
   const router = Router();
-  router.use(createOrderCaptureRouter(new CaptureOrder(new OrderCaptureRepositoryImpl(source))));
+  router.use(createOrderCaptureRouter(new CaptureOrder(new OrderCaptureRepositoryImpl(source), authorizationAccess)));
   router.use(createOrdersRouter(controller));
   return router;
 };

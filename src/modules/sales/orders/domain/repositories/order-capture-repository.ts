@@ -61,6 +61,11 @@ export interface CaptureInput {
   deliveryAddress: [string, string, string]; contact: string; additionalComments: string;
   documentKind: 'order' | 'quote'; lines: CaptureLine[];
 }
+export interface OrderAuthorizationCommand {
+  authorized: boolean;
+  revision: number;
+  userId: number;
+}
 export interface OrderCaptureRepository {
   options(): Promise<CaptureOptions>;
   customer(code: string): Promise<CaptureCustomer>;
@@ -70,6 +75,6 @@ export interface OrderCaptureRepository {
   product(code: string, warehouse: string, typeCode: string, customerCode: string): Promise<CaptureProduct>;
   create(input: CaptureInput): Promise<Order>;
   convertQuote(orderId: number): Promise<Order>;
-  setAuthorization(orderId: number, authorized: boolean): Promise<Order>;
+  setAuthorization(orderId: number, command: OrderAuthorizationCommand): Promise<Order>;
   setAssignment(orderId: number, lines: Array<{ lineId: number; assigned: number }>): Promise<Order>;
 }

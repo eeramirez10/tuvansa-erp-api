@@ -1,5 +1,5 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
-import type { OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
+import type { OrderAuthorizationEvent, OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
 import type { OrderProps } from '../../domain/entities/order.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
@@ -58,6 +58,19 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
     await this.initialize();
     return this.connection(async c => (await c.query<Stored>(`SELECT ${columns} FROM tuvansa.orders ORDER BY number,id`)).rows);
   }
+  async authorizationHistory(id: number): Promise<OrderAuthorizationEvent[]> {
+    if (!this.configured) return [];
+    await this.initialize();
+    return this.connection(async (client) => {
+      const { rows } = await client.query<{ entry: NonNullable<OrderProps['authorizationChange']>; authorized: boolean }>(
+        `SELECT document->'authorizationChange' AS entry, document->>'authorization'='O.K.' AS authorized
+         FROM tuvansa.order_changes
+         WHERE order_id=$1 AND document->'authorizationChange'->>'revision'=revision::text
+         ORDER BY revision`, [id],
+      );
+      return rows.map(({ entry, authorized }) => ({ ...entry, authorized }));
+    });
+  }
   async create(build: (id: number) => Promise<OrderProps>): Promise<OrderProps> {
     return this.transaction(async c => {
       const row = (await c.query<{id:string}>("SELECT nextval('tuvansa.order_ids') AS id")).rows[0]!;
@@ -70,19 +83,19 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       return doc;
     });
   }
-  async change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment',
-    transform: (current: OrderProps) => Promise<OrderProps | null>): Promise<OrderOverlay | null> {
+  async change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment' | 'authorization',
+    transform: (current: OrderProps, revision: number) => Promise<OrderProps | null>): Promise<OrderOverlay | null> {
     return this.transaction(async c => {
       // Locks even a missing overlay; concurrent first edits cannot race on INSERT.
       await c.query('SELECT pg_advisory_xact_lock($1::bigint)', [id]);
-      let stored = (await c.query<Stored>(`SELECT ${columns} FROM tuvansa.orders WHERE id=$1 FOR UPDATE`,[id])).rows[0];
-      if (!stored) {
-        if (!base) return null;
+      const overlay = (await c.query<Stored>(`SELECT ${columns} FROM tuvansa.orders WHERE id=$1 FOR UPDATE`,[id])).rows[0];
+      const stored = overlay ?? (base && { document: base, base, deleted: false, revision: 0 });
+      if (!stored || stored.deleted) return null;
+      const changed = await transform(structuredClone(stored.document), stored.revision);
+      if (operation === 'authorization' && changed?.authorization === stored.document.authorization) return stored;
+      if (!overlay && base) {
         await c.query('INSERT INTO tuvansa.orders(id,legacy_id,number,document,base_document) VALUES ($1,$1,$2,$3::jsonb,$3::jsonb)', [id,base.number,JSON.stringify(base)]);
-        stored = { document: base, base, deleted: false, revision: 0 };
       }
-      if (stored.deleted) return null;
-      const changed = await transform(structuredClone(stored.document));
       if (changed && (operation === 'convert' || (changed.authorization === 'O.K.' && stored.document.authorization !== 'O.K.')
         || (operation === 'assignment' && changed.lines.some((line) =>
           line.assigned > (stored.document.lines.find(({ id }) => id === line.id)?.assigned ?? 0))))) {
@@ -101,7 +114,8 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       await c.query(`UPDATE tuvansa.orders SET document=$2::jsonb,number=$3,revision=$4,
         deleted_at=CASE WHEN $5::boolean THEN now() ELSE NULL END,updated_at=now() WHERE id=$1`,
         [id,JSON.stringify(document),document.number,revision,deleted]);
-      await this.record(c,document,stored.base,deleted,revision,operation === 'assignment' ? 'update' : operation);
+      await this.record(c,document,stored.base,deleted,revision,
+        operation === 'assignment' || operation === 'authorization' ? 'update' : operation);
       return { document, base: stored.base, deleted, revision };
     });
   }

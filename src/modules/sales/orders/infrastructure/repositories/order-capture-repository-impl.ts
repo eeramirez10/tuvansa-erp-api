@@ -11,7 +11,9 @@ export class OrderCaptureRepositoryImpl implements OrderCaptureRepository {
   product(code: string, warehouse: string, typeCode: string, customerCode: string) { return this.source.product(code, warehouse, typeCode, customerCode); }
   create(input: CaptureInput) { return this.source.create(input); }
   convertQuote(orderId: number) { return this.source.convertQuote(orderId); }
-  setAuthorization(orderId: number, authorized: boolean) { return this.source.setAuthorization(orderId, authorized); }
+  setAuthorization(orderId: number, command: Parameters<OrderCaptureRepository['setAuthorization']>[1]) {
+    return this.source.setAuthorization(orderId, command);
+  }
   setAssignment(orderId: number, lines: Array<{ lineId: number; assigned: number }>) {
     return this.source.setAssignment(orderId, lines);
   }

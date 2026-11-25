@@ -103,8 +103,9 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   });
   router.post('/:orderId/actions/authorization', async (req, res, next) => {
     try {
-      const body = z.object({ authorized: z.boolean() }).strict().parse(req.body);
-      res.json({ data: await useCase.setAuthorization(z.coerce.number().int().positive().parse(req.params.orderId), body.authorized) });
+      const body = z.strictObject({ authorized: z.boolean(), revision: z.int().nonnegative() }).parse(req.body);
+      const credential = /^Bearer ([a-f0-9]{64})$/i.exec(req.get('Authorization') ?? '')?.[1];
+      res.json({ data: await useCase.setAuthorization(z.coerce.number().int().positive().parse(req.params.orderId), body, credential) });
     } catch (error) { next(error); }
   });
   router.post('/:orderId/actions/assignment', async (req, res, next) => {

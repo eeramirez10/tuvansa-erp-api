@@ -71,7 +71,7 @@ cliente.
 | Pedido | Status / Surtido | `status`, `fulfilledAmount` | `PESTATUS`, `PESURT` |
 | Pedido | Sucursal / Depto | `branch`, `department` | `PESUCURSAL`, `PEDEPTO` |
 | Pedido | Fecha / Desde / Vence | `dates` | `PEFECHA`, `PEDESDE`, `PEVENCE` |
-| Pedido | At. / Plazo / O.K. | `attention`, `termsDays`, `authorization` | `PEPAR1`, `PEPLAZO`, `PEUSRAUT` |
+| Pedido | At. / Plazo / O.K. | `attention`, `termsDays`, `authorization` | `PEPAR1`, `PEPLAZO`, `PEPAR9` |
 | Pedido | Inicial / Almacén | `initial`, `warehouse` | `PEINICIAL`, `PEALMACEN` |
 | Partidas | Producto / Descripción | `lines[].productCode`, `description` | `FINV.ICOD`, `FINV.IDESCR` |
 | Partidas | Pedido / Surtido / Resta | `ordered`, `fulfilled`, `remaining` | `PLCANT`, `PLSURT`, cálculo |
@@ -126,6 +126,45 @@ actualizar `FPENC`, `FPLIN`, `FINV`, `FALM` ni otros acumulados legacy.
 
 Los requests reproducibles están en `http/sales/orders.http`. La evidencia SQL
 y la prueba controlada de alta/edición/baja están en `orders-capture.md`.
+
+### Autorizar o desautorizar con Ctrl+A
+
+En German, **Pedidos → Autorizar pedido** corresponde a `MPED/5` y consulta
+`MPED5` mediante `INICIO/30`. La consulta de `FHELP` del respaldo de México
+confirmó el acceso para los grupos 0, 18 y 21, con control por grupo activo
+en `FCIA.CIACOMPORTA[39]`. Los avisos de límite de crédito del procedimiento
+corresponden a las ramas `FERRIONI`, `FABRILMALLA` y `ESPECIA`. México conserva
+el bloqueo del cliente al autorizar y el control del límite al remitir.
+
+El POST recibe `authorized`, `revision` y `Authorization: Bearer <clave>`.
+`revision` es `storage.revision` en la ficha y `0` para un pedido heredado
+sin revisión web. La lectura derivada comprueba el usuario activo de Omnis
+y el permiso actual en `FUSERS`, `FCIA` y `FHELP`. Si el permiso requiere
+supervisor, la API devuelve `403`.
+
+Configura `SALES_ORDER_APPROVER_KEYS` con entradas JSON `userId` (el `USRSEQ`
+del autorizador) y `sha256` (el hash de su clave personal aleatoria de 64
+caracteres hexadecimales). La lista vacía deja disponible la consulta.
+La clave se envía sólo en el encabezado y se vacía al firmar.
+
+La aprobación web vuelve a comprobar las partidas pendientes contra el costo
+vigente de `ILISTA5` o `ILISTA6` y el tipo de cambio del pedido. Compara el
+precio unitario antes de descuentos. Esta validación adicional es derivada.
+Para desautorizar, se bloquean pedidos con asignación o surtido. PostgreSQL
+comprueba la revisión bajo el bloqueo del pedido y guarda el estado y el
+usuario de la transición en `tuvansa.order_changes`. **Comentarios** muestra
+la bitácora de cambios web y conserva el último usuario que autorizó al
+desautorizar. Una petición con el mismo estado y la revisión vigente devuelve
+la ficha sin otra revisión.
+
+En Chromium y PostgreSQL 17.12 de pruebas, **Ctrl+A** abrió la firma y
+rechazó un usuario sin `MPED5` y una partida bajo costo. El botón **Autorizar**
+registró la firma válida y la mostró en **Comentarios**. Después del surtido
+parcial y la desasignación de la unidad restante, desautorizar devolvió `409`
+y conservó `O.K.`. Con dos sesiones concurrentes y la misma revisión, una
+firma prosperó, la otra devolvió `409` y quedó un solo evento de bitácora.
+Evidencia local en `captures/sales-authorization-result.txt` y
+`captures/sales-authorization-concurrency-result.txt`.
 
 ### Almacenes de captura en México
 

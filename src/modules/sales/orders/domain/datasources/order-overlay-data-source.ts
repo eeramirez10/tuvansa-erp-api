@@ -6,11 +6,14 @@ export interface OrderOverlay {
   deleted: boolean;
   revision: number;
 }
+export type OrderAuthorizationEvent = NonNullable<OrderProps['authorizationChange']> & { authorized: boolean };
+
 export interface OrderOverlayDataSource {
   readonly configured: boolean;
   get(id: number): Promise<OrderOverlay | null>;
   list(): Promise<OrderOverlay[]>;
+  authorizationHistory(id: number): Promise<OrderAuthorizationEvent[]>;
   create(build: (id: number) => Promise<OrderProps>): Promise<OrderProps>;
-  change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment',
-    transform: (current: OrderProps) => Promise<OrderProps | null>): Promise<OrderOverlay | null>;
+  change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment' | 'authorization',
+    transform: (current: OrderProps, revision: number) => Promise<OrderProps | null>): Promise<OrderOverlay | null>;
 }

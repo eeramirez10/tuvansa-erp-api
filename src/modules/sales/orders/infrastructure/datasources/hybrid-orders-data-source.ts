@@ -7,7 +7,7 @@ import type { OrderCaptureDataSource } from '../../domain/datasources/order-capt
 import type { OrderPanelsDataSource } from '../../domain/datasources/order-panels-data-source.js';
 import type { OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
 import type { OrderReferenceDataSource } from '../../domain/datasources/order-reference-data-source.js';
-import type { CaptureCurrencyId, CaptureInput, CaptureLine, CaptureCustomer } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCurrencyId, CaptureInput, CaptureLine, CaptureCustomer, OrderAuthorizationCommand } from '../../domain/repositories/order-capture-repository.js';
 import type { DeleteOrderResult, OrderCreateValues, OrderLineWriteValues, OrderNavigationDirection, OrderSearchCriteria, OrderUpdateValues } from '../../domain/repositories/orders-repository.js';
 import type { OrderPanelKey, OrderPanelResult } from '../../domain/repositories/order-panels-repository.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
@@ -19,6 +19,7 @@ import { compareOrders, matchesOrder } from './order-overlay-filter.js';
 
 type LegacyRead = Pick<OrdersDataSource,'findById'|'findByNumber'|'search'|'findAdjacent'|'customerExists'>;
 const localDocument = (row: OrderOverlay): OrderProps => ({...row.document,warehouse:normalizeOrderWarehouse(row.document.warehouse),storage:{source:'postgres',legacyId:row.base?.id ?? null,revision:row.revision}});
+const auditDate = new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Mexico_City' });
 
 export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDataSource, OrderPanelsDataSource {
   constructor(private readonly legacy: LegacyRead, private readonly local: OrderOverlayDataSource,
@@ -239,18 +240,53 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     if (!result) throw new NotFoundError('Pedido');
     return Order.create(localDocument(result));
   }
-  async setAuthorization(id: number, authorized: boolean): Promise<Order> {
+  private async verifyAuthorizationCosts(order: OrderProps, historical: boolean) {
+    const pending = order.lines.filter((line) => line.ordered > line.fulfilled);
+    const costs = await this.references.authorizationCosts([...new Set(pending.map((line) => line.productId))]);
+    for (const line of pending) {
+      const cost = costs.get(line.productId);
+      const hasSource = line.sourcePrice !== undefined && line.sourceCurrencyId !== undefined;
+      // PLMONEDA=0 delega a PEMONEDA en el legado. El overlay captura 0/1 como pesos/dólares.
+      const currency = hasSource ? line.sourceCurrencyId
+        : order.captureDetails ? captureCurrencyId(order.captureDetails.collectionCurrency)
+          : historical ? line.currencyId || order.currencyId || 1 : line.currencyId + 1;
+      const price = hasSource ? line.sourcePrice : line.price;
+      if (!cost || (currency !== 1 && currency !== 2) || price === undefined || !Number.isFinite(price)
+        || (currency !== cost.costCurrencyId && !(order.exchangeRate > 0))) {
+        throw new ConflictError(`No se pudo comprobar el costo vigente de ${line.productCode}.`, 'ORDER_AUTHORIZATION_COST_UNAVAILABLE');
+      }
+      if (price < captureMinimumPrice(cost, currency, order.exchangeRate)) {
+        throw new ConflictError(`No se puede autorizar el pedido. El precio de ${line.productCode} está abajo del costo vigente.`, 'ORDER_PRICE_BELOW_COST');
+      }
+    }
+  }
+  async setAuthorization(id: number, { authorized, revision, userId }: OrderAuthorizationCommand): Promise<Order> {
     this.writable();
-    const result = await this.local.change(id,await this.original(id),'update',async doc => {
+    const original = await this.original(id);
+    const result = await this.local.change(id, original, 'authorization', async (doc, currentRevision) => {
+      if ((id < 5_000_000_000 ? original?.companyId : doc.companyId ?? 1) !== 1) {
+        throw new ApplicationError('La autorización web está disponible para pedidos de TUVANSA México.', 'ORDER_AUTHORIZATION_COMPANY_FORBIDDEN', 403);
+      }
       if (doc.documentKind !== 'order') throw new ConflictError('Sólo se puede autorizar un pedido.', 'ORDER_AUTHORIZATION_REQUIRED');
+      if (revision !== currentRevision) throw new ConflictError('El pedido cambió. Vuelve a consultar la ficha antes de autorizar.', 'ORDER_AUTHORIZATION_STALE');
+      const nextAuthorization = authorized ? 'O.K.' : '';
+      if (doc.authorization === nextAuthorization) return doc;
       if (!authorized && doc.lines.some(line => line.assigned > 0)) {
         throw new ConflictError('No se puede des-autorizar un pedido asignado.', 'ORDER_ASSIGNED');
       }
-      doc.authorization = authorized ? 'O.K.' : '';
+      if (!authorized && (doc.fulfilledAmount > 0 || doc.totals.fulfilled > 0 || doc.lines.some(line => line.fulfilled > 0))) {
+        throw new ConflictError('No se puede desautorizar un pedido ya surtido.', 'ORDER_ALREADY_FULFILLED');
+      }
+      if (authorized) {
+        await this.verifyAuthorizationCosts(doc, original !== null);
+        doc.authorizedBy = userId;
+      }
+      doc.authorization = nextAuthorization;
+      doc.authorizationChange = { userId, changedAt: new Date().toISOString(), revision: currentRevision + 1 };
       return doc;
     });
     if (!result) throw new NotFoundError('Pedido');
-    return Order.create(localDocument(result));
+    return Order.create(result.revision === 0 ? result.document : localDocument(result));
   }
   async setAssignment(id: number, values: Array<{ lineId: number; assigned: number }>): Promise<Order> {
     this.writable();
@@ -299,12 +335,19 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       });
       return { ...result, ...legacy, available: true, reason: '', items: [...(legacy?.items ?? []), ...remissions] };
     }
-    if (key==='comments') return {...result,button:'Comentarios',available:true,reason:'',items:[{comments:'',customerDocumentNumber:doc.number,amountInWords:amountInWords(doc.totals.total)}],
-      summary:{customerOrderNumber:doc.customerOrderNumber,orderedAt:doc.dates.orderedAt,fromDate:doc.dates.from,dueAt:doc.dates.dueAt,
-        initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,
-        branch:doc.branch,exchangeRate:doc.exchangeRate,...doc.captureDetails,localRevision:local.revision}};
+    if (key==='comments') {
+      const entries = await this.local.authorizationHistory(id);
+      const auditTrail = entries.map(({ authorized, userId, changedAt }) =>
+        `${authorized ? 'AUTORIZA' : 'DESAUTORIZA'} · Usuario ${userId} · ${auditDate.format(new Date(changedAt))}`).join('\n');
+      return {...result,button:'Comentarios',available:true,reason:'',items:[{comments:'',customerDocumentNumber:doc.number,
+        amountInWords:amountInWords(doc.totals.total),auditTrail}],
+        summary:{customerOrderNumber:doc.customerOrderNumber,orderedAt:doc.dates.orderedAt,fromDate:doc.dates.from,dueAt:doc.dates.dueAt,
+          initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,
+          branch:doc.branch,exchangeRate:doc.exchangeRate,authorizedBy:doc.authorizedBy,...doc.captureDetails,localRevision:local.revision}};
+    }
     if (key==='quote-conversion') return {...result,button:'Cotiz',available:true,items:[{documentKind:doc.documentKind}]};
-    if (key==='authorize') return {...result,available:true,reason:'',items:[{authorized:doc.authorization==='O.K.',authorization:doc.authorization}]};
+    if (key==='authorize') return {...result,available:true,reason:'',items:[{authorized:doc.authorization==='O.K.',authorization:doc.authorization,
+      authorizedBy:doc.authorizedBy, lastChange:doc.authorizationChange}]};
     if (key==='assign-all') return {...result,available:true,reason:'',items:doc.lines.map(line=>({lineId:line.id,productCode:line.productCode,
       ordered:line.ordered,fulfilled:line.fulfilled,assigned:line.assigned,assignable:Math.max(0,line.ordered-line.fulfilled-line.assigned)}))};
     return result;

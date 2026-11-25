@@ -13,6 +13,7 @@ import type { PostgresConnectionFactory } from '../src/shared/infrastructure/dat
 import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgres-write-boundary.js';
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 import { createOrdersModule } from '../src/modules/sales/orders/orders-module.js';
+import { ApplicationError } from '../src/shared/domain/errors/application-error.js';
 
 // Real PostgreSQL engine in isolated WASM memory: no Neon URL or MySQL credentials used.
 const db = new PGlite();
@@ -29,7 +30,7 @@ const connect: PostgresConnectionFactory = async () => ({
 });
 const warehouseStock = async () => new Map([[13288, {productId:13288,unit:'M',onHand:50,assigned:0}]]);
 const store = new PostgresOrderOverlayDataSource(connect,()=>true,warehouseStock);
-const base = (id=10, number='P000010'): OrderProps => ({id,number,customerOrderNumber:'ORIGINAL',customer:{id:15331,code:'000001',name:'Cliente original'},
+const base = (id=10, number='P000010'): OrderProps => ({id,number,companyId:1,customerOrderNumber:'ORIGINAL',customer:{id:15331,code:'000001',name:'Cliente original'},
   documentKind:'order',status:'',fulfilledAmount:0,branch:0,department:'',dates:{orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14'},
   attention:'Agente',termsDays:30,authorization:'',initial:false,warehouse:'01',currencyId:2,exchangeRate:1,minimumFulfillmentPercentage:0,
   observations:'',classifications:['1202','211','302'],totals:{quantity:1,ordered:1,fulfilled:0,remaining:1,subtotal:59.05,discount:0,freight:0,insurance:0,other:0,tax:9.45,total:68.5},
@@ -49,8 +50,13 @@ const references: OrderReferenceDataSource = {
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
   customer:async()=>customer,searchCustomers:async()=>[],searchProducts:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
   product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,costCurrencyId:1,taxPercentage:16,excisePercentage:0,currencyId:1,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
+  authorizationCosts: async () => new Map([[13288, { cost: 40, costCurrencyId: 1 }]]),
 };
 const make = (s=store) => new HybridOrdersDataSource(legacy,s,references,{getPanel:async()=>null});
+const approve = async (api: HybridOrdersDataSource, id: number, authorized: boolean) => {
+  const current = (await api.findById(id))?.toPrimitives();
+  return api.setAuthorization(id, { authorized, revision: current?.storage?.revision ?? 0, userId: 21 });
+};
 const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',customerOrderNumber:'LOCAL',orderedAt:'2026-09-14',from:'2026-09-14',dueAt:'2026-09-14',department:'',initial:false,agentCode:'1202',termsDays:30,store:'302',observations:'Prueba',exchangeRate:1.2,boxes:3,branch:4,collectionCurrency:'PESOS',orderDiscounts:[0,0,0,0],commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',deliveryAddress:['Calle 1','Bodega 2','México'],contact:'Compras',additionalComments:'Entregar por la mañana',documentKind:'quote',lines:[{productCode:'01300958',quantity:1,price:59.05,discount:0}]};
 
 beforeAll(async()=>{await store.initialize();},30_000);
@@ -92,7 +98,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     const { rows } = await db.query('SELECT warehouse,ordered::float8 FROM tuvansa.order_stock_deltas WHERE order_id=$1', [order.id]);
     expect(rows).toEqual([{ warehouse: '12', ordered: 5 }]);
 
-    await api.setAuthorization(order.id, true);
+    await approve(api, order.id, true);
     await expect(api.setAssignment(order.id, [{ lineId: 1, assigned: 3 }])).rejects.toMatchObject({ code: 'SALE_STOCK_INSUFFICIENT' });
     expect((await api.setAssignment(order.id, [{ lineId: 1, assigned: 2 }])).toPrimitives()).toMatchObject({
       warehouse: '12', lines: [{ assigned: 2 }],
@@ -236,16 +242,76 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   it('enforces authorization, assignment, deauthorization and edit rules',async()=>{
     const api=make();const id=(await api.create({...input,documentKind:'order'})).toPrimitives().id;
     await expect(api.setAssignment(id,[{lineId:1,assigned:1}])).rejects.toMatchObject({code:'ORDER_AUTHORIZATION_REQUIRED'});
-    let order=(await api.setAuthorization(id,true)).toPrimitives();
+    let order=(await approve(api,id,true)).toPrimitives();
     expect(order.authorization).toBe('O.K.');
     await expect(api.update(id,{lines:[{productId:13288,quantity:2,price:59.05}]})).rejects.toMatchObject({code:'ORDER_IN_USE'});
     order=(await api.setAssignment(id,[{lineId:1,assigned:1}])).toPrimitives();
     expect(order.status).toBe('ASIGNAD');expect(order.lines[0]?.assigned).toBe(1);
-    await expect(api.setAuthorization(id,false)).rejects.toMatchObject({code:'ORDER_ASSIGNED'});
+    await expect(approve(api,id,false)).rejects.toMatchObject({code:'ORDER_ASSIGNED'});
     order=(await api.setAssignment(id,[{lineId:1,assigned:0}])).toPrimitives();
     expect(order.status).toBe('');
-    order=(await api.setAuthorization(id,false)).toPrimitives();
+    order=(await approve(api,id,false)).toPrimitives();
     expect(order.authorization).toBe('');
+  });
+  it('requires the approver key and a current revision, rechecks cost and records only successful changes', async () => {
+    const key = 'a'.repeat(64);
+    const verify = vi.fn(async (credential?: string) => {
+      if (credential !== key) throw new ApplicationError('Credencial requerida', 'ORDER_APPROVER_REQUIRED', 401);
+      return 21;
+    });
+    const costs = vi.fn().mockResolvedValue(new Map([[13288, { cost: 60, costCurrencyId: 1 }]]));
+    const dataSource = new HybridOrdersDataSource(legacy, store, { ...references, authorizationCosts: costs }, { getPanel: async () => null });
+    const order = (await dataSource.create({ ...input, documentKind: 'order' })).toPrimitives();
+    const app = express().use(express.json()).use(createOrdersModule(dataSource, { verify })).use(errorHandler);
+    const path = `/${order.id}/actions/authorization`;
+    const post = (authorized: boolean, revision: number) => request(app).post(path).set('Authorization', `Bearer ${key}`).send({ authorized, revision });
+    await request(app).post(path).send({ authorized: true, revision: 1 }).expect(401);
+    expect((await post(true, 0).expect(409)).body.error.code).toBe('ORDER_AUTHORIZATION_STALE');
+    expect(costs).not.toHaveBeenCalled();
+    expect((await post(true, 1).expect(409)).body.error.code).toBe('ORDER_PRICE_BELOW_COST');
+    expect(await store.get(order.id)).toMatchObject({ revision: 1, document: { authorization: '' } });
+    costs.mockResolvedValue(new Map());
+    expect((await post(true, 1).expect(409)).body.error.code).toBe('ORDER_AUTHORIZATION_COST_UNAVAILABLE');
+    costs.mockResolvedValue(new Map([[13288, { cost: 59.05, costCurrencyId: 1 }]]));
+    failAudit = true;
+    await post(true, 1).expect(503);
+    expect(await store.get(order.id)).toMatchObject({ revision: 1, document: { authorization: '' } });
+    failAudit = false;
+    const approved = await post(true, 1).expect(200);
+    expect(approved.body.data).toMatchObject({ authorization: 'O.K.', authorizedBy: 21, authorizationChange: { userId: 21 }, storage: { revision: 2 } });
+    expect((await post(true, 2).expect(200)).body.data.storage.revision).toBe(2);
+    expect((await post(false, 2).expect(200)).body.data).toMatchObject({ authorization: '', authorizedBy: 21, storage: { revision: 3 } });
+    const comments = await dataSource.getPanel(order.id, 'comments');
+    expect(comments).toMatchObject({ summary: { authorizedBy: 21 } });
+    expect(String(comments?.items[0]?.auditTrail).split('\n')).toEqual([
+      expect.stringMatching(/^AUTORIZA · Usuario 21/), expect.stringMatching(/^DESAUTORIZA · Usuario 21/),
+    ]);
+    const changes = await db.query('SELECT revision, document->>\'authorization\' AS authorization FROM tuvansa.order_changes WHERE order_id=$1 ORDER BY revision', [order.id]);
+    expect(changes.rows).toEqual([{ revision: 1, authorization: '' }, { revision: 2, authorization: 'O.K.' }, { revision: 3, authorization: '' }]);
+  });
+  it('reads the legacy header currency and prevents removal of authorization after fulfillment', async () => {
+    const historical = base();
+    historical.lines[0]!.currencyId = 0;
+    historical.lines[0]!.price = 50;
+    historical.exchangeRate = 20;
+    const sources = { ...legacy, findById: async () => Order.create(historical) };
+    const api = new HybridOrdersDataSource(sources, store, {
+      ...references, authorizationCosts: async () => new Map([[13288, { cost: 800, costCurrencyId: 1 }]]),
+    }, { getPanel: async () => null });
+    expect((await approve(api, historical.id, true)).toPrimitives().authorization).toBe('O.K.');
+    await store.change(historical.id, historical, 'update', async (doc) => {
+      doc.lines[0]!.fulfilled = 0.5;
+      return doc;
+    });
+    await expect(approve(api, historical.id, false)).rejects.toMatchObject({ code: 'ORDER_ALREADY_FULFILLED' });
+    expect(await store.get(historical.id)).toMatchObject({ revision: 2, document: { authorization: 'O.K.' } });
+  });
+  it('rejects authorization of a legacy order from another company without creating an overlay', async () => {
+    const historical = { ...base(), companyId: 2 };
+    const sources = { ...legacy, findById: async () => Order.create(historical) };
+    const api = new HybridOrdersDataSource(sources, store, references, { getPanel: async () => null });
+    await expect(approve(api, historical.id, true)).rejects.toMatchObject({ code: 'ORDER_AUTHORIZATION_COMPANY_FORBIDDEN' });
+    expect(await store.get(historical.id)).toBeNull();
   });
   it('rejects prices below the warehouse cost',async()=>{
     await expect(make().create({...input,lines:[{...input.lines[0]!,price:1}]})).rejects.toMatchObject({code:'ORDER_PRICE_BELOW_COST'});
@@ -255,8 +321,8 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     const values={...input,documentKind:'order' as const,lines:[{...input.lines[0]!,quantity:30}]};
     const first=(await api.create(values)).toPrimitives();
     const next=(await api.create(values)).toPrimitives();
-    await api.setAuthorization(first.id,true);
-    await api.setAuthorization(next.id,true);
+    await approve(api,first.id,true);
+    await approve(api,next.id,true);
     await api.setAssignment(first.id,[{lineId:1,assigned:30}]);
     await expect(api.setAssignment(next.id,[{lineId:1,assigned:30}])).rejects.toMatchObject({code:'SALE_STOCK_INSUFFICIENT'});
     expect((await api.findById(next.id))?.toPrimitives().lines[0]?.assigned).toBe(0);
@@ -292,14 +358,15 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   });
   it('supports the existing HTTP capture contract with PostgreSQL persistence',async()=>{
     const app=express().use(express.json()).use('/api',postgresWriteBoundary)
-      .use('/api/sales/orders',createOrdersModule(make())).use(errorHandler);
+      .use('/api/sales/orders',createOrdersModule(make(), { verify: async () => 21 })).use(errorHandler);
     const result=await request(app).post('/api/sales/orders/capture').send(input).expect(201);
     expect(result.body.data.number).toBe('NP5000000000');
     const comments=await request(app).patch(`/api/sales/orders/${result.body.data.id}/actions/comments`)
       .send({exchangeRate:20,collectionCurrency:'DOLARES'}).expect(200);
     expect(comments.body.data).toMatchObject({currencyId:1,exchangeRate:20,captureDetails:{collectionCurrency:'DOLARES'}});
-    await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/quote-conversion`).send({}).expect(200);
-    await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/authorization`).send({authorized:true}).expect(200);
+    const converted = await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/quote-conversion`).send({}).expect(200);
+    await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/authorization`)
+      .send({authorized:true, revision:converted.body.data.storage.revision}).expect(200);
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/assignment`).send({lines:[{lineId:1,assigned:1}]}).expect(200);
     await request(app).patch('/api/accounts-receivable/clients/123').send({}).expect(503);
     expect(forbidden).not.toHaveBeenCalled();

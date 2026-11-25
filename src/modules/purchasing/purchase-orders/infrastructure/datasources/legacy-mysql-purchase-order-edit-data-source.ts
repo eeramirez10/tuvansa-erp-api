@@ -119,7 +119,8 @@ export class LegacyMysqlPurchaseOrderEditDataSource implements PurchaseOrderEdit
   async creationDefaults(): Promise<PurchaseOrderCreateDefaults | null> {
     const [rows] = await legacyMysqlPool.execute<DefaultsRow[]>(
       `SELECT TIDESCR AS movement, TILARGO AS maxLines, CIAALIAS AS alias,
-        NULLIF(CIAFI, '1900-12-31') AS periodStart, NULLIF(CIAFF, '1900-12-31') AS periodEnd,
+        CAST(NULLIF(CIAFI, '1900-12-31') AS DATE) AS periodStart,
+        CAST(NULLIF(CIAFF, '1900-12-31') AS DATE) AS periodEnd,
         TIIVA0 AS tax0, TIIVA1 AS tax1, TIIVA2 AS tax2,
         SUBSTRING(CIACOMPORTA, 95, 1) = '1' AS discountLocked,
         SUBSTRING(CIACOMPORTA, 37, 1) = '1' AS selectWarehouse, CIAALM AS warehouse, ${exchangeRates},

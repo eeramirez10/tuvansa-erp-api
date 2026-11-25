@@ -270,3 +270,12 @@ Activa `"supplierChangeAction":true` en la entrada del usuario de `PURCHASE_ORDE
 El código se leyó en la exportación `20261120-EOC2-PROCEDURES.txt` (líneas 41–87). Las lecturas en MySQL confirmaron el esquema de los campos, el permiso y la presencia de órdenes con recepciones. El SQL de escritura web es derivado para PostgreSQL.
 
 La prueba en navegador y Neon cubrió selección, cancelación, firma, cambios consecutivos y conflicto entre dos guardados simultáneos. En la orden `OA00005` se verificó que cambiar proveedor y `PEPARA` conserva surtido, partidas, totales y la consulta de recepciones. Se retiraron los registros temporales de Neon y se verificó la lectura original.
+### Fechas del alta en MySQL 5.1
+
+El periodo de `FCIA.CIAFI/CIAFF` se proyecta como `DATE` después de
+convertir el centinela `1900-12-31` en nulo. El alta recibe cadenas
+`AAAA-MM-DD` para el día y la fecha inicial, con el límite del periodo
+vigente cuando la fecha del sistema queda fuera.
+
+La verificación de la orden confirmada, las recepciones parciales y el
+pendiente tras la cancelación está en [Recepción parcial, pago y reversión](purchase-receptions.md#recepción-parcial-pago-y-reversión).

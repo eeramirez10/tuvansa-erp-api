@@ -61,7 +61,8 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
       S.PRVINTERCIA AS betweenCompanies,S.PRVRETIVA AS withheldVat,S.PRVRETISR AS withheldIsr`;
     const [rows] = await legacyMysqlPool.execute<ReceiptRules[]>(
       `SELECT C.CIACOMPORTA AS flags,C.CIAPLUGS AS plugs,C.CIANOCOSTOS AS noCosts,ROOT.CATMCIAALM AS defaultWarehouse,
-         NULLIF(C.CIAFI,'1900-12-31') AS fiscalStart,NULLIF(C.CIAFF,'1900-12-31') AS fiscalEnd,
+         CAST(NULLIF(C.CIAFI,'1900-12-31') AS DATE) AS fiscalStart,
+         CAST(NULLIF(C.CIAFF,'1900-12-31') AS DATE) AS fiscalEnd,
          M.TICLA AS movement, M.TIAFINV AS stockSign, M.TIAFCXC AS payableSign, M.TIAFVTS AS invoiceSign,
          C.CIAPOLIZACONT AS policyType, M.TICONTA AS accountMode, M.TICUENTA AS movementAccount,
          C.CIATASAIVA AS vatRate,C.CIACTAIVAC AS vatAccount,C.CIACTAIVAC2 AS alternateVatAccount

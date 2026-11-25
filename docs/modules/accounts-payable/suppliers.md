@@ -82,3 +82,7 @@ La consulta de un PP conciliado devuelve `originalReconciliation` con ID y fecha
 - Acciones queda a la izquierda y Consultas a la derecha, como en OMNIS.
 - Los modales usan tablas compactas, scroll XY, totales y la misma fila de botones inferiores. Esos botones internos permanecen deshabilitados hasta abordar sus operaciones específicas.
 - La base usada por OMNIS durante la captura era de pruebas; la API se ejecuta contra la conexión configurada en `.env`.
+La prueba de un PP conciliado sobre una recepción parcial verificó el
+saldo del proveedor, el vínculo a la póliza y el corte independiente
+del cargo RP. Los importes y el regreso de la orden al pendiente están
+en [Recepciones](../purchasing/purchase-receptions.md#recepción-parcial-pago-y-reversión).

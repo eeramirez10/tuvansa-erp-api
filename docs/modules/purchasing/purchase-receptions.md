@@ -358,3 +358,28 @@ Estas acciones secundarias se muestran con un aviso de sólo lectura.
 - Clasificadores: nueve consultas sobre `FAG`, una por `AGT` de 1 a 9.
 
 Documento de comprobacion utilizado: `RA10724` (`DSEQ=421564`, orden `OA06307`), con dos partidas.
+La consulta de captura proyecta `FCIA.CIAFI/CIAFF` como `DATE` después de
+resolver el centinela `1900-12-31`. Así se conserva la fecha de recepción
+en formato `AAAA-MM-DD` en MySQL 5.1.
+
+### Recepción parcial, pago y reversión
+
+El 24/11/2026, Chromium abrió **Nueva recepción** y registró dos
+entregas de una unidad sobre una orden de dos unidades. Cancelar el
+borrador conservó el pendiente. Los enlaces de **Auxiliar** y las pólizas
+identificaron ambas entregas.
+
+En una segunda prueba, una orden de dos unidades del producto `01511263`
+recibió una unidad con PEPS. La recepción incrementó la existencia de 5 a
+6 y dejó 1 unidad pendiente. El cargo al proveedor y su póliza fueron de
+185 MXN. Un PP de 40 MXN redujo el pendiente de pago a 145 MXN. El corte
+del PP dejó el saldo bancario de prueba en −40 MXN.
+
+La cancelación de la recepción con el PP activo devolvió conflicto
+sin cambiar la existencia ni el pendiente de la orden. El RP reabrió
+los 185 MXN, conservó el corte del pago y tuvo su propio corte, que
+regresó el saldo bancario a cero. Al cancelar la recepción, su
+contrapartida K agotó la misma capa, dejó 2 unidades pendientes en la
+orden y devolvió la existencia y el saldo del proveedor a sus valores
+de apertura. La póliza de cancelación quedó aplicada y cuadrada. Los
+reintentos recuperaron los registros y se retiraron los datos temporales.

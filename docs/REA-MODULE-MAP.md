@@ -96,7 +96,8 @@ y empaque. En el buscador de Pedidos también se excluyen **Foto** y
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
 | Inventarios | Imprimir EI, SI y TR | La vista previa reproduce la presentación de los PDF históricos EI y SI, incluidos signo de salida y total por partida redondeada. Se comprobó en Chromium con los tres folios del plan y tres referencias impresas. Falta obtener las salidas nativas de los folios del plan en German. [Documentos de inventario](modules/inventories/movement-documents.md) |
 | Pedidos | Otras expresiones de Familias | **Familias** admite la igualdad por código comprobada con `MEMFILQUERY`. Faltan casos de uso para otras expresiones. [Pedidos](modules/sales/orders-behaviors-new-version.md) |
-| Facturación | Traspaso y Liquidación camión | Los respaldos consultados carecen de tipo `TITRASPASOS` habilitado y destino `TZ` para el flujo. Liquidación requiere un archivo tabulado de ruta y folios de entrega y devolución relacionados. [Facturación](modules/sales/invoices.md) |
+| Facturación | Traspaso | Los respaldos consultados carecen de tipo `TITRASPASOS` habilitado y tipo `TZ` con afectación de CxC. Falta validar un folio con destino a un almacén físico. [Facturación](modules/sales/invoices.md) |
+| Facturación | Liquidación camión | El procedimiento define el archivo tabulado por tipo y producto y pide la factura por separado. El respaldo carece de ejemplos de folios derivados con el patrón de liquidación. Falta confirmar su uso en México con una ruta y devoluciones de prueba. [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica
 

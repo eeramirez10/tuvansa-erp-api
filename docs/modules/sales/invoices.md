@@ -312,14 +312,19 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   folio vigente con partidas para comparar los registros y saldos antes
   y después de la confirmación.
 - **Liquidación camión** requiere `EFACT#13/76` y abre `EFACT#23`, el formato de
-  liquidación de camionetas Unifoods. Usa listas propias de entrega/devolución,
-  con importación de archivo tabulado o colector COM1/COM2. Falta una sesión
-  con liquidación de prueba y sus documentos de devolución. La lectura de ruta
-  de la ficha de Facturación brinda contexto, mientras se comprueba el flujo.
-  Se revisaron los directorios locales de PROSCAI y pruebas por un archivo
-  identificable de liquidación o colector. El respaldo actual tiene `CA` en
-  México y `CB` en Monterrey. Hace falta un archivo tabulado de una ruta de
-  prueba, su fecha y los folios de entrega y devolución vinculados.
+  liquidación de camionetas Unifoods. `/28` pide el folio de la factura por
+  separado. La importación de `/405` lee campos delimitados por tabuladores.
+  `/407–408` interpretan un campo de un carácter como tipo de devolución,
+  aceptan código o identificador de producto con cantidad opcional separada
+  por coma y agrupan por tipo y producto. `/102` usa los grupos `A`, `B` y
+  `C`. La confirmación marca `FDOC.DINICIAL=1` y crea folios con esos
+  sufijos mediante `/109–112`.
+  La lectura derivada de `FTIPMV` encontró `CA` con `TIAFCXC=-1` en México
+  y `CB` con el mismo efecto en Monterrey. El respaldo `tuvansa` no devolvió
+  facturas vigentes con `DINICIAL=1` y folios derivados `A/B/C` vigentes del
+  mismo cliente y compañía. Falta confirmar si el flujo se usa en México y
+  comprobar una ruta de prueba con su factura, entregas y devoluciones en
+  German.
 
 ### Tiket > Factura en la web
 

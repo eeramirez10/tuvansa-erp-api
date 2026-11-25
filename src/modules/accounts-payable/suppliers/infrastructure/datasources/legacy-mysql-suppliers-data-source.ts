@@ -77,12 +77,12 @@ const selectSupplierFields = `
   PRVSANT AS previousBalance,
   PRVSACT AS currentBalance,
   PRVACUMULADO AS accumulatedPurchases,
-  NULLIF(PRVULTCOM, '1900-12-31') AS lastPurchaseAt,
-  NULLIF(PRVULTPAG, '1900-12-31') AS lastPaymentAt,
-  NULLIF(PRVBAJA, '1900-12-31') AS deactivatedAt,
+  CAST(NULLIF(PRVULTCOM, '1900-12-31') AS DATE) AS lastPurchaseAt,
+  CAST(NULLIF(PRVULTPAG, '1900-12-31') AS DATE) AS lastPaymentAt,
+  CAST(NULLIF(PRVBAJA, '1900-12-31') AS DATE) AS deactivatedAt,
   PRVEVENTOS AS eventsMarker,
   PRVOBS AS notes,
-  NULLIF(PRVALTA, '1900-12-31') AS createdAt
+  CAST(NULLIF(PRVALTA, '1900-12-31') AS DATE) AS createdAt
 `;
 
 const toSupplier = (row: SupplierRow): Supplier => Supplier.create({

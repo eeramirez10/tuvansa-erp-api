@@ -44,6 +44,11 @@ it('applies partial and final deposits to the same remission with stable retries
     };
     const preview = await collections.prepare(identity);
     expect(preview).toMatchObject({ canWrite: true, remaining: 116, revision: 1 });
+    const configuration = await settings();
+    settings.mockResolvedValueOnce({ ...configuration, fiscalEnd: first.date });
+    expect(await collections.prepare(identity)).toMatchObject({ canWrite: true, defaults: { date: first.date } });
+    settings.mockResolvedValueOnce({ ...configuration, fiscalEnd: '2026-11-22' });
+    expect(await collections.prepare(identity)).toMatchObject({ canWrite: false, reason: expect.stringContaining('periodo fiscal') });
     expect((await db.query("SELECT to_regclass('tuvansa.customer_collections') AS table_name")).rows)
       .toEqual([{ table_name: null }]);
     await expect(collections.prepare({ ...identity, clientId: 99 })).rejects.toMatchObject({ statusCode: 404 });

@@ -8,6 +8,7 @@ import { migratePostgres } from '../../../../../shared/infrastructure/datasource
 import {
   isLocalSalesRemissionId, salesRemissionsAvailable,
 } from '../../../../sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
+import type { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import type {
   CustomerCollectionCommand, CustomerCollectionDataSource, CustomerCollectionIdentity,
   CustomerCollectionResult, CustomerCollectionTarget,
@@ -15,6 +16,7 @@ import type {
 import { validateCustomerCollection } from '../../domain/entities/customer-collection.js';
 import { customerCollectionsAvailable } from './customer-collections-reads.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from './customer-collection-reversal-reads.js';
+import { clientCatalogRecord } from './postgres-client-catalog.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 
 const idStart = 7300000000000;
@@ -90,6 +92,7 @@ export class PostgresCustomerCollections implements CustomerCollectionDataSource
   constructor(
     private readonly connect: PostgresConnectionFactory = connectPostgres,
     private readonly configured = postgresConfigured,
+    private readonly bankCatalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>,
   ) {}
 
   writable() { return this.configured(); }
@@ -188,8 +191,9 @@ export class PostgresCustomerCollections implements CustomerCollectionDataSource
     const target = await this.findTarget(client, identity, true);
     if (!target) throw new NotFoundError('Remisión web del cliente');
     validateCustomerCollection(target, input);
-    const { bank, clientAccount, clientAccountName, policyType } = await resolvePosting();
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:'||$1::text||':'||$2::text,0))", [companyId, bank.id]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-reconciliation:'||$1::text||':'||$2::text,0))", [companyId, input.bankAccountId]);
+    const catalog = await clientCatalogRecord(clientId, client);
+    const { bank, clientAccount, clientAccountName, policyType } = await resolvePosting(this.bankCatalog?.lookupOn(client), catalog);
 
     const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.customer_collection_ids') AS id");
     const id = Number(allocation!.id);

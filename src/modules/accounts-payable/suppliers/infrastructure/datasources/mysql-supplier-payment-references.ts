@@ -1,8 +1,6 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
-import type { BankAccountsDataSource } from '../../../../treasury/banking/domain/datasources/bank-accounts-data-source.js';
 import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
-import { permitsBankPosting } from '../../../../treasury/banking/domain/entities/bank-posting-role.js';
 import { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import { supplierCatalogRecord } from './postgres-supplier-catalog-data-source.js';
 import type {
@@ -15,29 +13,12 @@ interface ConfigurationRow extends RowDataPacket {
   supplierAccountName: string;
 }
 
-interface BankIdRow extends RowDataPacket { id: number }
-
 export class MysqlSupplierPaymentReferences implements SupplierPaymentReferences {
-  constructor(private readonly accounts: Pick<BankAccountsDataSource, 'findById'> = new BankAccountsWithCatalogDataSource()) {}
+  constructor(private readonly accounts: Pick<BankAccountsWithCatalogDataSource, 'postingAccounts'> = new BankAccountsWithCatalogDataSource()) {}
 
   private async banks(companyId: number, selectedBankId?: number, lookup?: BankAccountLookup): Promise<SupplierPaymentBank[]> {
-    const ids = selectedBankId === undefined ? await this.nativeCandidates(companyId) : [selectedBankId];
-    const find: BankAccountLookup = lookup ?? (async (id) => (await this.accounts.findById(id))?.toPrimitives() ?? null);
-    const found = await Promise.all(ids.map(find));
-    return found.flatMap((account) => account && permitsBankPosting(account, companyId, 'payments')
-      ? [{ id: account.id, code: account.code.trim(), name: account.name.trim() }] : []);
-  }
-
-  private async nativeCandidates(companyId: number): Promise<number[]> {
-    // El permiso de pagos se lee del catálogo efectivo porque Cambio lo puede editar.
-    const [rows] = await legacyMysqlPool.execute<BankIdRow[]>(
-      `SELECT BSEQ AS id FROM FBENC
-       WHERE BTIPO = 0 AND BMOVS = 1 AND BMONEDA = 1
-         AND BCIA IN (0,?) AND BMULTICIA IN (0,?) AND TRIM(BCOD) <> ''
-       ORDER BY BCOD,BSEQ`,
-      [companyId, companyId],
-    );
-    return rows.map(({ id }) => id);
+    const found = await this.accounts.postingAccounts(companyId, 'payments', selectedBankId, lookup);
+    return found.map(({ id, code, name }) => ({ id, code: code.trim(), name: name.trim() }));
   }
 
   async settings(companyId: number, supplierId: number, selectedBankId?: number, lookup?: BankAccountLookup,

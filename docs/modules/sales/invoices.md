@@ -93,6 +93,22 @@ tres pendientes, revirtió el cargo y repuso las cantidades en las dos
 capas. `18118` volvió al final de la cola PEPS. Se comprobaron los
 reintentos de alta y cancelación y se retiraron los folios temporales.
 
+La prueba integrada con Chromium y Neon asignó tres unidades, remitió dos
+con PEPS y cobró 40 MXN del cargo de 464 MXN desde **Clientes → Saldo →
+Cobrar**. El pendiente de la remisión quedó en 424 MXN. La cuenta web
+apareció al habilitar depósitos. Al deshabilitarlos después de abrir la
+captura, el POST devolvió conflicto y el saldo de la cuenta quedó en cero.
+
+Se concilió el depósito y luego se revirtió el PA. La reversión reabrió el
+pendiente por 40 MXN y se concilió en su propio corte. El saldo bancario
+pasó de 0 a 40 y regresó a 0 MXN. Ambas pólizas reflejaron el corte
+correspondiente en la partida bancaria. Con el PA vigente, la cancelación
+FAW fue rechazada y conservó las existencias. Tras la reversión, la
+cancelación con regeneración devolvió los tres pendientes, conservó la
+unidad asignada sin remitir y restauró la existencia, el crédito y ambas
+capas. **Lotes** mostró sus dos identificadores en Chromium. Se verificaron
+los reintentos y se retiraron las filas de prueba.
+
 ## Simulación de timbrado
 
 En Omnis, `MFACT/86` lee `FTIPMV.TICONVERTIR` para convertir una remisión.

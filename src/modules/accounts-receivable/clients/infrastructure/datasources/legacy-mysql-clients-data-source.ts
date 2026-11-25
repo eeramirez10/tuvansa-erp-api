@@ -77,7 +77,7 @@ const selectClientFields = `
   CLISEQ AS id,
   CLICOD AS code,
   CLINOM AS name,
-  NULLIF(CLIBAJA, '1900-12-31') AS deactivatedAt,
+  CAST(NULLIF(CLIBAJA, '1900-12-31') AS DATE) AS deactivatedAt,
   CLIDIR AS street,
   CLINUMEXT AS exteriorNumber,
   CLINUMINT AS interiorNumber,
@@ -103,7 +103,7 @@ const selectClientFields = `
   CLIDESC30 AS discount3,
   CLIPLAZO0 AS paymentTermDays,
   CLICREDIT AS creditLimit,
-  NULLIF(CLIVIGENCIACRED, '1900-12-31') AS creditExpiresAt,
+  CAST(NULLIF(CLIVIGENCIACRED, '1900-12-31') AS DATE) AS creditExpiresAt,
   CLIDIREV AS reviewDay,
   CLIHORAREV AS reviewTime,
   CLIDIPAGO AS paymentDay,
@@ -114,10 +114,10 @@ const selectClientFields = `
   CLISANT AS previousBalance,
   CLISACT AS currentBalance,
   CLIACUMULADO AS accumulatedSales,
-  NULLIF(CLIULTCOM, '1900-12-31') AS lastPurchaseAt,
-  NULLIF(CLIULTPAG, '1900-12-31') AS lastPaymentAt,
-  NULLIF(CLIULTPED, '1900-12-31') AS lastOrderAt,
-  NULLIF(CLIALTA, '1900-12-31') AS createdAt
+  CAST(NULLIF(CLIULTCOM, '1900-12-31') AS DATE) AS lastPurchaseAt,
+  CAST(NULLIF(CLIULTPAG, '1900-12-31') AS DATE) AS lastPaymentAt,
+  CAST(NULLIF(CLIULTPED, '1900-12-31') AS DATE) AS lastOrderAt,
+  CAST(NULLIF(CLIALTA, '1900-12-31') AS DATE) AS createdAt
 `;
 
 const toClient = (row: ClientRow): Client => {

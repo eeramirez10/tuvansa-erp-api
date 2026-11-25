@@ -1,19 +1,24 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
+import { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import { clientCatalogRecord } from './postgres-client-catalog.js';
+import type { ClientCatalogRecord } from '../../domain/entities/client-catalog.js';
 import type {
-  CustomerCollectionBank, CustomerCollectionReferences, CustomerCollectionSettings,
+  CustomerCollectionReferences, CustomerCollectionSettings,
 } from '../../domain/datasources/customer-collection-data-source.js';
 
 interface SettingRow extends RowDataPacket, Omit<CustomerCollectionSettings, 'bankAccounts'> {}
-interface BankRow extends RowDataPacket, CustomerCollectionBank {}
 
 export class MysqlCustomerCollectionReferences implements CustomerCollectionReferences {
-  async settings(companyId: number, clientId: number): Promise<CustomerCollectionSettings | null> {
+  constructor(private readonly accounts: Pick<BankAccountsWithCatalogDataSource, 'postingAccounts'> = new BankAccountsWithCatalogDataSource()) {}
+
+  async settings(companyId: number, clientId: number, bankAccountId?: number, lookup?: BankAccountLookup,
+    catalog?: ClientCatalogRecord | null): Promise<CustomerCollectionSettings | null> {
     // Derivada del PA, la póliza aplicada y las cuentas efectivas del catálogo Omnis.
-    const client = await clientCatalogRecord(clientId);
+    const client = catalog === undefined ? await clientCatalogRecord(clientId) : catalog;
     if (client?.deleted) return null;
-    const [[settings], [banks]] = await Promise.all([
+    const [[settings], banks] = await Promise.all([
       legacyMysqlPool.execute<SettingRow[]>(
         `SELECT TRIM(c.CIAPOLIZAING) AS policyType, c.CIAFI AS fiscalStart, c.CIAFF AS fiscalEnd,
                 TRIM(a.BCOD) AS clientAccount, TRIM(a.BNOMBRE) AS clientAccountName
@@ -33,16 +38,14 @@ export class MysqlCustomerCollectionReferences implements CustomerCollectionRefe
          ORDER BY a.BSEQ LIMIT 2`, [clientId, client?.changes.accountingAccount ?? null, companyId,
           client && !client.legacy ? 1 : 0, client?.changes.applyToClientCode ?? null, client?.document.code ?? null],
       ),
-      legacyMysqlPool.execute<BankRow[]>(
-        `SELECT BSEQ AS id, TRIM(BCOD) AS code, TRIM(BNOMBRE) AS name FROM FBENC
-         WHERE BTIPO = 0 AND BMOVS = 1 AND BDEPOS = 1 AND BMONEDA = 1
-           AND BCIA IN (0,?) AND BMULTICIA IN (0,?) AND TRIM(BCOD) <> ''
-         ORDER BY BCOD,BSEQ`, [companyId, companyId],
-      ),
+      this.accounts.postingAccounts(companyId, 'deposits', bankAccountId, lookup),
     ]);
     const [configuration] = settings;
     if (settings.length !== 1 || !configuration?.clientAccount || !configuration.fiscalStart || !configuration.fiscalEnd) return null;
     const { policyType, fiscalStart, fiscalEnd, clientAccount, clientAccountName } = configuration;
-    return { policyType, fiscalStart, fiscalEnd, clientAccount, clientAccountName, bankAccounts: banks.map(({ id, code, name }) => ({ id, code, name })) };
+    return {
+      policyType, fiscalStart, fiscalEnd, clientAccount, clientAccountName,
+      bankAccounts: banks.map(({ id, code, name }) => ({ id, code: code.trim(), name: name.trim() })),
+    };
   }
 }

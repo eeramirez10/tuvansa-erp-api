@@ -72,6 +72,11 @@ Todas las rutas anteriores se montan bajo `/api/accounts-payable/suppliers`.
 
 El saldo local de una recepción se obtiene restando de su cargo original los pagos vigentes de `supplier_payments`. **Saldo** conserva ambos importes y muestra los documentos web con pendiente positivo. **Movimientos** conserva el cargo de origen y muestra cada abono **PP** con su folio de cheque o transferencia y su póliza. La correspondencia del abono proviene de `EPRV#25/120`.
 
+El selector de cuenta y el registro PP usan el catálogo efectivo de Bancos.
+Incluyen cuentas de German y cuentas web habilitadas para pagos en pesos.
+En MySQL 5.1, la ficha convierte a `DATE` las fechas de alta, baja, última
+compra y último pago después de sustituir los centinelas por nulos.
+
 **Movimientos → Revertir PP** consulta y registra en `GET/POST /api/accounts-payable/suppliers/:supplierId/payments/:paymentId/reversal`. Requiere motivo, confirmación y fecha dentro del periodo abierto. La contrapartida **RP** reabre el documento por el importe exacto del PP elegido. Los demás pagos conservan su efecto. Movimientos conserva el abono PP y muestra el cargo RP vinculado a su póliza de reversión.
 
 La consulta de un PP conciliado devuelve `originalReconciliation` con ID y fecha del corte. El POST requiere el mismo `expectedReconciliationId` y una fecha igual o posterior al último corte de la cuenta. Un cambio de conciliación obliga a consultar y confirmar de nuevo. La corrección de un PP conciliado genera un cargo bancario independiente que se puede incluir en un corte posterior.

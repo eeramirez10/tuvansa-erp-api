@@ -40,8 +40,12 @@ export class CaptureCustomerCollection {
     const reason = collectionReason(target);
     const settings = reason ? null : await this.references.settings(identity.companyId, identity.clientId);
     const bankAccounts = this.banks(settings);
-    const unavailable = reason ?? (!settings ? configurationMissing : bankAccounts.length === 0 ? bankMissing : null);
-    const defaultsDate = [mexicoDate.format(), target.issuedAt, target.lastReversalDate ?? ''].sort().at(-1)!;
+    const minimumDate = [settings?.fiscalStart ?? '', target.issuedAt, target.lastReversalDate ?? ''].sort().at(-1)!;
+    const dateOutOfRange = settings && minimumDate > settings.fiscalEnd;
+    const unavailable = reason ?? (!settings ? configurationMissing : bankAccounts.length === 0 ? bankMissing
+      : dateOutOfRange ? 'La fecha mínima del cobro queda fuera del periodo fiscal activo.' : null);
+    const today = mexicoDate.format();
+    const defaultsDate = settings && !dateOutOfRange ? [minimumDate, today, settings.fiscalEnd].sort()[1]! : minimumDate;
     return {
       remissionId: target.remissionId, number: target.number, remaining: target.remaining, revision: target.revision,
       canWrite: unavailable === null, reason: unavailable, bankAccounts,
@@ -62,8 +66,8 @@ export class CaptureCustomerCollection {
     await this.target(identity);
     return this.storage.commit({
       identity, input, userId, fingerprint,
-      resolvePosting: async () => {
-        const settings = await this.references.settings(identity.companyId, identity.clientId);
+      resolvePosting: async (lookup, catalog) => {
+        const settings = await this.references.settings(identity.companyId, identity.clientId, input.bankAccountId, lookup, catalog);
         if (!settings) throw new ConflictError(configurationMissing, 'CUSTOMER_COLLECTION_CONFIG_UNAVAILABLE');
         const bank = this.banks(settings).find(({ id }) => id === input.bankAccountId);
         if (!bank) throw new ConflictError(bankMissing, 'CUSTOMER_COLLECTION_BANK_UNAVAILABLE');

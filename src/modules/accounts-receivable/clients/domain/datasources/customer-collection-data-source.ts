@@ -1,3 +1,6 @@
+import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
+import type { ClientCatalogRecord } from '../entities/client-catalog.js';
+
 export interface CustomerCollectionIdentity {
   companyId: number;
   clientId: number;
@@ -57,7 +60,8 @@ export interface CustomerCollectionSettings {
 }
 
 export interface CustomerCollectionReferences {
-  settings(companyId: number, clientId: number): Promise<CustomerCollectionSettings | null>;
+  settings(companyId: number, clientId: number, bankAccountId?: number, lookup?: BankAccountLookup,
+    catalog?: ClientCatalogRecord | null): Promise<CustomerCollectionSettings | null>;
 }
 
 export interface CustomerCollectionCommand {
@@ -65,7 +69,7 @@ export interface CustomerCollectionCommand {
   userId: number;
   input: CustomerCollectionInput;
   fingerprint: string;
-  resolvePosting(): Promise<{
+  resolvePosting(lookup?: BankAccountLookup, catalog?: ClientCatalogRecord | null): Promise<{
     bank: CustomerCollectionBank;
     clientAccount: string;
     clientAccountName: string;

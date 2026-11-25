@@ -85,8 +85,9 @@ it('persiste ficha y bloqueo juntos, refleja el evento una vez y guarda bajas co
   legacyExecute.mockResolvedValueOnce([[fiscal]]);
   expect(await invoice.context(1, order)).toMatchObject({ reason: 'El cliente está bloqueado para facturación.' });
   legacyExecute.mockResolvedValueOnce([[{ policyType: '1', fiscalStart: fiscal.fiscalStart, fiscalEnd: fiscal.fiscalEnd,
-    clientAccount: '1105002', clientAccountName: 'CLIENTES' }]]).mockResolvedValueOnce([[]]);
-  expect(await new MysqlCustomerCollectionReferences().settings(1, id)).toMatchObject({ clientAccount: '1105002' });
+    clientAccount: '1105002', clientAccountName: 'CLIENTES' }]]);
+  const collection = new MysqlCustomerCollectionReferences({ postingAccounts: async () => [] });
+  expect(await collection.settings(1, id)).toMatchObject({ clientAccount: '1105002' });
   expect((await view.findFirstActive())?.toPrimitives().id).toBe(base.id);
   expect((await view.search({ status: 'inactive', limit: 5, offset: 0 })).items[0]?.toPrimitives().id).toBe(id);
   await view.block(id, false, 'Prueba de desbloqueo');

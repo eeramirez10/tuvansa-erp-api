@@ -196,15 +196,17 @@ La cancelación de una remisión histórica descuenta su cargo del saldo actual 
 
 ### Cobrar una remisión web
 
-**Clientes → Saldo → Cobrar** registra un depósito parcial o total para una remisión web `FAW` activa en pesos de México. La ventana pide cuenta bancaria, importe, fecha, referencia bancaria y concepto. La fecha debe ser igual o posterior a la remisión y pertenecer al período fiscal de la compañía.
+**Clientes → Saldo → Cobrar** registra un depósito parcial o total para una remisión web `FAW` activa en pesos de México. La ventana pide cuenta bancaria, importe, fecha, referencia bancaria y concepto. La fecha debe pertenecer al período fiscal de la compañía y ser igual o posterior a la remisión y a la última reversión. La fecha sugerida queda dentro de ese rango cuando el calendario del equipo ya está fuera del período abierto.
 
 | Vista y botón | Endpoint | Procedencia y tablas |
 | --- | --- | --- |
-| Saldo / Cobrar | `GET /api/accounts-receivable/clients/:clientId/collections/:remissionId` | SQL derivado. Saldo y revisión de `sales_remissions` y `customer_collections`. Cuentas y tipo PA de `FCIA`, `FCLI`, `FTIPMV` y `FBENC` |
+| Saldo / Cobrar | `GET /api/accounts-receivable/clients/:clientId/collections/:remissionId` | SQL derivado. Saldo y revisión de `sales_remissions` y `customer_collections`. Configuración PA de `FCIA`, `FCLI` y `FTIPMV`. Cuentas de `FBENC` y `bank_catalog_accounts` |
 | Cobrar / OK | `POST /api/accounts-receivable/clients/:clientId/collections/:remissionId` | SQL derivado. Inserta en `customer_collections` y devuelve folio `PAW`, recibo, saldo restante y póliza `1CW` |
 | Cobrar / Cancelar | Cerrar | Descarta la captura |
 
-La revisión impide aplicar un cobro sobre un saldo que cambió. Reusar la misma clave de solicitud con los mismos datos devuelve el cobro original. El abono en Clientes, el aumento en Bancos y la póliza aplicada se proyectan de una sola fila guardada en PostgreSQL. La cuenta del depósito proviene de `FBENC` y admite movimientos y depósitos en pesos. Contabilidad carga al banco y abona a `CLICTA` o a `CIACTACXC` cuando el cliente utiliza la cuenta predeterminada.
+La revisión impide aplicar un cobro sobre un saldo que cambió. Reusar la misma clave de solicitud con los mismos datos devuelve el cobro original. El abono en Clientes, el aumento en Bancos y la póliza aplicada se proyectan de una sola fila guardada en PostgreSQL. El catálogo efectivo incluye las cuentas web y las de German habilitadas para depósitos en pesos. El registro vuelve a comprobar la cuenta con el bloqueo de Bancos. Contabilidad carga al banco y abona a `CLICTA` o a `CIACTACXC` cuando el cliente utiliza la cuenta predeterminada.
+
+En MySQL 5.1, las consultas de la ficha y de **Saldo** convierten el resultado de `NULLIF` a `DATE`. Se conservan los días calendario en JSON y los centinelas se presentan como valores nulos.
 
 Omnis mostró la lista de **Saldo** y la ventana **Captura de movimientos** en **Clientes → Movimientos CxC**. En el historial de México, dos abonos PA en `FAX` liquidaron `FE0064651`. El segundo se liga por `APOLIZA` a `112611-0026` de familia **COBRANZA**, con cargo PC al banco y abono a la cuenta de clientes en `FBANMOV`. La muestra incluye complemento fiscal. El botón web **Cobrar** aplica esa secuencia contable a FAW, el alcance local convenido para esta fase. En las remisiones FA sin timbrar consultadas, el historial mostraba el cargo de venta. El complemento fiscal queda para la integración posterior.
 

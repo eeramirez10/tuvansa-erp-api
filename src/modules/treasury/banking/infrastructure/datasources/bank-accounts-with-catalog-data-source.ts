@@ -1,7 +1,8 @@
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { BankAccountsDataSource } from '../../domain/datasources/bank-accounts-data-source.js';
 import type { BankCatalogReadSession } from '../../domain/datasources/bank-catalog-data-source.js';
-import type { BankAccount, BankAccountLookup } from '../../domain/entities/bank-account.js';
+import type { BankAccount, BankAccountLookup, BankAccountProps } from '../../domain/entities/bank-account.js';
+import { permitsBankPosting } from '../../domain/entities/bank-posting-role.js';
 import { projectBankCatalog, type BankCatalogSnapshot } from '../../domain/entities/bank-catalog.js';
 import type { BankAccountNavigationDirection, BankAccountSearchCriteria, BankAccountSearchResult } from '../../domain/repositories/bank-accounts-repository.js';
 import { LegacyMysqlBankAccountsDataSource } from './legacy-mysql-bank-accounts-data-source.js';
@@ -35,6 +36,22 @@ export class BankAccountsWithCatalogDataSource implements BankAccountsDataSource
   }
 
   findById(id: number) { return this.accountById(id); }
+
+  async postingAccounts(companyId: number, role: 'payments' | 'deposits', id?: number, lookup?: BankAccountLookup) {
+    if (id !== undefined) {
+      const account = lookup ? await lookup(id) : (await this.accountById(id))?.toPrimitives();
+      return account && permitsBankPosting(account, companyId, role) ? [account] : [];
+    }
+    const limit = 250;
+    const applicable: BankAccountProps[] = [];
+    let offset = 0;
+    for (;;) {
+      const { items, total } = await this.search({ offset, limit });
+      applicable.push(...items.map((item) => item.toPrimitives()).filter((account) => permitsBankPosting(account, companyId, role)));
+      offset += items.length;
+      if (items.length === 0 || offset >= total) return applicable;
+    }
+  }
 
   async findByCode(code: string): Promise<BankAccount | null> {
     const local = await this.catalog.read(null as BankCatalogSnapshot | null, (catalog) => catalog.findByCode(code));

@@ -42,6 +42,7 @@ import { createClientsRouter } from './presentation/http/clients-routes.js';
 
 export const createClientsModule = (): Router => {
   const clientsDataSource = new ClientsWithSalesRemissionsDataSource();
+  const bankCatalog = new BankAccountsWithCatalogDataSource();
   const repository = new ClientsRepositoryImpl(clientsDataSource);
   const balanceRepository = new ClientBalanceRepositoryImpl(
     new ClientBalanceWithSalesRemissionsDataSource(new LegacyMysqlClientBalanceDataSource()),
@@ -83,7 +84,7 @@ export const createClientsModule = (): Router => {
     createClient,
     updateClient,
     deleteClient,
-    new CaptureCustomerCollection(new PostgresCustomerCollections(), new MysqlCustomerCollectionReferences()),
+    new CaptureCustomerCollection(new PostgresCustomerCollections(undefined, undefined, bankCatalog), new MysqlCustomerCollectionReferences(bankCatalog)),
     new ReverseCustomerCollection(new PostgresCustomerCollectionReversals(), new MysqlPostingReversalReferences()),
     (id, blocked, reason) => clientsDataSource.block(id, blocked, reason),
   );
@@ -97,3 +98,4 @@ export const createClientsModule = (): Router => {
   ));
   return router;
 };
+import { BankAccountsWithCatalogDataSource } from '../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';

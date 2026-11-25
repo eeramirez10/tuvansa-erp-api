@@ -64,6 +64,24 @@ Los documentos de tipos XA/P, Duplicar, selección de productos y Cancún creado
 | Estado reciente | Documentos nuevos y working tree | Un clon no recibe modificaciones sin commit/push; no se debe afirmar que esos cambios ya están publicados |
 | Fuentes externas | PDFs/Excel/métodos del usuario | Archivos del escritorio no viajan con Git. Un PDF de resultados no define necesariamente todas sus reglas |
 
+## Acciones internas de TUVANSA México pendientes de confirmación
+
+Revisión del 24 de noviembre de 2026. Los ensayos de captura, cancelación,
+conciliación y reversión se realizaron con datos temporales en PostgreSQL
+de pruebas. Las páginas de cada módulo registran sus efectos y los casos
+confirmados en German.
+
+| Módulo | Controles pendientes | Evidencia o dato que falta |
+| --- | --- | --- |
+| Bancos | Conciliar → Imprimir Cheque, Detalle, FP | German llama a `MBANCO/39` para el cheque, con formato `BREPORTE` vacío en las cuentas probadas. **Detalle** no abrió una edición en la partida enfocada. **FP** abre una fecha que requiere identificar la escritura y sus validaciones. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
+| Bancos / Pólizas | Aux. no aplicados → Aplicar una póliza histórica | German llama a `MPASIVOS/99`. El auxiliar del periodo abierto sólo mostró una póliza pendiente con importes cero. Falta un caso histórico con saldo para contrastar la aplicación y sus efectos. La operación se verificó con una póliza web. [Bancos](modules/treasury/banking.md) |
+| Pólizas | Clasificar → Guardar, Duplicar pasivo | Los valores `POPAR1/POPAR2` y el catálogo `FAG` están identificados. Falta confirmar qué estados permiten guardar y los efectos contables de duplicar un pasivo. [Pólizas](modules/accounting/policies.md) |
+| Proveedores | Guardar clasificación, altas/cambios/bajas de Eventos y Contactos, Cambio en Varios, agrupación de documentos | Las consultas usan `FPRV`, `FEVENTOS`, `FCONTACTOS` y los auxiliares. Queda contrastar las operaciones y las validaciones sobre un proveedor elegible. [Proveedores](modules/accounts-payable/suppliers.md) |
+| Clientes | Datos fiscales → Act. | Falta la integración de catálogo fiscal y un caso para confirmar sus efectos en la ficha. [Requisitos fiscales](modules/accounts-receivable/fiscal-integration-requirements.md) |
+| Compras | Editar recepción, Eliminar recepción | Falta probar cuándo se habilitan en German y cómo afectan al enlace con la orden, al cargo del proveedor y al inventario. **Cancelar recepción** ya tiene una reversión con esos efectos verificados. [Recepciones](modules/purchasing/purchase-receptions.md) |
+| Inventarios | Documentos → Imprimir, CT | Falta identificar el formato de impresión. **CT** no mostró un panel para la entrada `EI1981`. **Comentarios** se comprobó como consulta en tres folios. [Documentos de inventario](modules/inventories/movement-documents.md) |
+| Ventas | Encuentra producto → Alternos, Foto, Matriz de fotos, Familias. Facturación → Cajas, Edita pzas y operaciones de los sumarios | La captura de Encuentra producto cubre la búsqueda y selección. Hace falta confirmar el efecto de sus botones secundarios. En Facturación se consultan los datos de los paneles. Quedan por verificar los casos que admiten escritura y su efecto en las piezas y el inventario. [Pedidos](modules/sales/orders-behaviors-new-version.md), [Facturación](modules/sales/invoices.md) |
+
 ## Precedencia práctica
 
 AGENTS y solicitud actual → documento específico vigente del módulo → composición/código/tests actuales → capturas verificadas de su versión. Los historiales explican decisiones, pero pueden contener párrafos superados. Registrar discrepancias, no borrar evidencias anteriores ni ocultarlas cambiando etiquetas de procedencia.

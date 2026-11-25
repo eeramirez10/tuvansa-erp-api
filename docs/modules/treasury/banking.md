@@ -220,6 +220,7 @@ En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` 
 | Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
 | Conciliar / Tránsito | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/transit` | Lectura adaptada de `FBANMOV`, `FBENC` y `FPOLIZA`. Escritura derivada en `bank_reconciliation_transit` con el mismo bloqueo por cuenta que **Registrar** |
 | Conciliar / Filtra tránsito | Operación en pantalla sobre el mismo GET | Muestra sólo las partidas con `T = *` |
+| Conciliar / Imprimir Póliza | `GET /api/accounting/policies/:id` | `EBANCO#4/1 → MPASIVOS/21`. Carga la póliza vinculada a la partida enfocada y abre su impresión |
 | Conciliar / Registrar | `POST /api/treasury/bank-accounts/:id/actions/reconciliation` | SQL derivado. Registra un corte en `bank_reconciliations` y las partidas en `bank_reconciliation_movements` en la misma transacción |
 | Conciliar / Cancelar | Cerrar la ventana | Descarta la selección |
 
@@ -259,3 +260,20 @@ marca y corte sobre el mismo cargo se serializaron. La marca ganó y el
 corte devolvió conflicto sin modificar el saldo bancario. Al quitar la
 marca, el corte se registró y un nuevo intento de marcar devolvió
 conflicto. Se retiraron los registros temporales.
+
+### Acciones al pie de Conciliar
+
+**Imprimir Póliza** toma el `POSEQ` de la partida enfocada. Chromium abrió
+la impresión de una póliza histórica de la cuenta `1102100001` y mostró
+folio, cuentas e importes. La prueba interceptó el diálogo de impresión.
+German de pruebas mostró el envío de la póliza a `MPASIVOS/21` en
+`closure-conciliar-print-policy-proc1.png`.
+
+**Imprimir Cheque** llama a `MBANCO/39` con el formato `BREPORTE`. Las dos
+cuentas de prueba consultadas tienen el formato vacío. **FP** abrió
+**Cierre de período** con la fecha de la partida enfocada en **Fecha a
+cerrar**. Se canceló la ventana. Quedan por confirmar el campo que cambia
+y las condiciones de guardado. **Detalle** se pulsó con una partida
+histórica enfocada y esa combinación no mostró una edición. El procedimiento
+`EBANCO#4/38` contiene escritura de comentarios en `FPOLIZA` y
+`FBANMOV`, pendiente de vincular con ese control.

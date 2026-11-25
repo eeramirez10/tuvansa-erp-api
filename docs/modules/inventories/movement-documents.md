@@ -41,7 +41,7 @@ o un documento web puede omitir ese campo. La consulta conserva `DFECHA`
 como fecha para que MySQL 5.1 la devuelva en formato ISO. **CT** no mostró
 un panel para la entrada `EI1981`.
 
-## Documentos → Imprimir y CT
+## Documentos → Imprimir
 
 **Imprimir** controla el permiso `EINV#24/495` en German, carga el `DSEQ`
 actual y llama a `MFACT/21`. La variante con Shift envía el reporte a
@@ -75,11 +75,13 @@ desde Documentos y ejecutó Imprimir para `SI1148`. El 25 de noviembre de 2026, 
 partidas positivas y dos negativas. Queda pendiente verificar qué partidas
 y totales presenta el formato `QTUVANSA007` en German para traspasos.
 
-**CT** pide el permiso `EFACT#13/38` y abre `EFACT#6AA`, el formato
+### Evidencia histórica de CT
+
+La consulta por color y talla queda fuera del alcance vigente de TUVANSA
+México. **CT** pide el permiso `EFACT#13/38` y abre `EFACT#6AA`, el formato
 de factura por color y talla. La consulta histórica de México no encontró
 partidas vigentes de EI, SI o TR asociadas a un producto con `FINV.ICT`
-activo. German tampoco mostró un panel al pulsar CT con `EI1981`. La
-habilitación depende de verificar el flujo con un folio de color y talla.
+activo. German tampoco mostró un panel al pulsar CT con `EI1981`.
 
 ## Prueba de cancelación en Omnis 7
 

@@ -71,6 +71,10 @@ conciliación y reversión se realizaron con datos temporales en PostgreSQL
 de pruebas. Las páginas de cada módulo registran sus efectos y los casos
 confirmados en German.
 
+El alcance vigente para TUVANSA México excluye los flujos de color y
+talla, incluidos los controles y consultas CT asociados, así como cajas
+y empaque. Esta exclusión aplica a implementación y verificación.
+
 | Módulo | Controles pendientes | Evidencia o dato que falta |
 | --- | --- | --- |
 | Bancos | Conciliar → Imprimir Cheque | **FP** guarda `POPOSTFECHA` de una póliza histórica y la muestra en Conciliar, Auxiliar y Pólizas. **Detalle** consulta el auxiliar de la partida por `FAX.BASEQ`. **Imprimir Cheque** requiere una partida mexicana en una cuenta con `BREPORTE`. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
@@ -78,8 +82,8 @@ confirmados en German.
 | Proveedores | Contactos → Cambio | **Guardar todos**, Eventos alta/cambio/baja, Contactos alta/baja, Cambio en Varios y **Agrupar** están implementados en PostgreSQL. Varios incluye los tres ID Banamex seleccionables. El procedimiento nativo de Contactos → Cambio apunta a `FSUCURSALES` y requiere un caso válido para confirmarlo. [Proveedores](modules/accounts-payable/suppliers.md) |
 | Clientes | Datos fiscales → Act. | La sesión de respaldo de México no mostró Verifica fiscal. Queda por confirmar que Act. actualice un catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
-| Inventarios | Documentos → Imprimir TR y CT | **Imprimir** tiene vista previa para EI y SI con las especificaciones de los formatos. German devolvió `E101201` para `QTUVANSA007`, lo que impidió verificar las partidas y totales de TR. El respaldo carece de folios EI, SI o TR vigentes con color y talla para CT. [Documentos de inventario](modules/inventories/movement-documents.md) |
-| Ventas | Matriz de fotos y cálculo libre de Familias. Facturación → Cajas y sumarios | **Alternos**, **Foto**, el selector de **Familias** por catálogo y **Edita pzas** están implementados. El T.M. P bloqueó la captura de Pedidos en la sesión de respaldo y el cálculo libre de `MEMFILQUERY` requiere otra regla. Cajas se abrió sin datos de empaque. Los sumarios requieren un ticket, un documento de traspaso o insumos del colector según el procedimiento. [Pedidos](modules/sales/orders-behaviors-new-version.md), [Facturación](modules/sales/invoices.md) |
+| Inventarios | Documentos → Imprimir TR | **Imprimir** tiene vista previa para EI y SI con las especificaciones de los formatos. German devolvió `E101201` para `QTUVANSA007`, lo que impidió verificar las partidas y totales de TR. [Documentos de inventario](modules/inventories/movement-documents.md) |
+| Ventas | Matriz de fotos y cálculo libre de Familias. Facturación → sumarios | **Alternos**, **Foto**, el selector de **Familias** por catálogo y **Edita pzas** están implementados. El T.M. P bloqueó la captura de Pedidos en la sesión de respaldo y el cálculo libre de `MEMFILQUERY` requiere otra regla. Los sumarios en alcance requieren un ticket, un documento de traspaso o insumos del colector según el procedimiento. [Pedidos](modules/sales/orders-behaviors-new-version.md), [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica
 

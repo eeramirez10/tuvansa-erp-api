@@ -258,14 +258,6 @@ siguió en −6 y la lectura de MySQL conservó `AIPZAS` vacío.
 
 El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
 
-- **Cajas** abrió Empaque en `FA25675` con el resumen, la lista y el detalle
-  vacíos. `EFACT#13/23` llama a `EFACTEMP/100(kTrue,DNUM)`. Las lecturas
-  `/121`, `/190` y `/191` usan `FYG` con `EMP_LTD_F_<DNUM>` y resuelven los
-  detalles `EMP_EMP_<ID>.<n>`. **Generar** requiere `EFACTEMP/131`, pide la
-  configuración de distribución en `EFACTEMPGENM/100` y toma partidas positivas.
-  La copia histórica carece de registros `EMP_LTD_` para validar la distribución
-  de empaques existente y la regeneración. El panel web conserva su consulta de
-  contexto `FCAJAS` mientras se verifica un documento con empaques.
 - **Tiket > Factura** llama a `MFACT/86`. En México `FTIPMV` contiene la
   conversión `FA → FE`. El procedimiento valida la partida fiscal en `/322`,
   reasigna el folio y recalcula totales, saldos y movimientos. Falta una remisión
@@ -291,3 +283,14 @@ permanecen deshabilitadas durante la migración de lectura.
 Los requests reproducibles están en `http/sales/invoices.http`. La evidencia de
 captura se documenta en `invoices-capture.md`; el registro crudo y las capturas de
 pantalla permanecen en `captures/`, excluido de Git.
+
+### Evidencia histórica de Cajas y Empaque
+
+Cajas y empaque quedan fuera del alcance vigente de TUVANSA México.
+En German, **Cajas** abrió Empaque en `FA25675` con el resumen, la lista
+y el detalle vacíos. `EFACT#13/23` llama a `EFACTEMP/100(kTrue,DNUM)`.
+Las lecturas `/121`, `/190` y `/191` consultan `FYG` con
+`EMP_LTD_F_<DNUM>` y resuelven los detalles `EMP_EMP_<ID>.<n>`.
+**Generar** requiere `EFACTEMP/131`, pide la distribución en
+`EFACTEMPGENM/100` y toma partidas positivas. La copia histórica carece de
+registros `EMP_LTD_`. El panel web consulta `FCAJAS` como contexto.

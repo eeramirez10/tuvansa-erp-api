@@ -19,6 +19,20 @@ const pendingBankPolicy = "BATIPOC <> 0 AND POEST = 0";
 
 export const isLegacyBankMovementId = (id: number) => id > 0 && id <= 4_294_967_295;
 
+export async function readLegacyBankPostdateAccounts(companyId: number, accountId: number, movementId: number, policyId: number) {
+  if (![movementId, policyId].every(isLegacyBankMovementId)) return [];
+  const [rows] = await legacyMysqlPool.execute<(RowDataPacket & { accountId: number })[]>(
+    `SELECT DISTINCT related.BSEQ AS accountId
+       FROM FBANMOV picked JOIN FPOLIZA p ON p.POSEQ=picked.POSEQ
+       JOIN FBANMOV related ON related.POSEQ=p.POSEQ
+       WHERE picked.BASEQ=? AND picked.BSEQ=? AND p.POSEQ=? AND p.POCIA=? AND p.POEST=0
+         AND picked.BAOK<>'X' AND picked.BATIPOC<>0 AND related.BSEQ>0
+       ORDER BY related.BSEQ`,
+    [movementId, accountId, policyId, companyId],
+  );
+  return rows.map((row) => Number(row.accountId));
+}
+
 export async function readLegacyBankReconciliationMovements(companyId: number, accountId: number, ids: number[]) {
   if (!ids.length) return [];
   const [rows] = await legacyMysqlPool.execute<(RowDataPacket & { id: number; date: string; amount: number; inTransit: string; applied: number })[]>(

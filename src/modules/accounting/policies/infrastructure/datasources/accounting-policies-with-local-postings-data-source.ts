@@ -12,7 +12,7 @@ import {
   isLocalPurchaseExpenseCancellationId, isLocalPurchaseReceptionCancellationId, isLocalSupplierPaymentReversalId,
   purchaseExpenseCancellationsAvailable, purchaseReceptionCancellationsAvailable, supplierPaymentReversalsAvailable,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
-import { bankReconciliationsAvailable, joinBankReconciliation, readLegacyBankSettlements } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
+import { bankReconciliationsAvailable, joinBankReconciliation, readBankPostdates, readLegacyBankSettlements } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
 import type { PolicyClassificationsStorage } from '../../domain/datasources/policy-classifications-storage.js';
@@ -301,19 +301,27 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
     private readonly classifications: PolicyClassificationsStorage = new PostgresPolicyClassifications(),
   ) {}
 
-  private async withClassifications(policies: AccountingPolicy[]) {
+  private async withPolicyOverrides(policies: AccountingPolicy[]) {
     const entries = policies.map((policy) => policy.toPrimitives());
-    const changes = await this.classifications.find(entries);
+    const [changes, postdates] = await Promise.all([
+      this.classifications.find(entries),
+      readBankPostdates(1, entries.filter(({ company, id }) => company === 1 && !isLocalPolicyId(id)).map(({ id }) => id)),
+    ]);
     const byId = new Map(changes.map((change) => [change.id, change]));
     return entries.map((entry, index) => {
       const change = byId.get(entry.id);
-      if (change?.number !== entry.number) return policies[index]!;
-      return AccountingPolicy.create({ ...entry, classifications: [change.compositeCode, ...entry.classifications.slice(1)] });
+      const postdate = entry.company === 1 ? postdates.get(entry.id) : undefined;
+      if (change?.number !== entry.number && !postdate) return policies[index]!;
+      return AccountingPolicy.create({
+        ...entry,
+        ...(change?.number === entry.number ? { classifications: [change.compositeCode, ...entry.classifications.slice(1)] } : {}),
+        ...(postdate ? { postDate: postdate.postDate } : {}),
+      });
     });
   }
 
-  private async projectClassifications(policy: AccountingPolicy | null) {
-    return policy ? (await this.withClassifications([policy]))[0]! : null;
+  private async projectPolicyOverrides(policy: AccountingPolicy | null) {
+    return policy ? (await this.withPolicyOverrides([policy]))[0]! : null;
   }
 
   private async projectLegacy(policy: AccountingPolicy | null) {
@@ -340,14 +348,14 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
   }
 
   async findById(id: number) {
-    if (!isLocalPolicyId(id)) return this.projectClassifications(await this.projectLegacy(await this.legacy.findById(id)));
+    if (!isLocalPolicyId(id)) return this.projectPolicyOverrides(await this.projectLegacy(await this.legacy.findById(id)));
     const local = await this.record('id', id);
-    return this.projectClassifications(local ? await policyWithMovements(local) : null);
+    return this.projectPolicyOverrides(local ? await policyWithMovements(local) : null);
   }
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
-    return this.projectClassifications(local ? await policyWithMovements(local) : await this.projectLegacy(await this.legacy.findByNumber(number)));
+    return this.projectPolicyOverrides(local ? await policyWithMovements(local) : await this.projectLegacy(await this.legacy.findByNumber(number)));
   }
 
   private searchLocal(criteria: AccountingPolicySearchCriteria, filtered: boolean, offset: number, limit: number) {
@@ -397,13 +405,13 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
     ]);
     if (local.total === 0) {
       const legacy = await this.legacy.search(criteria, appliedHere);
-      return { ...legacy, items: await this.withClassifications(legacy.items) };
+      return { ...legacy, items: await this.withPolicyOverrides(legacy.items) };
     }
     if (!filtered) {
       // New local postings precede the historical ledger in the default order.
       const legacy = await this.legacy.search({ ...criteria, offset: Math.max(offset - local.total, 0), limit: limit - local.items.length }, appliedHere);
       return {
-        items: await this.withClassifications([...local.items.map((header) => localPolicy(header)), ...legacy.items]),
+        items: await this.withPolicyOverrides([...local.items.map((header) => localPolicy(header)), ...legacy.items]),
         total: local.total + legacy.total,
       };
     }
@@ -419,7 +427,7 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       }),
     ].sort((left, right) => comparePolicyNumbers(left.number, right.number) || left.id - right.id);
     return {
-      items: await this.withClassifications(merged.slice(offset - legacyOffset, offset + limit - legacyOffset).map(({ entity }) => entity)),
+      items: await this.withPolicyOverrides(merged.slice(offset - legacyOffset, offset + limit - legacyOffset).map(({ entity }) => entity)),
       total: local.total + legacy.total,
     };
   }
@@ -444,12 +452,12 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       this.legacy.findAdjacentByNumber(number, direction),
     ]);
 
-    if (!local) return this.projectClassifications(await this.projectLegacy(legacy));
+    if (!local) return this.projectPolicyOverrides(await this.projectLegacy(legacy));
     if (legacy) {
       const comparison = comparePolicyNumbers(local.number, legacy.toPrimitives().number);
-      if (previous ? comparison < 0 : comparison > 0) return this.projectClassifications(await this.projectLegacy(legacy));
+      if (previous ? comparison < 0 : comparison > 0) return this.projectPolicyOverrides(await this.projectLegacy(legacy));
     }
-    return this.projectClassifications(await policyWithMovements(local));
+    return this.projectPolicyOverrides(await policyWithMovements(local));
   }
 
   async getClassifications(id: number): Promise<AccountingPolicyClassificationsResult | null> {

@@ -1,5 +1,6 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import type { BankPostdateResult } from '../../domain/datasources/bank-reconciliation-data-source.js';
 
 interface BankReconciliationState {
   delta: number;
@@ -7,6 +8,26 @@ interface BankReconciliationState {
 }
 
 const empty: BankReconciliationState = { delta: 0, lastStatementDate: null };
+
+export async function readBankPostdates(companyId: number, policyIds: number[]) {
+  if (!postgresConfigured() || !policyIds.length) return new Map<number, BankPostdateResult>();
+  let client: PostgresClient | undefined;
+  try {
+    client = await connectPostgres();
+    const { rows: [table] } = await client.query<{ available: boolean }>(
+      "SELECT to_regclass('tuvansa.bank_policy_postdates') IS NOT NULL AS available",
+    );
+    if (!table?.available) return new Map<number, BankPostdateResult>();
+    const { rows } = await client.query<BankPostdateResult>(
+      `SELECT policy_id::float8 AS "policyId",revision,post_date::text AS "postDate"
+       FROM tuvansa.bank_policy_postdates WHERE company_id=$1 AND policy_id=ANY($2::bigint[])`,
+      [companyId, policyIds],
+    );
+    return new Map(rows.map((row) => [row.policyId, row]));
+  } catch {
+    throw new ApplicationError('No fue posible consultar la fecha de posfechado.', 'BANK_POSTDATE_POSTGRES_UNAVAILABLE', 503);
+  } finally { client?.release(); }
+}
 
 export async function readLegacyBankSettlements(accountId: number | null, movementIds: number[] | null = null) {
   if (!postgresConfigured() || movementIds?.length === 0) return [];

@@ -10,7 +10,7 @@ import { activeManualPolicyLines, manualLineSettlement, manualPolicyAffectsAccou
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
 import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
-import { bankReconciliationsAvailable, joinBankReconciliation, readBankReconciliationState, readLegacyBankSettlements } from './bank-reconciliation-reads.js';
+import { bankReconciliationsAvailable, joinBankReconciliation, readBankPostdates, readBankReconciliationState, readLegacyBankSettlements } from './bank-reconciliation-reads.js';
 import { readBankTransit } from './bank-transit-reads.js';
 import { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 import { isLegacyBankMovementId, LegacyMysqlBankPanelsDataSource, readLegacyBankStatementDate, sumBankPanelColumn } from './legacy-mysql-bank-panels-data-source.js';
@@ -164,9 +164,11 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const panelOptions = { ...options, fiscalYear };
     const unapplied = key === 'unapplied-auxiliary';
     const pending = pendingReconciliation(key);
+    const manual = key === 'reconciliation';
     const canSettle = pending && postgresConfigured() && base.summary?.transitEligible === true;
     const legacyRows = base.items as Record<string, unknown>[];
-    const [payments, collections, transfers, journals, reconciliation, transit, settled, legacyStatementDate, appliedHere] = await Promise.all([
+    const legacyPolicyIds = [...new Set(legacyRows.map(({ policyId }) => Number(policyId)).filter(isLegacyBankMovementId))];
+    const [payments, collections, transfers, journals, reconciliation, transit, settled, legacyStatementDate, appliedHere, postdates] = await Promise.all([
       key === 'deposits' || unapplied ? [] : this.paymentRows(id, key, panelOptions),
       key === 'payments' || unapplied ? [] : this.collectionRows(id, key, panelOptions),
       unapplied ? [] : this.transferRows(id, key, panelOptions),
@@ -175,9 +177,8 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       pendingReconciliation(key) ? readBankTransit(1, id) : [],
       pending || key === 'auxiliary' ? readLegacyBankSettlements(id) : [],
       canSettle ? readLegacyBankStatementDate(1, id) : null,
-      unapplied || pending || key === 'authorization-review' ? readAppliedHistoricalPolicies(
-        [...new Set(legacyRows.map(({ policyId }) => Number(policyId)).filter(isLegacyBankMovementId))],
-      ) : [],
+      unapplied || pending || key === 'authorization-review' ? readAppliedHistoricalPolicies(legacyPolicyIds) : [],
+      manual || key === 'auxiliary' ? readBankPostdates(1, legacyPolicyIds) : new Map(),
     ]);
     const webJournals = journals.filter(({ movementId }) => !isLegacyBankMovementId(movementId));
     const local = [...payments, ...collections, ...transfers, ...webJournals].sort((a, b) =>
@@ -185,7 +186,7 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     const summary = { ...base.summary };
     if (reconciliation?.lastStatementDate) summary.lastStatementDate = reconciliation.lastStatementDate;
     if (legacyStatementDate) summary.lastLegacyStatementDate = legacyStatementDate;
-    if (!local.length && !pending && !settled.length && !unapplied && !appliedHere.length) return base;
+    if (!local.length && !pending && !settled.length && !unapplied && !appliedHere.length && !postdates.size) return base;
     const charges = local.reduce((total, { charge }) => total + charge, 0);
     const credits = local.reduce((total, { credit }) => total + credit, 0);
     if (key === 'auxiliary' || unapplied || key === 'payments' || key === 'deposits') {
@@ -200,6 +201,7 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     if (webJournals.length || appliedHere.length || historyForAuxiliary.length) source.push('manual_accounting_policy_lines');
     if (transit.length) source.push('bank_reconciliation_transit');
     if (settled.length) source.push('bank_reconciliation_movements');
+    if (postdates.size) source.push('bank_policy_postdates');
     const settledDates = new Map(settled.map(({ movementId, statementDate }) => [movementId, statementDate]));
     const appliedIds = new Set(appliedHere);
     const historical = legacyRows.flatMap<Record<string, unknown>>(({ applyCandidate, ...row }) => {
@@ -209,7 +211,12 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       }
       const statementDate = settledDates.get(Number(row.movementId));
       if (statementDate && pending) return [];
-      return [{ ...row, ...(statementDate ? { reconciled: 'X', statementDate } : {}), ...(applied ? { applied: 1 } : {}) }];
+      const saved = postdates.get(Number(row.policyId));
+      return [{
+        ...row, ...(statementDate ? { reconciled: 'X', statementDate } : {}), ...(applied ? { applied: 1 } : {}),
+        ...(saved ? { postdatedAt: saved.postDate } : {}),
+        ...(manual && canSettle && isLegacyBankMovementId(Number(row.policyId)) ? { postdateRevision: saved?.revision ?? 0 } : {}),
+      }];
     });
     let items = [...historical, ...local] as Record<string, unknown>[];
     if (unapplied) {
@@ -217,7 +224,6 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       summary.credits = money(sumBankPanelColumn(items, 'credit'));
       summary.balance = money(Number(summary.charges) - Number(summary.credits));
     }
-    const manual = key === 'reconciliation';
     if (pending) {
       const marks = new Map(transit.map((mark) => [mark.movementId, mark.inTransit]));
       items = items.map((row) => {
@@ -240,7 +246,8 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
       delete summary.transitEligible;
     }
     const panel = { ...base, available: true, source,
-      readOnly: manual || unapplied ? !items.some((row) => row.canChangeTransit || row.canReconcile || row.canApplyPolicy) : base.readOnly,
+      readOnly: manual || unapplied ? !items.some((row) =>
+        row.canChangeTransit || row.canReconcile || row.canApplyPolicy || row.postdateRevision !== undefined) : base.readOnly,
       items, summary };
     delete panel.reason;
     return panel;

@@ -239,6 +239,7 @@ En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` 
 | Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura histórica y SQL derivado de `supplier_payments`, `customer_collections`, `bank_transfer_movements` y `bank_reconciliation_movements`. Incluye las partidas históricas elegibles por `BASEQ` |
 | Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
 | Conciliar / Tránsito | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/transit` | Lectura adaptada de `FBANMOV`, `FBENC` y `FPOLIZA`. Escritura derivada en `bank_reconciliation_transit` con el mismo bloqueo por cuenta que **Registrar** |
+| Conciliar / FP | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/postdate` | Fecha de posfechado de una póliza histórica enfocada. Escritura derivada en `bank_policy_postdates`, bajo los bloqueos por cuenta y con revisión y clave de reintento |
 | Conciliar / Filtra tránsito | Operación en pantalla sobre el mismo GET | Muestra sólo las partidas con `T = *` |
 | Conciliar / Imprimir Póliza | `GET /api/accounting/policies/:id` | `EBANCO#4/1 → MPASIVOS/21`. Carga la póliza vinculada a la partida enfocada y abre su impresión |
 | Conciliar / Registrar | `POST /api/treasury/bank-accounts/:id/actions/reconciliation` | SQL derivado. Registra un corte en `bank_reconciliations` y las partidas en `bank_reconciliation_movements` en la misma transacción |
@@ -313,11 +314,36 @@ folio, cuentas e importes. La prueba interceptó el diálogo de impresión.
 German de pruebas mostró el envío de la póliza a `MPASIVOS/21` en
 `closure-conciliar-print-policy-proc1.png`.
 
-**Imprimir Cheque** llama a `MBANCO/39` con el formato `BREPORTE`. Las dos
-cuentas de prueba consultadas tienen el formato vacío. **FP** abrió
-**Cierre de período** con la fecha de la partida enfocada en **Fecha a
-cerrar**. Se canceló la ventana. Quedan por confirmar el campo que cambia
-y las condiciones de guardado. **Detalle** se pulsó con una partida
-histórica enfocada y esa combinación no mostró una edición. El procedimiento
-`EBANCO#4/38` contiene escritura de comentarios en `FPOLIZA` y
-`FBANMOV`, pendiente de vincular con ese control.
+**FP** abre **Cierre de período** y carga la fecha de posfechado de la
+póliza enfocada. En la descarga de procedimientos de German
+`20261125-EBANCO6-PROCEDURES.txt`, `EBANCO#6/30` comprueba el acceso
+`MBANCO61`, busca `FPOLIZA` por `POSEQ` y guarda `MEMFAL` en
+`POPOSTFECHA`. La sesión de pruebas abrió el diálogo y se canceló.
+`/240` lista las partidas de la empresa y período activos con
+`BAOK<>'X'` y `BATIPOC<>0`. `/411` usa `POFECHA` para registrar
+anteriores, y `/412` modifica el saldo bancario y la marca `BAOK`.
+
+El botón web FP se habilita para partidas históricas de la lista en las
+cuentas de México en pesos habilitadas para conciliar. Valida la relación
+`BSEQ`/`BASEQ`/`POSEQ` y la revisión, adquiere el bloqueo de conciliación
+de cada cuenta vinculada en orden de ID, y registra el cambio por
+`POSEQ` junto con su comprobante de reintento. Conciliar, Auxiliar y
+Pólizas muestran la nueva fecha. El efecto se limita a `POPOSTFECHA`.
+Las fechas contables, importes, marcas y cortes conservan su valor. Los
+asientos creados exclusivamente en PostgreSQL quedan fuera de este
+flujo de partidas históricas. En Chromium, FP cambió la fecha de
+posfechado de `112502-0126` (`POSEQ 487185`, `BASEQ 1895547`) del
+24 al 26 de febrero de 2025. Se comprobó la proyección en Conciliar,
+Auxiliar y Pólizas y se eliminó el PostgreSQL temporal al cerrar la
+prueba. La prueba de almacenamiento cubre dos
+solicitudes concurrentes, revisión vencida, reintento y reversión
+completa si falla el registro de la solicitud.
+
+**Imprimir Cheque** sigue pendiente. `EBANCO#6/26` llama a
+`MBANCO/39 → /35`, que para TUVANSA usa el formato `BREPORTE`. Las
+siete cuentas con formato en el histórico tienen movimientos de otras
+empresas. Se requiere una partida elegible de México con formato para
+verificar la vista previa. **Detalle** sigue pendiente. En la partida
+enfocada no apareció una ventana de detalle. `EBANCO#6/27` abre
+`EBANCO#15` y `/28` filtra las marcas de tránsito. Falta confirmar la
+asociación del botón visible y el resultado de `EBANCO#15`.

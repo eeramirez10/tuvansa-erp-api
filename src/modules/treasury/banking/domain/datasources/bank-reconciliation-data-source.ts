@@ -43,9 +43,28 @@ export interface BankTransitCommand extends BankReconciliationAccountCommand {
   input: BankTransitInput;
 }
 
+export interface BankPostdateInput {
+  movementId: number;
+  policyId: number;
+  revision: number;
+  postDate: string | null;
+  requestKey: string;
+}
+
+export interface BankPostdateResult {
+  policyId: number;
+  revision: number;
+  postDate: string | null;
+}
+
+export interface BankPostdateCommand extends BankReconciliationAccountCommand {
+  input: BankPostdateInput;
+}
+
 export interface BankReconciliationDataSource {
   writable(): boolean;
   findRequest(companyId: number, requestKey: string, fingerprint: string): Promise<BankReconciliationResult | null>;
   commit(command: BankReconciliationCommand): Promise<BankReconciliationResult>;
   setTransit(command: BankTransitCommand): Promise<BankTransitInput>;
+  setPostdate(command: BankPostdateCommand): Promise<BankPostdateResult>;
 }

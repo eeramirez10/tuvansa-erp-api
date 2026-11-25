@@ -36,3 +36,15 @@ Content-Type: application/json
   "movementId": 728980,
   "inTransit": true
 }
+
+### Banco / Conciliar / FP. Tomar movementId, policyId y postdateRevision de la partida histórica enfocada.
+PATCH {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation/postdate
+Content-Type: application/json
+
+{
+  "requestKey": "{{$guid}}",
+  "movementId": 1895547,
+  "policyId": 487185,
+  "revision": 0,
+  "postDate": "2025-02-26"
+}

@@ -68,7 +68,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     /^\/accounts-receivable\/clients\/[1-9]\d*\/collections\/[1-9]\d*\/reversal$/.test(path);
   const writeBankReconciliation = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/reconciliation$/.test(path)) ||
-     (req.method === 'PATCH' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/reconciliation\/transit$/.test(path)));
+     (req.method === 'PATCH' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/reconciliation\/(transit|postdate)$/.test(path)));
   const bankCatalogMutations = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && path === '/treasury/bank-accounts') ||
      (['PATCH', 'DELETE'].includes(req.method) && /^\/treasury\/bank-accounts\/[1-9]\d*$/.test(path)));

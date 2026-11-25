@@ -115,3 +115,56 @@ it('reconciles applied income and expense atomically against the statement', asy
     await db.close();
   }
 }, 20_000);
+
+it('serializes two FP edits of the same policy and rolls back its date with the request record', async () => {
+  const db = new PGlite();
+  let available = Promise.resolve();
+  let failRequest = false;
+  const connect: PostgresConnectionFactory = async () => {
+    const previous = available;
+    let release!: () => void;
+    available = new Promise((resolve) => { release = resolve; });
+    await previous;
+    return {
+      async query<T extends object>(sql: string, values?: unknown[]) {
+        if (failRequest && sql.startsWith('INSERT INTO tuvansa.bank_policy_postdate_requests')) throw new Error('fixture failure');
+        if (values) return db.query<T>(sql, values);
+        const results = await db.exec(sql);
+        return { rows: (results.at(-1)?.rows ?? []) as T[] };
+      },
+      release,
+    };
+  };
+  try {
+    const storage = new PostgresBankReconciliations(connect, () => true, undefined, undefined, undefined,
+      async (companyId, accountId, movementId, policyId) =>
+        companyId === 1 && policyId === 331 && ((accountId === 22 && movementId === 112) || (accountId === 44 && movementId === 114))
+          ? [22, 44] : [],
+    );
+    const save = (bankAccountId: number, input: Parameters<typeof storage.setPostdate>[0]['input']) =>
+      storage.setPostdate({ companyId: 1, bankAccountId, input, bankOpeningBalance: async () => 1000 });
+    const first = { policyId: 331, movementId: 112, revision: 0, postDate: '2025-02-01', requestKey: crypto.randomUUID() };
+    await expect(save(44, first)).rejects.toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE' });
+    const other = { ...first, movementId: 114, postDate: '2025-02-02', requestKey: crypto.randomUUID() };
+    const results = await Promise.allSettled([save(22, first), save(44, other)]);
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(({ status }) => status === 'rejected')).toMatchObject({ reason: { code: 'BANK_POSTDATE_STALE' } });
+    const [winner, winnerAccount] = results[0]?.status === 'fulfilled' ? [first, 22] as const : [other, 44] as const;
+    const saved = { policyId: 331, revision: 1, postDate: winner.postDate };
+    await expect(save(winnerAccount, winner)).resolves.toEqual(saved);
+    await expect(save(winnerAccount, { ...winner, postDate: null })).rejects.toMatchObject({ code: 'BANK_POSTDATE_REQUEST_CONFLICT' });
+
+    const clear = { ...other, requestKey: crypto.randomUUID(), revision: 1, postDate: null };
+    const dates = () => db.query('SELECT revision,post_date::text AS "postDate" FROM tuvansa.bank_policy_postdates');
+    failRequest = true;
+    await expect(save(44, clear)).rejects.toMatchObject({ code: 'BANK_RECONCILIATION_POSTGRES_UNAVAILABLE' });
+    expect((await dates()).rows).toEqual([{ revision: 1, postDate: saved.postDate }]);
+    failRequest = false;
+    await expect(save(44, clear)).resolves.toEqual({ policyId: 331, revision: 2, postDate: null });
+    expect((await dates()).rows).toEqual([{ revision: 2, postDate: null }]);
+    expect((await db.query('SELECT id FROM tuvansa.bank_reconciliations')).rows).toEqual([]);
+    expect((await db.query('SELECT movement_id FROM tuvansa.bank_reconciliation_transit')).rows).toEqual([]);
+  } finally {
+    await db.close();
+  }
+}, 20_000);

@@ -36,6 +36,10 @@ const reconciliationSchema = z.strictObject({
 });
 const classifiersSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.string().trim().max(5)).length(9) });
 const transitSchema = z.strictObject({ movementId: z.int().positive(), inTransit: z.boolean() });
+const postdateSchema = z.strictObject({
+  movementId: z.int().positive(), policyId: z.int().positive(), revision: z.int().nonnegative(), requestKey: z.uuid(),
+  postDate: z.iso.date().nullable(),
+});
 const budgetsSchema = z.strictObject({ revision: z.int().nonnegative(), values: z.array(z.number()).length(12) });
 const reviewSchema = z.strictObject({ revision: z.int().nonnegative(), movementIds: z.array(z.int().positive()).min(1),
   mark: z.enum(['', '+', '*']).default('*') });
@@ -133,6 +137,14 @@ export class BankAccountsController {
     try {
       const { bankAccountId } = idParamsSchema.parse(request.params);
       const data = await this.captureReconciliation.setTransit(1, bankAccountId, transitSchema.parse(request.body));
+      response.json({ data });
+    } catch (error) { next(error); }
+  };
+
+  setPostdate: RequestHandler = async (request, response, next) => {
+    try {
+      const { bankAccountId } = idParamsSchema.parse(request.params);
+      const data = await this.captureReconciliation.setPostdate(1, bankAccountId, postdateSchema.parse(request.body));
       response.json({ data });
     } catch (error) { next(error); }
   };

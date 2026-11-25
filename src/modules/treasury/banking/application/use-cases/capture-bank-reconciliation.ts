@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import type { BankAccountsDataSource } from '../../domain/datasources/bank-accounts-data-source.js';
-import type { BankReconciliationDataSource, BankReconciliationInput, BankTransitInput } from '../../domain/datasources/bank-reconciliation-data-source.js';
+import type { BankPostdateInput, BankReconciliationDataSource, BankReconciliationInput, BankTransitInput } from '../../domain/datasources/bank-reconciliation-data-source.js';
 import type { BankAccountLookup } from '../../domain/entities/bank-account.js';
 import { bankCanReconcile, validateReconciliationInput } from '../../domain/entities/bank-reconciliation.js';
 
@@ -32,6 +32,13 @@ export class CaptureBankReconciliation {
 
   setTransit(companyId: number, bankAccountId: number, input: BankTransitInput) {
     return this.storage.setTransit({
+      companyId, bankAccountId, input,
+      bankOpeningBalance: (lookup) => this.openingBalance(companyId, bankAccountId, lookup),
+    });
+  }
+
+  setPostdate(companyId: number, bankAccountId: number, input: BankPostdateInput) {
+    return this.storage.setPostdate({
       companyId, bankAccountId, input,
       bankOpeningBalance: (lookup) => this.openingBalance(companyId, bankAccountId, lookup),
     });

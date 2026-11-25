@@ -1,6 +1,7 @@
 import { isLocalSupplierPaymentId, supplierPaymentsAvailable } from '../../../../accounts-payable/suppliers/infrastructure/datasources/postgres-supplier-payments.js';
 import { customerCollectionsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collections-reads.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable, isLocalCustomerCollectionReversalId } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
+import { createHash } from 'node:crypto';
 import { activeManualPolicyLines, isManualPolicyLineId, manualPoliciesAvailable } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
 import { isLocalCustomerCollectionId } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { supplierPaymentReversalSql } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-reads.js';
@@ -12,14 +13,18 @@ import {
 } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import type {
-  BankReconciliationCommand, BankReconciliationDataSource, BankReconciliationMovement, BankReconciliationResult, BankTransitCommand,
+  BankPostdateCommand, BankPostdateResult, BankReconciliationCommand, BankReconciliationDataSource, BankReconciliationMovement,
+  BankReconciliationResult, BankTransitCommand,
 } from '../../domain/datasources/bank-reconciliation-data-source.js';
 import { bankCents, reconcileMovements } from '../../domain/entities/bank-reconciliation.js';
 import { bankReconciliationsAvailable, bankReconciliationState, joinBankReconciliation } from './bank-reconciliation-reads.js';
 import { bankTransfersAvailable, isLocalBankTransferMovementId } from './postgres-bank-transfers.js';
 import type { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 import { readBankTransitOn } from './bank-transit-reads.js';
-import { isLegacyBankMovementId, readLegacyBankReconciliationMovements, readLegacyBankStatementDate, readLegacyTransitMovement } from './legacy-mysql-bank-panels-data-source.js';
+import {
+  isLegacyBankMovementId, readLegacyBankPostdateAccounts, readLegacyBankReconciliationMovements,
+  readLegacyBankStatementDate, readLegacyTransitMovement,
+} from './legacy-mysql-bank-panels-data-source.js';
 
 // Derivada: guarda el corte y relaciona el asiento bancario web con su conciliación.
 const migrations = [{
@@ -59,6 +64,22 @@ const migrations = [{
     PRIMARY KEY (company_id, bank_account_id, movement_id)
   );
   CREATE INDEX bank_transit_movement ON tuvansa.bank_reconciliation_transit(company_id,movement_id);`,
+}, {
+  id: 'bank_policy_postdates',
+  sql: `CREATE TABLE tuvansa.bank_policy_postdates (
+    company_id integer NOT NULL,
+    policy_id bigint NOT NULL,
+    revision integer NOT NULL CHECK (revision > 0),
+    post_date date,
+    PRIMARY KEY (company_id,policy_id)
+  );
+  CREATE TABLE tuvansa.bank_policy_postdate_requests (
+    company_id integer NOT NULL,
+    request_key uuid NOT NULL,
+    fingerprint char(64) NOT NULL,
+    result jsonb NOT NULL,
+    PRIMARY KEY (company_id,request_key)
+  );`,
 }];
 
 const inTransit = () => new ConflictError(
@@ -86,6 +107,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     private readonly catalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>,
     private readonly legacyTransit = readLegacyTransitMovement,
     private readonly legacyCut = { movements: readLegacyBankReconciliationMovements, latest: readLegacyBankStatementDate },
+    private readonly postdateAccounts = readLegacyBankPostdateAccounts,
   ) {}
 
   writable() { return this.configured(); }
@@ -149,6 +171,51 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
         );
       }
       return input;
+    });
+  }
+
+  setPostdate({ companyId, bankAccountId, input, bankOpeningBalance }: BankPostdateCommand) {
+    const { movementId, policyId, revision, postDate, requestKey } = input;
+    const fingerprint = createHash('sha256').update(JSON.stringify([bankAccountId, movementId, policyId, revision, postDate])).digest('hex');
+    return this.transaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('bank-postdate-request:' || $1::text || ':' || lower($2::text),0))",
+        [companyId, requestKey]);
+      const { rows: [request] } = await client.query<{ fingerprint: string; result: BankPostdateResult }>(
+        'SELECT fingerprint,result FROM tuvansa.bank_policy_postdate_requests WHERE company_id=$1 AND request_key=$2',
+        [companyId, requestKey],
+      );
+      if (request) {
+        if (request.fingerprint !== fingerprint) {
+          throw new ConflictError('La solicitud de fecha ya se usó con otros datos.', 'BANK_POSTDATE_REQUEST_CONFLICT');
+        }
+        return request.result;
+      }
+      // All views of the policy share POPOSTFECHA, including movements in other bank accounts.
+      const accounts = await this.postdateAccounts(companyId, bankAccountId, movementId, policyId);
+      if (!accounts.includes(bankAccountId)) throw movementUnavailable();
+      for (const id of [...new Set(accounts)].sort((left, right) => left - right)) {
+        await lockAccount(client, companyId, id);
+      }
+      await bankOpeningBalance(this.catalog?.lookupOn(client));
+      await this.ensureUnsettled(client, [movementId]);
+      const { rows: [current] } = await client.query<{ revision: number }>(
+        'SELECT revision FROM tuvansa.bank_policy_postdates WHERE company_id=$1 AND policy_id=$2',
+        [companyId, policyId],
+      );
+      if ((current?.revision ?? 0) !== revision) {
+        throw new ConflictError('La fecha de la póliza cambió. Actualiza la consulta.', 'BANK_POSTDATE_STALE');
+      }
+      const result = { policyId, postDate, revision: revision + 1 };
+      await client.query(
+        `INSERT INTO tuvansa.bank_policy_postdates(company_id,policy_id,revision,post_date) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (company_id,policy_id) DO UPDATE SET revision=EXCLUDED.revision,post_date=EXCLUDED.post_date`,
+        [companyId, policyId, result.revision, postDate],
+      );
+      await client.query(
+        'INSERT INTO tuvansa.bank_policy_postdate_requests(company_id,request_key,fingerprint,result) VALUES ($1,$2,$3,$4)',
+        [companyId, requestKey, fingerprint, JSON.stringify(result)],
+      );
+      return result;
     });
   }
 

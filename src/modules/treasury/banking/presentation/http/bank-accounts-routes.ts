@@ -19,6 +19,7 @@ export const createBankAccountsRouter = (
   router.get('/:bankAccountId/actions/payments', controller.panel('payments'));
   router.get('/:bankAccountId/actions/auxiliary', controller.panel('auxiliary'));
   router.get('/:bankAccountId/actions/reconciliation', controller.panel('reconciliation'));
+  router.get('/:bankAccountId/actions/reconciliation/detail', controller.reconciliationDetail);
   router.post('/:bankAccountId/actions/reconciliation', controller.reconcile);
   router.patch('/:bankAccountId/actions/reconciliation/transit', controller.setTransit);
   router.patch('/:bankAccountId/actions/reconciliation/postdate', controller.setPostdate);

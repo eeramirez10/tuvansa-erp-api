@@ -67,7 +67,8 @@ o el identificador de la capa PostgreSQL. El navegador abre su diálogo de
 impresión al confirmar la vista previa. La operación es de lectura.
 
 Se comprobaron por lectura MySQL `EI1981` con `QTUVANSA007` y `SI1148`
-con `QTUVANSA002` y pedimento. El 25 de noviembre de 2026, Shift +
+con `QTUVANSA002` y pedimento. Chromium abrió ambas vistas previas
+desde Documentos y ejecutó Imprimir para `SI1148`. El 25 de noviembre de 2026, Shift +
 **Imprimir** llegó a `MFACT/21` para `EI1981`. German mostró
 `[E101201] Unable to find format QTUVANSA007` en `Set report name [TIREPNAME]`
 (`closure-20261125-inv-ei-print-preview-settled.png`). `TR0004` tiene dos

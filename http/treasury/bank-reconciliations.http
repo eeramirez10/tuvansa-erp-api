@@ -10,6 +10,9 @@
 ### Abrir Conciliar. Usar summary.bankBalance y los movementId con canReconcile.
 GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation
 
+### Auxiliar de la partida histórica enfocada con canViewDetail.
+GET {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation/detail?movementId=1896293
+
 ### Registrar el corte de prueba. Usar el saldo y los folios de la cuenta de prueba.
 POST {{baseUrl}}/treasury/bank-accounts/{{bankAccountId}}/actions/reconciliation
 Content-Type: application/json

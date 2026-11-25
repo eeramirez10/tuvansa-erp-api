@@ -16,6 +16,7 @@ export const sumBankPanelColumn = (items: Array<Record<string, unknown>>, key: s
 
 const sum = sumBankPanelColumn;
 const pendingBankPolicy = "BATIPOC <> 0 AND POEST = 0";
+const emptyReconciliationDetail = 'La partida no tiene documentos vinculados disponibles.';
 
 export const isLegacyBankMovementId = (id: number) => id > 0 && id <= 4_294_967_295;
 
@@ -115,6 +116,7 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
       case 'auxiliary': return this.getAuxiliary(bankAccountId, await this.fiscalYear(options.fiscalYear), appliedHere);
       case 'reconciliation': return this.getReconciliation(bankAccountId, accountData.balances.bank, accountData.balances.inTransit,
         bankCanReconcile(accountData, 1));
+      case 'reconciliation-detail': return this.getReconciliationDetail(bankAccountId, options.movementId);
       case 'automatic-reconciliation': return this.getAutomaticReconciliation(bankAccountId, options.asOfDate, accountData.balances.bank,
         bankCanReconcile(accountData, 1));
       case 'cost-center-ledger': return this.getCostCenterLedger(accountData.code, options.costCenter);
@@ -199,7 +201,8 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
               POFECHA AS policyDate, BAOKTRANSITO AS inTransit,
               POCHEQUE AS checkNumber, POUSR AS user, BATIPOC AS accountingType,
               FBANMOV.POSEQ AS policyId, POPOSTFECHA AS postdatedAt,
-              POAPLICADA AS applied, BACENCOS AS costCenter
+              POAPLICADA AS applied, BACENCOS AS costCenter,
+              EXISTS (SELECT 1 FROM FAX a WHERE a.BASEQ=FBANMOV.BASEQ) AS documentLinks
          FROM FBANMOV
          LEFT JOIN FBENC ON FBANMOV.BSEQ = FBENC.BSEQ
          LEFT JOIN FPOLIZA ON FBANMOV.POSEQ = FPOLIZA.POSEQ
@@ -207,10 +210,28 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
         ORDER BY BCOD, FBANMOV.BASEQ LIMIT 32767`,
       [bankAccountId],
     );
+    const items = toItems(rows).map(({ documentLinks, ...row }) => ({ ...row, canViewDetail: Number(documentLinks) === 1 }));
+    return {
+      button: 'Conciliar', section: 'actions', source: ['FBANMOV', 'FBENC', 'FPOLIZA', 'FAX'], available: true, readOnly: true, items,
+      summary: { bankBalance, inTransitBalance, transitEligible, charges: sum(items, 'charge'), credits: sum(items, 'credit') },
+    };
+  }
+
+  private async getReconciliationDetail(bankAccountId: number, movementId: number | undefined): Promise<BankPanelResponse> {
+    const [rows] = movementId && isLegacyBankMovementId(movementId) ? await legacyMysqlPool.execute<PanelRow[]>(
+      `SELECT a.ASEQ AS id,a.AFECHA AS date,a.DSEQ AS documentId,COALESCE(d.DNUM,'') AS document,
+              a.ATIPMV AS movementType,a.AREFPAG AS reference,a.ACANT AS amount,a.ADIFCAMBIAR AS exchangeDifference
+         FROM FBANMOV m JOIN FPOLIZA p ON p.POSEQ=m.POSEQ JOIN FAX a ON a.BASEQ=m.BASEQ
+         LEFT JOIN FDOC d ON d.DSEQ=a.DSEQ
+        WHERE m.BASEQ=? AND m.BSEQ=? AND m.BAOK<>'X' AND m.BATIPOC<>0 AND p.POCIA=1 AND p.POEST=0
+        ORDER BY a.ASEQ`,
+      [movementId, bankAccountId],
+    ) : [[]];
     const items = toItems(rows);
     return {
-      button: 'Conciliar', section: 'actions', source: ['FBANMOV', 'FBENC', 'FPOLIZA'], available: true, readOnly: true, items,
-      summary: { bankBalance, inTransitBalance, transitEligible, charges: sum(items, 'charge'), credits: sum(items, 'credit') },
+      button: 'Detalle', section: 'actions', source: ['FBANMOV', 'FPOLIZA', 'FAX', 'FDOC'],
+      available: items.length > 0, readOnly: true, items,
+      ...(items.length ? {} : { reason: emptyReconciliationDetail }),
     };
   }
 

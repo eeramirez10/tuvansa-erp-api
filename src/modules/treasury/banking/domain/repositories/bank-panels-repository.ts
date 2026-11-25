@@ -4,6 +4,7 @@ export type BankPanelKey =
   | 'payments'
   | 'auxiliary'
   | 'reconciliation'
+  | 'reconciliation-detail'
   | 'automatic-reconciliation'
   | 'general-ledger'
   | 'cost-center-ledger'
@@ -15,6 +16,7 @@ export type BankPanelKey =
 
 export interface BankPanelOptions {
   fiscalYear?: number | undefined;
+  movementId?: number;
   costCenter: string;
   asOfDate: string;
 }

@@ -27,6 +27,7 @@ const panelQuerySchema = z.object({
   costCenter: z.string().trim().min(1).max(3).default('1'),
   asOfDate: z.iso.date().default(new Date().toISOString().slice(0, 10)),
 });
+const detailQuerySchema = panelQuerySchema.extend({ movementId: z.coerce.number().int().positive() });
 const reconciliationSchema = z.strictObject({
   requestKey: z.uuid(),
   movementIds: z.array(z.int().positive()).min(1),
@@ -122,6 +123,14 @@ export class BankAccountsController {
       const { bankAccountId } = idParamsSchema.parse(request.params);
       const options = panelQuerySchema.parse(request.query);
       response.json(await this.getBankPanel.execute(bankAccountId, key, options));
+    } catch (error) { next(error); }
+  };
+
+  reconciliationDetail: RequestHandler = async (request, response, next) => {
+    try {
+      const { bankAccountId } = idParamsSchema.parse(request.params);
+      const options = detailQuerySchema.parse(request.query);
+      response.json(await this.getBankPanel.execute(bankAccountId, 'reconciliation-detail', options));
     } catch (error) { next(error); }
   };
 

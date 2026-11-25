@@ -240,6 +240,7 @@ En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` 
 | Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
 | Conciliar / Tránsito | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/transit` | Lectura adaptada de `FBANMOV`, `FBENC` y `FPOLIZA`. Escritura derivada en `bank_reconciliation_transit` con el mismo bloqueo por cuenta que **Registrar** |
 | Conciliar / FP | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/postdate` | Fecha de posfechado de una póliza histórica enfocada. Escritura derivada en `bank_policy_postdates`, bajo los bloqueos por cuenta y con revisión y clave de reintento |
+| Conciliar / Detalle | `GET /api/treasury/bank-accounts/:id/actions/reconciliation/detail?movementId=...` | Auxiliar de documentos enlazados por `FAX.BASEQ` a una partida histórica pendiente de esa cuenta |
 | Conciliar / Filtra tránsito | Operación en pantalla sobre el mismo GET | Muestra sólo las partidas con `T = *` |
 | Conciliar / Imprimir Póliza | `GET /api/accounting/policies/:id` | `EBANCO#4/1 → MPASIVOS/21`. Carga la póliza vinculada a la partida enfocada y abre su impresión |
 | Conciliar / Registrar | `POST /api/treasury/bank-accounts/:id/actions/reconciliation` | SQL derivado. Registra un corte en `bank_reconciliations` y las partidas en `bank_reconciliation_movements` en la misma transacción |
@@ -343,7 +344,19 @@ completa si falla el registro de la solicitud.
 `MBANCO/39 → /35`, que para TUVANSA usa el formato `BREPORTE`. Las
 siete cuentas con formato en el histórico tienen movimientos de otras
 empresas. Se requiere una partida elegible de México con formato para
-verificar la vista previa. **Detalle** sigue pendiente. En la partida
-enfocada no apareció una ventana de detalle. `EBANCO#6/27` abre
-`EBANCO#15` y `/28` filtra las marcas de tránsito. Falta confirmar la
-asociación del botón visible y el resultado de `EBANCO#15`.
+verificar la vista previa.
+
+**Detalle** ejecuta `EBANCO#6/27` y abre **Auxiliar del documento**
+(`EBANCO#15`). En `20261125-EBANCO15-PROCEDURES.txt`, `/240` carga
+los renglones `FAX` que comparten el `BASEQ` de la partida enfocada.
+Cierra la ventana si la búsqueda está vacía. El botón web se habilita
+si existen esos renglones y consulta el auxiliar de la misma cuenta
+en México. Muestra fecha, documento, tipo, referencia, importe con
+signo y diferencia cambiaria. Abrir el auxiliar es una consulta.
+En Chromium, la partida `BASEQ 1896293` de `1102100001` mostró
+17 documentos en el orden de `ASEQ`. Los saldos y el corte siguieron
+iguales. Las consultas por otra cuenta y por una partida sin vínculos
+devolvieron el auxiliar como no disponible.
+La cancelación anidada de `EBANCO#15/3` tiene otro control de acceso y
+requiere validar un caso dentro del período activo antes de habilitar
+la reversión desde el auxiliar web.

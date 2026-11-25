@@ -162,6 +162,12 @@ protección de pagos y cancelación y un fallo durante el segundo traslado.
 La consulta histórica en MySQL confirmó las variantes positivas y negativas
 AT en México. El POST opera sobre PostgreSQL.
 
+En Chromium se enfocó `RA09214`, se marcó `RA09295` y se confirmó
+**Agrupar**. El pendiente del destino pasó de 1,013.03 a 45,238.68, el
+origen salió de Saldo y el total del proveedor se mantuvo en 592,109.65.
+Movimientos mostró 44,225.65 y −44,225.65 con las referencias recíprocas.
+Se descartó el PostgreSQL temporal al cerrar la prueba.
+
 El saldo local de una recepción se obtiene restando de su cargo original los pagos vigentes de `supplier_payments`. **Saldo** conserva ambos importes y muestra los documentos web con pendiente positivo. **Movimientos** conserva el cargo de origen y muestra cada abono **PP** con su folio de cheque o transferencia y su póliza. La correspondencia del abono proviene de `EPRV#25/120`.
 
 El selector de cuenta y el registro PP usan el catálogo efectivo de Bancos.

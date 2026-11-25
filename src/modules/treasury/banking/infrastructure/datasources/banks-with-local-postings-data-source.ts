@@ -156,6 +156,11 @@ const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' ||
 
 export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanelsDataSource {
   override async getPanel(id: number, key: BankPanelKey, options: BankPanelOptions): Promise<BankPanelResponse> {
+    if (key === 'reconciliation-detail' && options.movementId
+      && (await readLegacyBankSettlements(id, [options.movementId])).length) {
+      return { button: 'Detalle', section: 'actions', source: ['bank_reconciliation_movements'], available: false, readOnly: true,
+        items: [], reason: 'La partida ya se registró en un corte.' };
+    }
     const historyForAuxiliary = key === 'auxiliary' ? await readAppliedHistoricalPolicies() : [];
     const base = await super.getPanel(id, key, options, historyForAuxiliary);
     const keys: BankPanelKey[] = ['auxiliary', 'unapplied-auxiliary', 'reconciliation', 'automatic-reconciliation', 'authorization-review', 'payments', 'deposits'];

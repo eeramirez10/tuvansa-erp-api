@@ -66,18 +66,18 @@ Los documentos de tipos XA/P, Duplicar, selección de productos y Cancún creado
 
 ## Acciones internas de TUVANSA México pendientes de confirmación
 
-Revisión del 24 de noviembre de 2026. Los ensayos de captura, cancelación,
+Revisión del 25 de noviembre de 2026. Los ensayos de captura, cancelación,
 conciliación y reversión se realizaron con datos temporales en PostgreSQL
 de pruebas. Las páginas de cada módulo registran sus efectos y los casos
 confirmados en German.
 
 | Módulo | Controles pendientes | Evidencia o dato que falta |
 | --- | --- | --- |
-| Bancos | Conciliar → Imprimir Cheque, Detalle, FP | German llama a `MBANCO/39` para el cheque, con formato `BREPORTE` vacío en las cuentas probadas. **Detalle** no abrió una edición en la partida enfocada. **FP** abre una fecha que requiere identificar la escritura y sus validaciones. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
-| Pólizas | Clasificar → Guardar, Duplicar pasivo | Los valores `POPAR1/POPAR2` y el catálogo `FAG` están identificados. Falta confirmar qué estados permiten guardar y los efectos contables de duplicar un pasivo. [Pólizas](modules/accounting/policies.md) |
-| Proveedores | Guardar clasificación, altas/cambios/bajas de Eventos y Contactos, Cambio en Varios, agrupación de documentos | Las consultas usan `FPRV`, `FEVENTOS`, `FCONTACTOS` y los auxiliares. Queda contrastar las operaciones y las validaciones sobre un proveedor elegible. [Proveedores](modules/accounts-payable/suppliers.md) |
+| Bancos | Conciliar → Imprimir Cheque | **FP** guarda `POPOSTFECHA` de una póliza histórica y la muestra en Conciliar, Auxiliar y Pólizas. **Detalle** consulta el auxiliar de la partida por `FAX.BASEQ`. **Imprimir Cheque** requiere una partida mexicana en una cuenta con `BREPORTE`. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
+| Pólizas | Duplicar pasivo | **Guardar** admite `POPAR1` del grupo 4 de `FAG` validado por German. La prueba de duplicación requiere una póliza activa en México de familia `PASIVO*` para verificar redondeo y el cargo en Saldo y Movimientos. [Pólizas](modules/accounting/policies.md) |
+| Proveedores | Contactos → Cambio y Varios → ID Banamex | **Guardar todos**, Eventos alta/cambio/baja, Contactos alta/baja, Cambio en Varios y **Agrupar** están implementados en PostgreSQL. El procedimiento nativo de Contactos → Cambio apunta a `FSUCURSALES`. Falta comprobar un caso válido y el mapa de los ID bancarios 3 y 4 de `PRVBMXID`. [Proveedores](modules/accounts-payable/suppliers.md) |
 | Clientes | Datos fiscales → Act. | Falta la integración de catálogo fiscal y un caso para confirmar sus efectos en la ficha. [Requisitos fiscales](modules/accounts-receivable/fiscal-integration-requirements.md) |
-| Compras | Editar recepción, Eliminar recepción | Falta probar cuándo se habilitan en German y cómo afectan al enlace con la orden, al cargo del proveedor y al inventario. **Cancelar recepción** ya tiene una reversión con esos efectos verificados. [Recepciones](modules/purchasing/purchase-receptions.md) |
+| Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
 | Inventarios | Documentos → Imprimir, CT | **Imprimir** tiene vista previa para EI y SI según el formato de México. Queda por comprobar qué partidas imprime TR. **CT** no mostró un panel para `EI1981` y el respaldo carece de folios EI, SI o TR vigentes con color y talla. **Comentarios** se comprobó en tres folios. [Documentos de inventario](modules/inventories/movement-documents.md) |
 | Ventas | Encuentra producto → Alternos, Foto, Matriz de fotos, Familias. Facturación → Cajas, Edita pzas y operaciones de los sumarios | La captura de Encuentra producto cubre la búsqueda y selección. Hace falta confirmar el efecto de sus botones secundarios. En Facturación se consultan los datos de los paneles. Quedan por verificar los casos que admiten escritura y su efecto en las piezas y el inventario. [Pedidos](modules/sales/orders-behaviors-new-version.md), [Facturación](modules/sales/invoices.md) |
 

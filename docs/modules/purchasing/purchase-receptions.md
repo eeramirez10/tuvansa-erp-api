@@ -167,6 +167,23 @@ reintento. La ficha RA muestra la acción mediante `cancellationAvailable`.
 El flujo se contrastó con `MRECEP/25–26,111,136–138` y `MBASE/124` en la
 biblioteca German de pruebas.
 
+| Vista | Botón | Evidencia German | Endpoint | Tablas afectadas |
+| --- | --- | --- | --- | --- |
+| Barra de Recepciones | Eliminar recepción | `MCONTROL/6 → MRECEP/25`, exportación `20261120-MCONTROL-EDITAR` | Los mismos GET y POST de **Cancelar recepción** | Póliza, movimientos, orden, existencias, capas y CxP de la cancelación vigente |
+| Barra de Recepciones | Editar recepción | `MCONTROL/7` tiene ramas para otros módulos y carece de una rama MRECEP | Las ediciones disponibles siguen en Comentarios, Cambia Prv y Piezas | Las que correspondan a cada acción |
+
+La barra ofrece **Eliminar recepción** en recepciones de orden habilitadas.
+La confirmación comparte la revisión, las validaciones y la transacción de
+la acción en la ficha. **Gastos múltiples** conserva su propia reversión en
+la ficha.
+
+Se recorrió la barra en Chromium con `RA09214` y PostgreSQL embebido. Se
+comprobó el saldo cero, la contrapartida K, la póliza balanceada por
+1,013.03, el regreso de seis unidades al pendiente de `OA05036`, la salida
+de las existencias y el cambio de saldo en la ficha del proveedor. La
+recepción hermana conservó su saldo. Evidencia
+`ev_00c894f6f911defa55621c62851df71ffff863db26b93a5924c0bf5eac7a3255`.
+
 La transacción conserva el folio, expone sus partidas K, resta las unidades
 recibidas del almacén, devuelve las cantidades al pendiente de la orden
 y revierte el pasivo y las contrapartidas contables de la recepción,

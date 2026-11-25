@@ -172,6 +172,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const code = criteria.code ?? '';
     const description = criteria.description ?? '';
     const supplierCode = criteria.supplierCode ?? '';
+    const exactCode = criteria.exactCode;
     const familyPattern = criteria.familyPattern?.replace(/[\\%_]/g, '\\$&').replace(/\*/g, '_');
     const [rows] = await legacyMysqlPool.execute<Row<CaptureProductMatch>[]>(
       `SELECT FINV.ISEQ AS id,FINV.ICOD AS code,FINV.IDESCR AS description,
@@ -184,11 +185,13 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        AND (?='' OR UPPER(FINV.IDESCR) LIKE CONCAT('%',UPPER(?),'%'))
        AND (?='' OR FINV.ICODPRV LIKE CONCAT(?,'%'))
        ${familyPattern ? "AND RPAD(COALESCE(FINV.IFAM,''),13,' ') LIKE ? AND (FINV.ICOLOR='' OR FINV.ITIPO<>1)" : ''}
+       ${exactCode ? 'AND FINV.ICOD=?' : ''}
        ORDER BY FINV.ICOD,FINV.ISEQ LIMIT ?`,
-      [warehouse, code, code, code, description, description, supplierCode, supplierCode, ...(familyPattern ? [familyPattern] : []), limit]);
+      [warehouse, code, code, code, description, description, supplierCode, supplierCode,
+        ...(familyPattern ? [familyPattern] : []), ...(exactCode ? [exactCode] : []), limit]);
     const [current, changed] = await Promise.all([
       catalogProductsById(rows.map(({ id }) => id)),
-      supplierCode || familyPattern ? [] : searchChangedCatalogProducts(code, description, limit),
+      supplierCode || familyPattern || exactCode ? [] : searchChangedCatalogProducts(code, description, limit),
     ]);
     const matches = new Map<number, CaptureProductMatch>();
     for (const row of rows) {
@@ -197,6 +200,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       const product = reference?.document;
       const updated = { ...row, available: Number(row.available), price: Number(row.price) };
       if (product) {
+        if (exactCode && product.code.trim().toUpperCase() !== exactCode.toUpperCase()) continue;
         if (code && ![product.code, product.warehouse.ean].some((value) => value.toUpperCase().startsWith(code.toUpperCase()))) continue;
         if (description && !product.description.toUpperCase().includes(description.toUpperCase())) continue;
         updated.code = product.code;

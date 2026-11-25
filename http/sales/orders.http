@@ -5,6 +5,10 @@
 @origin = http://localhost:3000
 @sessionCookie = tuvansa_session=sesion-de-prueba
 
+### Encuentra producto / Familias: cálculo ICOD='01201603' en el almacén 01
+GET {{baseUrl}}/sales/orders/capture/products?warehouse=01&familyPattern=*************&exactCode=01201603
+Cookie: {{sessionCookie}}
+
 ### Entrada inicial de la vista Pedidos (detalle directo, sin búsqueda ni COUNT)
 GET {{baseUrl}}/sales/orders/by-number/{{orderNumber}}
 

@@ -120,13 +120,21 @@ Matriz de fotos. La guía de Proscai describe la búsqueda por familias y
 fotos desde el selector de productos cuando el módulo Fotos está
 disponible. [Matriz de fotos en búsqueda](https://ayuda.proscai.com/hc/es-419/articles/235836227-Matriz-de-fotos-en-b%C3%BAsqueda)
 
-Para cerrar Matriz se requiere una sesión de México que muestre el control
-en **Encuentra producto** con el registro con foto cargado y permita observar
-el renglón que vuelve a la captura. Para el cálculo libre de **Familias** se
-requiere una expresión usada en México y un resultado comprobable contra el
-catálogo. `EINVFINDEDWC/9` inicia `MEMFILQUERY` en `1`, valida su sintaxis y
-vuelve a `1` si es inválida. La selección de `VT` acredita el filtro por
-catálogo. Falta comprobar una expresión distinta de `1` en uso.
+Una segunda prueba en Pedidos cargó siete resultados de la serie `0120160`
+en el almacén 01. **Foto** abrió una imagen de `01201603` y el buscador
+mostró **Alternos**, **Foto**, **Familias**, **OK** y **Cancelar**. Para cotejar
+**Matriz de fotos** se requiere una sesión de México que muestre el control
+y permita observar el retorno hacia Captura. El manual de Proscai describe
+un paso de carga matricial después de elegir el producto.
+
+`EINVFINDEDWC/9` inicia `MEMFILQUERY` en `1`, valida la sintaxis y vuelve a
+`1` si la expresión es inválida. En **Familias de productos**, la expresión
+`ICOD='01201603'` redujo la lista a ese único código. La web admite esa
+igualdad y `1` en **Cálculo por código**. La consulta derivada agrega
+`FINV.ICOD=?` al filtro `familyPattern` del almacén activo de
+`GET /api/sales/orders/capture/products`. El request envía el parámetro
+`exactCode`. Las demás expresiones de Omnis siguen pendientes de casos de uso.
+Evidencia local en `captures/ui/closure-next-sale-families-expression-result.png`.
 
 La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
 

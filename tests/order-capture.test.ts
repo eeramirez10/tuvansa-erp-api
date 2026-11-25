@@ -49,6 +49,15 @@ describe('Alta de pedidos capturada', () => {
     const familyPattern = 'VT' + '*'.repeat(11);
     await http.get('/capture/products').query({ warehouse: '01', familyPattern }).expect(200, { data: [] });
     expect(repo.searchProducts).toHaveBeenCalledWith({ familyPattern }, '01', 50);
+    await http.get('/capture/products').query({ warehouse: '12', familyPattern, exactCode: '01201603' }).expect(200, { data: [] });
+    expect(repo.searchProducts).toHaveBeenLastCalledWith({ familyPattern, exactCode: '01201603' }, '12', 50);
+    await http.get('/capture/products').query({ warehouse: '01', familyPattern, exactCode: '01201603000000' }).expect(400);
+
+    pool.execute.mockResolvedValueOnce([[]]);
+    await new LegacyMysqlOrderCaptureDataSource().searchProducts({ familyPattern, exactCode: '01201603' }, '12', 25);
+    const [sql, parameters] = pool.execute.mock.calls[0]!;
+    expect(sql).toContain('AND FINV.ICOD=?');
+    expect(parameters).toEqual(['12', '', '', '', '', '', '', '', 'VT' + '_'.repeat(11), '01201603', 25]);
   });
 
   it('consulta sólo los almacenes configurados del catálogo de México', async () => {

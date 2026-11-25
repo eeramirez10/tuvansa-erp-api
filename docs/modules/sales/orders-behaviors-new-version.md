@@ -75,10 +75,14 @@ selección de Alternos, Foto y Familias. Evidencia local de la restricción en
 
 ### Alternos, Foto y Familias (2026-11-25)
 
+El buscador web de Pedidos incluye **Alternos** y **Familias**. **Foto** y
+**Matriz de fotos** quedan fuera de su alcance vigente. Se conserva la
+evidencia histórica de German.
+
 | Botón | Evidencia German | Consulta web |
 | --- | --- | --- |
 | Alternos | `EINVFINDEDWC/6` abre `EINV#35`. `/240` busca `FALTERNOS.ALTPROD` por `ICOD` y lee `FINV` por `ALTART`. `/5` reemplaza la lista de coincidencias con el alterno elegido. | Reutiliza `GET /api/inventories/products/:id/purchases-production/alternates` y sus listas de precio 1–10. El código elegido se resuelve en el almacén activo antes de volver al selector. |
-| Foto | `EINVFINDEDWC/7` abre `EINV#36`. `/240` usa el prefijo `CIARAIZ`, los sufijos Z/Y y el nivel de color o código completo. México usa JPG según `CIACOMPORTA[103]`. | `GET /api/inventories/products/:id/actions/photo/image?variant=normal`. El directorio es `LEGACY_PRODUCT_PHOTOS_DIR` o la ruta local de German en Windows. |
+| Foto | `EINVFINDEDWC/7` abre `EINV#36`. `/240` usa el prefijo `CIARAIZ`, los sufijos Z/Y y el nivel de color o código completo. México usa JPG según `CIACOMPORTA[103]`. | Excluida del buscador de Pedidos. La consulta de imagen pertenece a Inventarios. |
 | Familias | `EINVFINDEDWC/9` usa `EINV#57/240` y `/411`. `SFINDINVFAM` compara los primeros 13 caracteres de `IFAM` y acepta `*` en las posiciones libres. Excluye las variantes con `ICOLOR` de productos tipo 1. | `GET /api/sales/orders/capture/product-families` consulta `FFAM` y las etiquetas de `FCIA`. `GET /api/sales/orders/capture/products` aplica `familyPattern` mediante un parámetro en el almacén activo. |
 
 El selector de familias presenta los grupos que alcanzan las posiciones
@@ -97,7 +101,7 @@ JPG verificado se lee desde el directorio de fotos y permanece en ese origen.
 Chromium mostró Normal y Completo para ese código. La prueba de Familias
 seleccionó `VT` en PROVEEDOR y el resultado conservó el almacén `01` y
 la familia pedida. La consulta de 50 coincidencias usó el MySQL histórico.
-**Matriz de fotos** sigue pendiente en Pedidos. El 25 de noviembre de 2026,
+En la revisión histórica de **Matriz de fotos** del 25 de noviembre de 2026,
 la sesión autenticada con **SISTEMAS** abrió un borrador `P — PEDIDO MEX`
 en el almacén `01`, admitió el cliente activo `000060` y llegó a la fila
 **Código**. Con el prefijo `0` y Tab se abrió **Encuentra producto**,
@@ -122,10 +126,7 @@ disponible. [Matriz de fotos en búsqueda](https://ayuda.proscai.com/hc/es-419/a
 
 Una segunda prueba en Pedidos cargó siete resultados de la serie `0120160`
 en el almacén 01. **Foto** abrió una imagen de `01201603` y el buscador
-mostró **Alternos**, **Foto**, **Familias**, **OK** y **Cancelar**. Para cotejar
-**Matriz de fotos** se requiere una sesión de México que muestre el control
-y permita observar el retorno hacia Captura. El manual de Proscai describe
-un paso de carga matricial después de elegir el producto.
+mostró **Alternos**, **Foto**, **Familias**, **OK** y **Cancelar**.
 
 `EINVFINDEDWC/9` inicia `MEMFILQUERY` en `1`, valida la sintaxis y vuelve a
 `1` si la expresión es inválida. En **Familias de productos**, la expresión

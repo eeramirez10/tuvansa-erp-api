@@ -72,7 +72,7 @@ conciliación y reversión se realizaron con datos temporales en PostgreSQL
 de pruebas. Las páginas de cada módulo registran sus efectos y los casos
 confirmados en German.
 
-El alcance del plan de cierre conserva **15 de 21 flujos operativos (71%)** y
+El corte original del plan de cierre registró **15 de 21 flujos operativos (71%)** y
 **13 de 21 cerrados con evidencia (62%)**. La corrección de **Remisión México**
 verificó el ejercicio fiscal y el flujo de surtido parcial a factura pendiente
 de timbrar con un solo cargo en Chromium y PostgreSQL 17.12 local. [Facturación](modules/sales/invoices.md#remisión-méxico-desde-pedido)
@@ -85,7 +85,8 @@ de escrituras al forzar errores.
 
 El alcance vigente para TUVANSA México excluye los flujos de color y
 talla, incluidos los controles y consultas CT asociados, así como cajas
-y empaque. Esta exclusión aplica a implementación y verificación.
+y empaque. En el buscador de Pedidos también se excluyen **Foto** y
+**Matriz de fotos**. Estas exclusiones aplican a implementación y verificación.
 
 | Módulo | Controles pendientes | Evidencia o dato que falta |
 | --- | --- | --- |
@@ -94,7 +95,7 @@ y empaque. Esta exclusión aplica a implementación y verificación.
 | Clientes | Datos fiscales → Act. | Las sesiones de México revisadas, incluida la consulta de un cliente activo, no mostraron **Verifica fiscal**. Se requiere acceso a **Act.** para comprobar su efecto sobre el catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
 | Inventarios | Distribución de Imprimir EI, SI y TR en German | Se cotejaron los renglones, almacenes, signos y totales de tres fichas. German devolvió `E101201` al cargar `QTUVANSA007` para EI y TR. La comparación de la salida impresa de `QTUVANSA002` para SI sigue pendiente. [Documentos de inventario](modules/inventories/movement-documents.md) |
-| Pedidos | Matriz de fotos y otras expresiones de Familias | German abrió **Foto** para un producto de México. **Matriz de fotos** requiere una sesión que muestre el control y permita cotejar el retorno. **Familias** ya admite la igualdad por código comprobada con `MEMFILQUERY`. [Pedidos](modules/sales/orders-behaviors-new-version.md) |
+| Pedidos | Otras expresiones de Familias | **Familias** admite la igualdad por código comprobada con `MEMFILQUERY`. Faltan casos de uso para otras expresiones. [Pedidos](modules/sales/orders-behaviors-new-version.md) |
 | Facturación | Traspaso y Liquidación camión | Los respaldos consultados carecen de tipo `TITRASPASOS` habilitado y destino `TZ` para el flujo. Liquidación requiere un archivo tabulado de ruta y folios de entrega y devolución relacionados. [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica

@@ -303,6 +303,14 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   Ninguna de esas copias ofreció un tipo habilitado en `TITRASPASOS` ni el
   destino `TZ`. La búsqueda de `FDOC` vigente por tipo habilitado devolvió
   cero folios en México y Monterrey en el respaldo actual.
+  En la rama normal de `EFACT#13/197` se elige un almacén físico y el
+  procedimiento busca por separado el tipo `TZ`, con `TIAFCXC=-1`.
+  El procedimiento vacía `DALMACEN` del documento original, llama a
+  `MBASE/33` para CxC y crea un documento de inventario con `MBASE/40`.
+  `MBASE/41` recibe las cantidades con signo opuesto. La prueba necesita
+  un tipo de factura habilitado, el tipo `TZ`, un almacén seleccionable y un
+  folio vigente con partidas para comparar los registros y saldos antes
+  y después de la confirmación.
 - **Liquidación camión** requiere `EFACT#13/76` y abre `EFACT#23`, el formato de
   liquidación de camionetas Unifoods. Usa listas propias de entrega/devolución,
   con importación de archivo tabulado o colector COM1/COM2. Falta una sesión

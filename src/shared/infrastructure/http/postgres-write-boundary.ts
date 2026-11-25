@@ -54,6 +54,8 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     (/^\/accounts-payable\/suppliers\/[1-9]\d*\/payments\/[1-9]\d*\/reversal$/.test(path) ||
       /^\/purchasing\/purchase-receptions\/[1-9]\d*\/actions\/cancel-(expense|reception)$/.test(path));
   const createSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' && path === '/sales/invoices/from-order';
+  const editInvoicePieces = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
+    /^\/sales\/invoices\/[1-9]\d*\/summaries\/edit-pieces\/[1-9]\d*$/.test(path);
   const cancelSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/sales\/invoices\/[1-9]\d*\/actions\/cancel-remission$/.test(path);
   const simulateSalesStamping = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
@@ -80,6 +82,6 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
        /^\/accounting\/policies\/[1-9]\d*\/actions\/(apply|unapply|duplicate)$/.test(path))) ||
      (['PATCH','DELETE'].includes(req.method) && /^\/accounting\/policies\/[1-9]\d*$/.test(path)) ||
      (req.method === 'PATCH' && /^\/accounting\/policies\/[1-9]\d*\/actions\/(comments|classifications)$/.test(path)));
-  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeReceptionPiece || editReception || documentReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || writeBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }
+  if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeReceptionPiece || editReception || documentReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || editInvoicePieces || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || writeBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }
   next(new ApplicationError('Las escrituras de este módulo todavía no están migradas a PostgreSQL; MySQL permanece en sólo lectura.', 'MODULE_WRITES_NOT_MIGRATED',503));
 };

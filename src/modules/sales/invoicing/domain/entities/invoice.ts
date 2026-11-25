@@ -12,7 +12,7 @@ export interface InvoiceLine {
   amount: number;
   branch: number;
   agent: string;
-  pieces: number;
+  pieces: number | string;
   page: number;
   factor: number;
   cost: number;

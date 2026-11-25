@@ -2,6 +2,7 @@ import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import type { CancelSalesRemission } from '../../application/use-cases/cancel-sales-remission.js';
 import type { CreateInvoiceFromOrder } from '../../application/use-cases/create-invoice-from-order.js';
+import type { EditInvoicePieces } from '../../application/use-cases/edit-invoice-pieces.js';
 import type { GetFirstInvoice } from '../../application/use-cases/get-first-invoice.js';
 import type { GetInvoice } from '../../application/use-cases/get-invoice.js';
 import type { GetInvoiceByNumber } from '../../application/use-cases/get-invoice-by-number.js';
@@ -12,6 +13,12 @@ import type { SimulateSalesStamping } from '../../application/use-cases/simulate
 import type { InvoicePanelKey } from '../../domain/repositories/invoice-panels-repository.js';
 
 const invoiceParamsSchema = z.object({ invoiceId: z.coerce.number().int().positive() });
+const pieceParamsSchema = invoiceParamsSchema.extend({ lineId: z.coerce.number().int().positive() });
+const pieceSchema = z.strictObject({
+  expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
+  requestKey: z.uuid(),
+  value: z.string().max(24000).refine((value) => !value.includes('\0') && !/[\r\n]/.test(value), 'Valor de una línea'),
+});
 const cancellationSchema = z.strictObject({
   requestKey: z.uuid(), date: z.iso.date(), reason: z.string().trim().min(1).max(90), confirmed: z.literal(true), regenerateOrder: z.boolean(),
 });
@@ -51,6 +58,7 @@ export class InvoicesController {
     private readonly invoiceFromOrder: CreateInvoiceFromOrder,
     private readonly stamping: SimulateSalesStamping,
     private readonly cancellations: CancelSalesRemission,
+    private readonly pieces: EditInvoicePieces,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -140,6 +148,14 @@ export class InvoicesController {
     try {
       const { invoiceId } = invoiceParamsSchema.parse(request.params);
       response.json(await this.getInvoicePanel.execute(invoiceId, key));
+    } catch (error) { next(error); }
+  };
+
+  editPieces: RequestHandler = async (request, response, next) => {
+    try {
+      const { invoiceId, lineId } = pieceParamsSchema.parse(request.params);
+      const edit = pieceSchema.parse(request.body);
+      response.set('Cache-Control', 'no-store').json({ data: await this.pieces.execute(invoiceId, lineId, edit) });
     } catch (error) { next(error); }
   };
 

@@ -69,7 +69,7 @@ export class LegacyMysqlInvoicePanelsDataSource implements InvoicePanelsDataSour
         credits: rows.reduce((total, row) => total + Number(row.credits ?? 0), 0),
         balance: rows.reduce((total, row) => total + Number(row.amount ?? 0), 0),
       };
-    } else if (key === 'boxes' || key === 'pieces' || key === 'edit-pieces') {
+    } else if (key === 'boxes' || key === 'pieces') {
       const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
         `SELECT FCAJAS.CAJSEQ AS id, ICOD AS productCode, IDESCR AS description,
                 CAJCANT AS quantity, CAJPZAS AS pieces, CAJSERIE AS serialNumber,
@@ -90,6 +90,17 @@ export class LegacyMysqlInvoicePanelsDataSource implements InvoicePanelsDataSour
         pieces: rows.reduce((total, row) => total + Number(row.pieces ?? 0), 0),
         quantity: rows.reduce((total, row) => total + Number(row.quantity ?? 0), 0),
       };
+    } else if (key === 'edit-pieces') {
+      const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+        `SELECT FAXINV.AISEQ AS id, FINV.ICOD AS productCode, FAXINV.AIPZAS AS pieces
+           FROM FAXINV JOIN FDOC ON FAXINV.DSEQ = FDOC.DSEQ LEFT JOIN FINV ON FAXINV.ISEQ = FINV.ISEQ
+          WHERE FDOC.DSEQ = ? AND FDOC.DEST = 0 AND FDOC.DMULTICIA = 1
+            AND (FDOC.DESFACT = 1 OR FDOC.DESCXC = 1)
+          ORDER BY FAXINV.AISEQ`,
+        [invoiceId],
+      );
+      resultItems = items(rows);
+      available = resultItems.length > 0;
     } else if (key === 'classifications') {
       const [currentRows] = await legacyMysqlPool.execute<RowDataPacket[]>(
         `SELECT DPAR0 AS classifier0, DPAR1 AS classifier1, DPAR2 AS classifier2,

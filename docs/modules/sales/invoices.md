@@ -214,8 +214,68 @@ y queda fuera de la regeneración automática.
 | Acciones | Sellar | `/:invoiceId/actions/seal` | Estado CFD/folio y simulación disponible para remisiones web en pruebas |
 | Sumarios | Tiket > Factura | `/:invoiceId/summaries/ticket-to-invoice` | Contexto, operación deshabilitada |
 | Sumarios | Traspaso | `/:invoiceId/summaries/transfer` | Partidas a transferir; no modifica inventario |
-| Sumarios | Edita pzas | `/:invoiceId/summaries/edit-pieces` | Piezas/cajas actuales; no edita |
+| Sumarios | Edita pzas | `GET /:invoiceId/summaries/edit-pieces`, `PATCH /:invoiceId/summaries/edit-pieces/:lineId` | Valor de piezas de la partida seleccionada (`FAXINV.AIPZAS`), con cambios web en PostgreSQL |
 | Sumarios | Liquidación camión | `/:invoiceId/summaries/truck-settlement` | Ruta, fecha, cliente e importe; no liquida |
+
+### Edita pzas y sumarios en German de pruebas
+
+El 25 de noviembre de 2026, TUVANSA México abrió **Cambio pzas** sobre la
+primera partida de `FA25675` (`DSEQ=346421`, `AISEQ=617810`, almacén `01`). La
+ventana mostró **Valor** vacío. Se pulsó **Cancelar**. El registro de origen
+contiene `FDOC.DPZAS=12` y `FAXINV.AIPZAS=''` en las tres partidas. Los
+artefactos locales son `captures/ui/closure-20261125-sales-invoices-edit-pieces.png`
+y `captures/ui/omnis7-developer-check/20261125-EFACT13-PROCEDURES.txt`.
+
+`EFACT#13/74` llama a `INICIO/30` con el acceso `EFACT#13/74` y requiere una
+partida seleccionada. Lee `FAXINV` por `AISEQ` con `MSQL/251`, presenta
+`ECIA#11JC///600` y, al confirmar, llama a `MBASE/74` para guardar el valor en
+`FAXINV.AIPZAS`. Reemplaza la partida en la lista y redibuja. El procedimiento
+no tiene filtros adicionales por estado de timbrado ni llamadas de actualización
+de totales, almacén, existencias, capas PEPS o saldo. El tipo histórico de
+`AIPZAS` es `varchar(24000)`.
+
+La consulta web devuelve el valor textual y una `version` por partida. El
+PATCH recibe `{expectedVersion, requestKey, value}`. El identificador de partida
+corresponde a `AISEQ` para documentos históricos o al identificador persistido para
+remisiones web. La consulta histórica restringe la escritura al catálogo de
+Facturación de México, con `DEST=0`, `DMULTICIA=1` y `DESFACT=1` o `DESCXC=1`.
+Cada revisión conserva los identificadores de documento y partida en
+`tuvansa.sales_invoice_line_pieces`. El mismo UUID y contenido recuperan la
+revisión confirmada. Una versión vencida recibe `409`. La ficha y **CT** muestran
+el valor guardado, con los totales, almacén e inventario originales.
+
+La verificación web recorrió la selección de la segunda partida, Cancelar, OK,
+la ficha y CT en Chrome con un folio sintético y PGlite. La prueba HTTP cubre
+reintento, UUID reutilizado con otro valor, dos solicitudes superpuestas y
+rollback tras un fallo inyectado entre INSERT y COMMIT. Las bases temporales
+se cerraron al terminar.
+
+El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
+
+- **Cajas** abrió Empaque en `FA25675` con el resumen, la lista y el detalle
+  vacíos. `EFACT#13/23` llama a `EFACTEMP/100(kTrue,DNUM)`. Las lecturas
+  `/121`, `/190` y `/191` usan `FYG` con `EMP_LTD_F_<DNUM>` y resuelven los
+  detalles `EMP_EMP_<ID>.<n>`. **Generar** requiere `EFACTEMP/131`, pide la
+  configuración de distribución en `EFACTEMPGENM/100` y toma partidas positivas.
+  La copia histórica carece de registros `EMP_LTD_` para validar la distribución
+  de empaques existente y la regeneración. El panel web conserva su consulta de
+  contexto `FCAJAS` mientras se verifica un documento con empaques.
+- **Tiket > Factura** llama a `MFACT/86`. En México `FTIPMV` contiene la
+  conversión `FA → FE`. El procedimiento valida la partida fiscal en `/322`,
+  reasigna el folio y recalcula totales, saldos y movimientos. Falta una remisión
+  desechable y una confirmación aislada del flujo de conversión antes de migrar
+  sus efectos; el timbrado real se verifica en la etapa fiscal.
+- **Traspaso** usa los permisos de `EFACT#13/34` y llama a `/197` o a `/198`
+  con Shift. La copia histórica habilita `CIACOMPORTA[37]`, pero el tipo `FA`
+  de `FA25675` tiene `TITRASPASOS=0`. El procedimiento requiere un tipo que
+  admita traspasos y trae `TZ` para la operación normal. Falta el folio elegible
+  con el tipo de destino configurado para verificar los efectos sobre `FDOC`,
+  `FAX`, `FAXINV` y piezas.
+- **Liquidación camión** requiere `EFACT#13/76` y abre `EFACT#23`, el formato de
+  liquidación de camionetas Unifoods. Usa listas propias de entrega/devolución,
+  con importación de archivo tabulado o colector COM1/COM2. Falta una sesión
+  con liquidación de prueba y sus documentos de devolución. La lectura de ruta
+  de la ficha de Facturación brinda contexto, mientras se comprueba el flujo.
 
 Cada panel regresa `button`, `section`, `source`, `available`, `readOnly`,
 `items` y, cuando corresponde, `summary` y `reason`. Esto permite reutilizar el

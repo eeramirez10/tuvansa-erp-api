@@ -1,5 +1,6 @@
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
+import { invoicePieceVersion, originalPieceValue, type InvoicePieceStore } from '../../application/use-cases/edit-invoice-pieces.js';
 import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
 import type { InvoicePanelsDataSource } from '../../domain/datasources/invoice-panels-data-source.js';
 import type { InvoicePanelKey, InvoicePanelResult } from '../../domain/repositories/invoice-panels-repository.js';
@@ -12,11 +13,50 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
   constructor(
     private readonly legacy: InvoicePanelsDataSource,
     private readonly stamping: SimulateSalesStamping,
+    private readonly pieces?: InvoicePieceStore,
   ) {}
 
+  async readPieceLines(id: number): Promise<InvoicePanelResult | null> {
+    if (!isLocalSalesRemissionId(id)) return this.legacy.getPanel(id, 'edit-pieces');
+    const record = await readSalesRemissionInvoice(id);
+    if (!record) return null;
+    const { invoice } = record;
+    return {
+      invoice: { id, number: invoice.number }, key: 'edit-pieces', ...invoicePanelMetadata['edit-pieces'],
+      available: invoice.lines.length > 0, readOnly: true, source: 'postgres',
+      items: invoice.lines.map(({ id, productCode, pieces }) => ({ id, productCode, pieces })),
+    };
+  }
+
+  private async withPieces(panel: InvoicePanelResult): Promise<InvoicePanelResult> {
+    const { invoice, key } = panel;
+    const saved = panel.items.length ? await this.pieces?.latest(invoice) ?? [] : [];
+    const byLine = new Map(saved.map((piece) => [piece.lineId, piece]));
+    const edit = key === 'edit-pieces';
+    if (!edit && !saved.length) return panel;
+    const readOnly = !edit || !panel.available || !this.pieces?.writable();
+    return {
+      ...panel, readOnly, source: saved.length ? 'postgres' : panel.source,
+      ...(edit && readOnly ? { reason: panel.available
+        ? 'El guardado de piezas requiere PostgreSQL.' : 'La factura no tiene partidas para este cambio.' } : {}),
+      items: panel.items.map((item) => {
+        const lineId = Number(item.id);
+        const piece = byLine.get(lineId);
+        const original = originalPieceValue(item.pieces);
+        return { ...item, pieces: piece?.value ?? (edit ? original : item.pieces),
+          ...(edit ? { version: invoicePieceVersion(invoice, lineId, original, piece?.revision ?? 0) } : {}) };
+      }),
+    };
+  }
+
   async getPanel(id: number, key: InvoicePanelKey): Promise<InvoicePanelResult | null> {
+    if (key === 'edit-pieces') {
+      const panel = await this.readPieceLines(id);
+      return panel ? this.withPieces(panel) : null;
+    }
     if (!isLocalSalesRemissionId(id)) {
       const panel = await this.legacy.getPanel(id, key);
+      if (panel && key === 'ct') return this.withPieces(panel);
       if (!panel || key !== 'auxiliary' || !/^FA\d/.test(panel.invoice.number)) return panel;
       const [cancellation] = await readHistoricalSalesRemissionCancellations({ invoiceIds: [id] });
       if (!cancellation) return panel;
@@ -74,10 +114,10 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
       const items = invoice.lines.map(({ id, productCode, description, quantity, fulfilledQuantity, unit, price, branch, pieces }) => ({
         id, productCode, product: description, ordered: quantity, fulfilled: fulfilledQuantity, unit, price, branch, pieces,
       }));
-      return {
+      return this.withPieces({
         ...base, available: true, source: 'postgres', items,
         summary: { ordered: invoice.totals.quantity, fulfilled: invoice.totals.fulfilledQuantity },
-      };
+      });
     }
     if (key === 'lots') {
       const items = invoice.lines.flatMap(({ id, productCode, description, fulfilledQuantity, inventoryLayer }) => {

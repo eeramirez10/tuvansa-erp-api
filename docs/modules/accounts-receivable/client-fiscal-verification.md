@@ -44,6 +44,15 @@ Frontend: botón Verifica fiscal en Acciones. Ctrl + clic abre Yes/No; Yes carga
 
 La UI avisa que los cambios requieren verificación posterior en PROSCAI. A diferencia de OMNIS, abrir no invalida el marcador y OK no genera uno nuevo. Esta entrega no completa la verificación automática.
 
+El 25 de noviembre de 2026, German de pruebas abrió el cliente `000001` en
+TUVANSA México tras pulsar **Cancelar** en el acceso. La ficha mostró las
+acciones del catálogo hasta **Contactos**. **Verifica fiscal** no apareció en
+esa sesión y **Act.** quedó fuera de alcance. La lectura histórica de
+`FYG.REGIMENES_DE_CAPITAL` confirma que existe un catálogo local. Falta observar
+el botón con un perfil que muestre **Verifica fiscal** y comprobar si la acción
+actualiza dicho catálogo. Evidencia local en
+`captures/ui/closure-20261125-sales-clients-no-fiscal.png`.
+
 ## Investigación del proveedor (2026-09-14)
 
 La [documentación oficial de PROSCAI](https://ayuda.proscai.com/hc/es-419/articles/13163887156379-Modifica-y-verifica-los-datos-fiscales-de-clientes) describe la validación de datos del receptor ante el SAT, el flujo Ctrl + clic para actualizarlos y errores por RFC no listado, código postal incorrecto o régimen incompatible. También aclara que los asteriscos señalan los regímenes de capital más comunes; esto resuelve su significado general, aunque no el criterio para asignar cada cantidad. El artículo no publica endpoint, autenticación ni algoritmo de CLICFDI4CS. No equivale a un contrato de API.

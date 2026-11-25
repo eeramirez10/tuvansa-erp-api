@@ -11,6 +11,9 @@
 @historicalRemissionId = 346421
 @cancellationKey = generar-uuid-por-cancelacion
 @cancellationDate = copiar-fecha-del-preview
+@piecesLineId = copiar-id-de-la-partida
+@piecesVersion = copiar-version-de-la-partida
+@piecesKey = generar-uuid-por-cambio
 
 ### Preparar una Remisión México desde un pedido web autorizado y asignado
 GET {{baseUrl}}/sales/invoices/from-order?orderNumber={{orderNumber}}
@@ -126,8 +129,18 @@ GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/ticket-to-invoice
 ### Sumarios: Traspaso (solo partidas; no modifica inventario)
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/transfer
 
-### Sumarios: Edita pzas (solo lectura)
-GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/edit-pieces
+### Sumarios: Edita pzas (usar una remisión desechable de PostgreSQL de pruebas)
+GET {{baseUrl}}/sales/invoices/{{remissionId}}/summaries/edit-pieces
+
+### Guardar Cambio pzas. Copiar id y version de la misma partida. Reusar el UUID al reintentar el mismo envío.
+PATCH {{baseUrl}}/sales/invoices/{{remissionId}}/summaries/edit-pieces/{{piecesLineId}}
+Content-Type: application/json
+
+{
+  "expectedVersion": "{{piecesVersion}}",
+  "requestKey": "{{piecesKey}}",
+  "value": "3 x 4"
+}
 
 ### Sumarios: Liquidación camión (solo lectura)
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/truck-settlement

@@ -4,6 +4,7 @@ import { postgresConfigured } from '../../../shared/infrastructure/database/post
 import { MysqlPostingReversalReferences } from '../../purchasing/purchase-receptions/infrastructure/datasources/mysql-posting-reversal-references.js';
 import { CancelSalesRemission } from './application/use-cases/cancel-sales-remission.js';
 import { CreateInvoiceFromOrder } from './application/use-cases/create-invoice-from-order.js';
+import { EditInvoicePieces } from './application/use-cases/edit-invoice-pieces.js';
 import { GetFirstInvoice } from './application/use-cases/get-first-invoice.js';
 import { GetInvoice } from './application/use-cases/get-invoice.js';
 import { GetInvoiceByNumber } from './application/use-cases/get-invoice-by-number.js';
@@ -18,6 +19,7 @@ import { LegacyMysqlInvoicesDataSource } from './infrastructure/datasources/lega
 import { MysqlHistoricalSalesRemissionCancellationSource } from './infrastructure/datasources/mysql-historical-sales-remission-cancellation-source.js';
 import { MysqlInvoiceFromOrderReferences } from './infrastructure/datasources/mysql-invoice-from-order-references.js';
 import { isLocalSalesRemissionId, PostgresSalesRemissions } from './infrastructure/datasources/postgres-sales-remissions.js';
+import { PostgresInvoicePieces } from './infrastructure/datasources/postgres-invoice-pieces.js';
 import { PostgresSalesRemissionCancellations } from './infrastructure/datasources/postgres-sales-remission-cancellations.js';
 import { PostgresSalesStampingSimulations } from './infrastructure/datasources/postgres-sales-stamping-simulations.js';
 import { InvoicePanelsRepositoryImpl } from './infrastructure/repositories/invoice-panels-repository-impl.js';
@@ -26,15 +28,15 @@ import { InvoicesController } from './presentation/http/invoices-controller.js';
 import { createInvoicesRouter } from './presentation/http/invoices-routes.js';
 
 export const createInvoicingModule = (): Router => {
-  const repository = new InvoicesRepositoryImpl(new InvoicesWithSalesRemissionsDataSource(new LegacyMysqlInvoicesDataSource()));
+  const pieces = new PostgresInvoicePieces();
+  const repository = new InvoicesRepositoryImpl(new InvoicesWithSalesRemissionsDataSource(new LegacyMysqlInvoicesDataSource()), pieces);
   const stamping = new SimulateSalesStamping(
     new PostgresSalesStampingSimulations(),
     async (id) => isLocalSalesRemissionId(id) ? (await readSalesRemissionInvoice(id))?.invoice ?? null : null,
     () => env.NODE_ENV !== 'production' && postgresConfigured(),
   );
-  const panelsRepository = new InvoicePanelsRepositoryImpl(
-    new InvoicePanelsWithSalesRemissionsDataSource(new LegacyMysqlInvoicePanelsDataSource(), stamping),
-  );
+  const panels = new InvoicePanelsWithSalesRemissionsDataSource(new LegacyMysqlInvoicePanelsDataSource(), stamping, pieces);
+  const panelsRepository = new InvoicePanelsRepositoryImpl(panels);
   const controller = new InvoicesController(
     new GetInvoice(repository),
     new GetInvoiceByNumber(repository),
@@ -46,6 +48,7 @@ export const createInvoicingModule = (): Router => {
     stamping,
     new CancelSalesRemission(new PostgresSalesRemissionCancellations(undefined, undefined, undefined,
       new MysqlHistoricalSalesRemissionCancellationSource()), new MysqlPostingReversalReferences()),
+    new EditInvoicePieces(pieces, (id) => panels.readPieceLines(id)),
   );
   return createInvoicesRouter(controller);
 };

@@ -59,6 +59,18 @@ Comprobación directa de sólo lectura: 01300938 retorna el mismo producto y dis
 
 Requisito funcional del usuario: Captura de pedido y Cambio de pedido muestran sugerencias al escribir un prefijo de código/IEAN. Un identificador sin resolución o con varias coincidencias abre Encuentra producto. Sus filtros son Código / IEAN, Descripción y Cod Prv; doble clic u OK seleccionan, recargan las referencias y agregan o sustituyen la partida en el borrador. Si no había cantidad, se usa 1; una cantidad ya capturada se conserva. No se guarda el pedido hasta el OK final.
 
+El 25 de noviembre de 2026, la sesión de TUVANSA México abierta con **Cancelar**
+permitió iniciar **Nuevo** en el almacén `01`. German mostró «El T.M. no esta
+permitido para el usuario» al salir del tipo `P — PEDIDO MEX`, antes de acceder
+a la fila de producto. Se canceló el borrador. Sigue pendiente una sesión con
+permiso para ese movimiento, necesaria para observar **Alternos**, **Foto**,
+**Matriz de fotos** y **Familias** desde ese buscador. La copia histórica tiene
+cero filas de `FALTERNOS`. Las rutinas de Inventarios y las referencias a
+`EINV#35`, `EINV#36` y `EINV#57` en la biblioteca respaldada orientan la búsqueda
+de procedimientos. Falta confirmar que su entrada y selección coincidan con el
+buscador de Pedidos. Evidencia local en
+`captures/ui/closure-20261125-sales-orders-product-invalid.png`.
+
 | Vista | Control / acción | Marcador | Procedencia | Endpoint | Tablas |
 | --- | --- | --- | --- | --- | --- |
 | Captura de pedido / Cambio de pedido | Código / IEAN; sugerencias al escribir | Sin nueva captura OMNIS; requisito del usuario | Derivada | GET /api/sales/orders/capture/products?warehouse=...&code=... | FINV, FALM |

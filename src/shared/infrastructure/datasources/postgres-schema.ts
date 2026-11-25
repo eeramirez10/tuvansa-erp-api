@@ -44,6 +44,59 @@ CREATE TABLE tuvansa.order_stock_deltas (
 CREATE INDEX order_stock_product ON tuvansa.order_stock_deltas(product_id,warehouse);
 ` }];
 
+export const webAccessMigrations: readonly PostgresMigration[] = [{ id: '002_web_users', sql: `
+CREATE TABLE tuvansa.web_users (
+  id text PRIMARY KEY,
+  legacy_id integer UNIQUE,
+  identification varchar(32) NOT NULL,
+  name varchar(46),
+  group_id smallint CHECK (group_id BETWEEN 0 AND 41),
+  active boolean NOT NULL DEFAULT true,
+  administrator boolean NOT NULL DEFAULT false,
+  password_hash text,
+  revision integer NOT NULL DEFAULT 1,
+  CHECK (legacy_id IS NOT NULL OR (name IS NOT NULL AND group_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX web_users_identification ON tuvansa.web_users(lower(identification));
+CREATE TABLE tuvansa.web_sessions (
+  digest char(64) PRIMARY KEY,
+  user_id text NOT NULL REFERENCES tuvansa.web_users(id),
+  idle_until timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX web_sessions_user ON tuvansa.web_sessions(user_id);
+CREATE INDEX web_sessions_idle ON tuvansa.web_sessions(idle_until);
+CREATE TABLE tuvansa.web_activations (
+  digest char(64) PRIMARY KEY,
+  user_id text NOT NULL UNIQUE REFERENCES tuvansa.web_users(id),
+  expires_at timestamptz NOT NULL
+);
+CREATE TABLE tuvansa.web_login_attempts (
+  bucket text PRIMARY KEY,
+  attempts integer NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX web_login_attempts_expiry ON tuvansa.web_login_attempts(expires_at);
+CREATE TABLE tuvansa.web_permission_groups (
+  group_id smallint PRIMARY KEY CHECK (group_id BETWEEN 0 AND 41),
+  revision integer NOT NULL DEFAULT 0
+);
+CREATE TABLE tuvansa.web_permission_overrides (
+  group_id smallint NOT NULL REFERENCES tuvansa.web_permission_groups(group_id),
+  permission_key varchar(20) NOT NULL,
+  allowed boolean NOT NULL,
+  PRIMARY KEY (group_id, permission_key)
+);
+CREATE TABLE tuvansa.web_access_changes (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor text NOT NULL,
+  action text NOT NULL,
+  subject text NOT NULL,
+  details jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+` }];
+
 export async function migratePostgres(
   client: PostgresClient,
   migrations: readonly PostgresMigration[] = postgresMigrations,

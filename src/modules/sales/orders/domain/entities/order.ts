@@ -1,3 +1,5 @@
+import type { OrderAuthorizationActor } from '../datasources/order-authorization-access.js';
+
 export type OrderDocumentKind = 'order' | 'quote' | 'unknown';
 
 export interface OrderLine {
@@ -41,7 +43,9 @@ export interface OrderProps {
   termsDays: number;
   authorization: string;
   authorizedBy?: number;
-  authorizationChange?: { userId: number; changedAt: string; revision: number };
+  authorizedByWebUserId?: string;
+  authorizedByName?: string;
+  authorizationChange?: OrderAuthorizationActor & { changedAt: string; revision: number };
   initial: boolean;
   warehouse: string;
   currencyId: number;

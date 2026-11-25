@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { noSessionCache, requireSessionOrigin, sessionToken } from '../../../../general-data/users/presentation/web-session-http.js';
 import type { CaptureOrder } from '../../application/use-cases/capture-order.js';
 
 const productCode = z.string().trim().min(1).max(13);
@@ -101,11 +102,11 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
       res.json({ data: await useCase.convertQuote(z.coerce.number().int().positive().parse(req.params.orderId)) });
     } catch (error) { next(error); }
   });
-  router.post('/:orderId/actions/authorization', async (req, res, next) => {
+  router.post('/:orderId/actions/authorization', noSessionCache, async (req, res, next) => {
     try {
+      requireSessionOrigin(req);
       const body = z.strictObject({ authorized: z.boolean(), revision: z.int().nonnegative() }).parse(req.body);
-      const credential = /^Bearer ([a-f0-9]{64})$/i.exec(req.get('Authorization') ?? '')?.[1];
-      res.json({ data: await useCase.setAuthorization(z.coerce.number().int().positive().parse(req.params.orderId), body, credential) });
+      res.json({ data: await useCase.setAuthorization(z.coerce.number().int().positive().parse(req.params.orderId), body, sessionToken(req)) });
     } catch (error) { next(error); }
   });
   router.post('/:orderId/actions/assignment', async (req, res, next) => {

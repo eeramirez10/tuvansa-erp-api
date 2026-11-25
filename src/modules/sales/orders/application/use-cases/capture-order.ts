@@ -12,9 +12,9 @@ export class CaptureOrder {
   product(code: string, warehouse: string, typeCode: string, customerCode: string) { return this.repository.product(code, warehouse, typeCode, customerCode); }
   async create(input: CaptureInput) { return toOrderResponse(await this.repository.create(input)); }
   async convertQuote(id: number) { return toOrderResponse(await this.repository.convertQuote(id)); }
-  async setAuthorization(id: number, input: { authorized: boolean; revision: number }, credential: string | undefined) {
-    const userId = await this.authorizationAccess.verify(credential);
-    return toOrderResponse(await this.repository.setAuthorization(id, { ...input, userId }));
+  async setAuthorization(id: number, input: { authorized: boolean; revision: number }, sessionToken: string | undefined) {
+    const actor = await this.authorizationAccess.verify(sessionToken);
+    return toOrderResponse(await this.repository.setAuthorization(id, { ...input, ...actor }));
   }
   async setAssignment(id: number, lines: Array<{ lineId: number; assigned: number }>) {
     return toOrderResponse(await this.repository.setAssignment(id, lines));

@@ -33,7 +33,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:neon:check": "tsx scripts/check-neon-db.ts",
-    "db:neon:migrate": "tsx scripts/check-neon-db.ts"
+    "db:neon:migrate": "tsx scripts/check-neon-db.ts",
+    "users:admin": "tsx scripts/provision-web-admin.ts"
   },
   "packageManager": "pnpm@11.24.0",
   "engines": {

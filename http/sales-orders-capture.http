@@ -1,5 +1,8 @@
 @baseUrl = http://localhost:3000/api
 @orderId = 5000000000
+@orderRevision = 1
+@origin = http://localhost:3000
+@sessionCookie = tuvansa_session=sesion-de-prueba
 
 ### Persistencia actual: PostgreSQL/Neon. MySQL sólo aporta referencias.
 ### Configurar NEON_DATABASE_URL; el primer uso crea el esquema tuvansa.
@@ -73,11 +76,13 @@ Content-Type: application/json
 
 { "exchangeRate": 20.00, "collectionCurrency": "DOLARES" }
 
-### Ctrl+A: autorizar
+### Ctrl+A: autorizar con la revisión vigente de la ficha
 POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
 Content-Type: application/json
 
-{ "authorized": true }
+{ "authorized": true, "revision": {{orderRevision}} }
 
 ### Ctrl+P: asignar una cantidad absoluta a la partida
 POST {{baseUrl}}/sales/orders/{{orderId}}/actions/assignment
@@ -91,11 +96,13 @@ Content-Type: application/json
 
 { "lines": [{ "lineId": 1, "assigned": 0 }] }
 
-### Ctrl+A: desautorizar
+### Ctrl+A: desautorizar con la revisión vigente de la ficha
 POST {{baseUrl}}/sales/orders/{{orderId}}/actions/authorization
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
 Content-Type: application/json
 
-{ "authorized": false }
+{ "authorized": false, "revision": {{orderRevision}} }
 
 ### Leer el pedido local
 GET {{baseUrl}}/sales/orders/{{orderId}}

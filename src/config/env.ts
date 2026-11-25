@@ -8,18 +8,6 @@ const productPilots = z.string().default('')
 const warehouseCodes = z.string().trim().transform((value) => value.split(',').map((code) => code.trim().toUpperCase()))
   .pipe(z.array(z.string().regex(/^[A-Z0-9]{1,10}$/)));
 
-const salesOrderApprovers = z.string().default('[]').transform((value, ctx): unknown => {
-  try { return JSON.parse(value); }
-  catch {
-    ctx.addIssue({ code: 'custom', message: 'Se esperaba una lista JSON de autorizadores de pedidos.' });
-    return z.NEVER;
-  }
-}).pipe(z.array(z.strictObject({
-  userId: z.number().int().positive().max(2147483647),
-  sha256: z.string().regex(/^[0-9a-f]{64}$/),
-})).refine((approvers) => new Set(approvers.map(({ sha256 }) => sha256)).size === approvers.length,
-  'Cada clave de autorización debe corresponder a un solo usuario.'));
-
 const purchaseOrderApprovers = z.string().default('[]').transform((value, ctx): unknown => {
   try { return JSON.parse(value); }
   catch {
@@ -62,7 +50,7 @@ const envSchema = z.object({
   PURCHASE_ORDER_EDIT_COMPANY_ID: z.coerce.number().int().min(1).max(255).default(1),
   PURCHASE_ORDER_APPROVER_KEYS: purchaseOrderApprovers,
   PURCHASE_ORDER_WAREHOUSES: warehouseCodes.optional(),
-  SALES_ORDER_APPROVER_KEYS: salesOrderApprovers,
+  WEB_SESSION_ORIGIN: z.string().trim().default('').refine((value) => !value || /^https?:\/\/[^/?#]+$/.test(value)),
   SALES_ORDER_WAREHOUSES: warehouseCodes.refine((codes) => codes.every((code) => code.length <= 6),
     'Los códigos de almacén de pedidos no pueden exceder seis caracteres.').default(['01']),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),

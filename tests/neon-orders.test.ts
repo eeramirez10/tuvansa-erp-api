@@ -14,6 +14,7 @@ import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgre
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 import { createOrdersModule } from '../src/modules/sales/orders/orders-module.js';
 import { ApplicationError } from '../src/shared/domain/errors/application-error.js';
+import { cookieName } from '../src/modules/general-data/users/presentation/web-session-http.js';
 
 // Real PostgreSQL engine in isolated WASM memory: no Neon URL or MySQL credentials used.
 const db = new PGlite();
@@ -253,19 +254,20 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     order=(await approve(api,id,false)).toPrimitives();
     expect(order.authorization).toBe('');
   });
-  it('requires the approver key and a current revision, rechecks cost and records only successful changes', async () => {
-    const key = 'a'.repeat(64);
-    const verify = vi.fn(async (credential?: string) => {
-      if (credential !== key) throw new ApplicationError('Credencial requerida', 'ORDER_APPROVER_REQUIRED', 401);
-      return 21;
+  it('requires the approver session and a current revision, rechecks cost and records only successful changes', async () => {
+    const token = 'a'.repeat(43);
+    const verify = vi.fn(async (session?: string) => {
+      if (session !== token) throw new ApplicationError('Sesión requerida', 'WEB_SESSION_REQUIRED', 401);
+      return { userId: 21, webUserId: 'g-21' };
     });
     const costs = vi.fn().mockResolvedValue(new Map([[13288, { cost: 60, costCurrencyId: 1 }]]));
     const dataSource = new HybridOrdersDataSource(legacy, store, { ...references, authorizationCosts: costs }, { getPanel: async () => null });
     const order = (await dataSource.create({ ...input, documentKind: 'order' })).toPrimitives();
     const app = express().use(express.json()).use(createOrdersModule(dataSource, { verify })).use(errorHandler);
     const path = `/${order.id}/actions/authorization`;
-    const post = (authorized: boolean, revision: number) => request(app).post(path).set('Authorization', `Bearer ${key}`).send({ authorized, revision });
-    await request(app).post(path).send({ authorized: true, revision: 1 }).expect(401);
+    const origin = () => request(app).post(path).set('Host', 'localhost:5173').set('Origin', 'http://localhost:5173');
+    const post = (authorized: boolean, revision: number) => origin().set('Cookie', `${cookieName}=${token}`).send({ authorized, revision });
+    await origin().set('Authorization', `Bearer ${'a'.repeat(64)}`).send({ authorized: true, revision: 1 }).expect(401);
     expect((await post(true, 0).expect(409)).body.error.code).toBe('ORDER_AUTHORIZATION_STALE');
     expect(costs).not.toHaveBeenCalled();
     expect((await post(true, 1).expect(409)).body.error.code).toBe('ORDER_PRICE_BELOW_COST');
@@ -278,7 +280,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(await store.get(order.id)).toMatchObject({ revision: 1, document: { authorization: '' } });
     failAudit = false;
     const approved = await post(true, 1).expect(200);
-    expect(approved.body.data).toMatchObject({ authorization: 'O.K.', authorizedBy: 21, authorizationChange: { userId: 21 }, storage: { revision: 2 } });
+    expect(approved.body.data).toMatchObject({ authorization: 'O.K.', authorizedBy: 21, authorizationChange: { userId: 21, webUserId: 'g-21' }, storage: { revision: 2 } });
     expect((await post(true, 2).expect(200)).body.data.storage.revision).toBe(2);
     expect((await post(false, 2).expect(200)).body.data).toMatchObject({ authorization: '', authorizedBy: 21, storage: { revision: 3 } });
     const comments = await dataSource.getPanel(order.id, 'comments');
@@ -305,6 +307,17 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     });
     await expect(approve(api, historical.id, false)).rejects.toMatchObject({ code: 'ORDER_ALREADY_FULFILLED' });
     expect(await store.get(historical.id)).toMatchObject({ revision: 2, document: { authorization: 'O.K.' } });
+  });
+  it('records a web-only user in the authorization and the comments audit trail', async () => {
+    const api = make();
+    const order = (await api.create({ ...input, documentKind: 'order' })).toPrimitives();
+    const actor = { webUserId: 'd56cc1b8-a435-4c22-aa15-fcd0126ee600', userName: 'Persona web', userIdentification: 'web' };
+    const authorized = (await api.setAuthorization(order.id, { authorized: true, revision: 1, ...actor })).toPrimitives();
+    expect(authorized).toMatchObject({ authorizedByWebUserId: actor.webUserId, authorizedByName: actor.userName, authorizationChange: actor });
+    expect(authorized.authorizedBy).toBeUndefined();
+    const panel = await api.getPanel(order.id, 'comments');
+    expect(panel).toMatchObject({ summary: { authorizedByName: 'Persona web' } });
+    expect(panel?.items[0]?.auditTrail).toMatch(/^AUTORIZA · Usuario web/);
   });
   it('rejects authorization of a legacy order from another company without creating an overlay', async () => {
     const historical = { ...base(), companyId: 2 };
@@ -358,7 +371,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   });
   it('supports the existing HTTP capture contract with PostgreSQL persistence',async()=>{
     const app=express().use(express.json()).use('/api',postgresWriteBoundary)
-      .use('/api/sales/orders',createOrdersModule(make(), { verify: async () => 21 })).use(errorHandler);
+      .use('/api/sales/orders',createOrdersModule(make(), { verify: async () => ({ userId: 21 }) })).use(errorHandler);
     const result=await request(app).post('/api/sales/orders/capture').send(input).expect(201);
     expect(result.body.data.number).toBe('NP5000000000');
     const comments=await request(app).patch(`/api/sales/orders/${result.body.data.id}/actions/comments`)
@@ -366,6 +379,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(comments.body.data).toMatchObject({currencyId:1,exchangeRate:20,captureDetails:{collectionCurrency:'DOLARES'}});
     const converted = await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/quote-conversion`).send({}).expect(200);
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/authorization`)
+      .set('Host', 'localhost:5173').set('Origin', 'http://localhost:5173')
       .send({authorized:true, revision:converted.body.data.storage.revision}).expect(200);
     await request(app).post(`/api/sales/orders/${result.body.data.id}/actions/assignment`).send({lines:[{lineId:1,assigned:1}]}).expect(200);
     await request(app).patch('/api/accounts-receivable/clients/123').send({}).expect(503);

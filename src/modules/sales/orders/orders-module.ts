@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { CaptureOrder } from './application/use-cases/capture-order.js';
 import { HybridOrdersDataSource } from './infrastructure/datasources/hybrid-orders-data-source.js';
 import { LegacyMysqlOrderReferenceDataSource } from './infrastructure/datasources/legacy-mysql-order-reference-data-source.js';
-import { MysqlOrderAuthorizationAccess } from './infrastructure/datasources/mysql-order-authorization-access.js';
+import { webAccess } from '../../general-data/users/users-module.js';
 import { PostgresOrderOverlayDataSource } from './infrastructure/datasources/postgres-order-overlay-data-source.js';
 import { OrderCaptureRepositoryImpl } from './infrastructure/repositories/order-capture-repository-impl.js';
 import { createOrderCaptureRouter } from './presentation/http/order-capture-router.js';
@@ -28,7 +28,7 @@ import type { OrderAuthorizationAccess } from './domain/datasources/order-author
 export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSource & OrderPanelsDataSource =
   new HybridOrdersDataSource(new LegacyMysqlOrdersDataSource(), new PostgresOrderOverlayDataSource(),
     new LegacyMysqlOrderReferenceDataSource(), new LegacyMysqlOrderPanelsDataSource()),
-  authorizationAccess: OrderAuthorizationAccess = new MysqlOrderAuthorizationAccess()): Router => {
+  authorizationAccess: OrderAuthorizationAccess = { verify: token => webAccess.orderActor(token) }): Router => {
   const repository = new OrdersRepositoryImpl(source);
   const panelsRepository = new OrderPanelsRepositoryImpl(source);
   const controller = new OrdersController(

@@ -260,7 +260,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       }
     }
   }
-  async setAuthorization(id: number, { authorized, revision, userId }: OrderAuthorizationCommand): Promise<Order> {
+  async setAuthorization(id: number, { authorized, revision, ...actor }: OrderAuthorizationCommand): Promise<Order> {
     this.writable();
     const original = await this.original(id);
     const result = await this.local.change(id, original, 'authorization', async (doc, currentRevision) => {
@@ -279,10 +279,16 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       }
       if (authorized) {
         await this.verifyAuthorizationCosts(doc, original !== null);
-        doc.authorizedBy = userId;
+        if (actor.userId) doc.authorizedBy = actor.userId;
+        else delete doc.authorizedBy;
+        if (actor.webUserId) doc.authorizedByWebUserId = actor.webUserId;
+        else delete doc.authorizedByWebUserId;
+        const name = actor.userName || actor.userIdentification;
+        if (name) doc.authorizedByName = name;
+        else delete doc.authorizedByName;
       }
       doc.authorization = nextAuthorization;
-      doc.authorizationChange = { userId, changedAt: new Date().toISOString(), revision: currentRevision + 1 };
+      doc.authorizationChange = { ...actor, changedAt: new Date().toISOString(), revision: currentRevision + 1 };
       return doc;
     });
     if (!result) throw new NotFoundError('Pedido');
@@ -337,17 +343,17 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     }
     if (key==='comments') {
       const entries = await this.local.authorizationHistory(id);
-      const auditTrail = entries.map(({ authorized, userId, changedAt }) =>
-        `${authorized ? 'AUTORIZA' : 'DESAUTORIZA'} · Usuario ${userId} · ${auditDate.format(new Date(changedAt))}`).join('\n');
+      const auditTrail = entries.map(({ authorized, userId, userName, userIdentification, changedAt }) =>
+        `${authorized ? 'AUTORIZA' : 'DESAUTORIZA'} · Usuario ${userIdentification ?? userName ?? userId} · ${auditDate.format(new Date(changedAt))}`).join('\n');
       return {...result,button:'Comentarios',available:true,reason:'',items:[{comments:'',customerDocumentNumber:doc.number,
         amountInWords:amountInWords(doc.totals.total),auditTrail}],
         summary:{customerOrderNumber:doc.customerOrderNumber,orderedAt:doc.dates.orderedAt,fromDate:doc.dates.from,dueAt:doc.dates.dueAt,
           initial:doc.initial,department:doc.department,termsDays:doc.termsDays,warehouse:doc.warehouse,observations:doc.observations,
-          branch:doc.branch,exchangeRate:doc.exchangeRate,authorizedBy:doc.authorizedBy,...doc.captureDetails,localRevision:local.revision}};
+          branch:doc.branch,exchangeRate:doc.exchangeRate,authorizedBy:doc.authorizedBy,authorizedByName:doc.authorizedByName,...doc.captureDetails,localRevision:local.revision}};
     }
     if (key==='quote-conversion') return {...result,button:'Cotiz',available:true,items:[{documentKind:doc.documentKind}]};
     if (key==='authorize') return {...result,available:true,reason:'',items:[{authorized:doc.authorization==='O.K.',authorization:doc.authorization,
-      authorizedBy:doc.authorizedBy, lastChange:doc.authorizationChange}]};
+      authorizedBy:doc.authorizedBy, authorizedByName:doc.authorizedByName, lastChange:doc.authorizationChange}]};
     if (key==='assign-all') return {...result,available:true,reason:'',items:doc.lines.map(line=>({lineId:line.id,productCode:line.productCode,
       ordered:line.ordered,fulfilled:line.fulfilled,assigned:line.assigned,assignable:Math.max(0,line.ordered-line.fulfilled-line.assigned)}))};
     return result;

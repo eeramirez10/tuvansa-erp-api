@@ -8,6 +8,12 @@ import { ApplicationError } from '../../domain/errors/application-error.js';
 export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) { next(); return; }
   const path = req.path.replace(/\/+$/,'');
+  const webSession = (path === '/session' && ['POST', 'DELETE'].includes(req.method)) ||
+    (path === '/session/activation' && req.method === 'POST');
+  const webUsers = (path === '/general-data/users' && req.method === 'POST') ||
+    (req.method === 'PATCH' && /^\/general-data\/(users\/(g-[1-9]\d*|[a-f0-9-]+)|permission-groups\/\d+)$/i.test(path)) ||
+    (req.method === 'POST' && /^\/general-data\/users\/(g-[1-9]\d*|[a-f0-9-]+)\/activation$/i.test(path));
+  if (webSession || webUsers) { next(); return; }
   const readOnlyCalculation = req.method==='POST' && path==='/sales/reports/collection-commissions/preview';
   const create = req.method==='POST' && (path==='/sales/orders' || path==='/sales/orders/capture');
   const orderAction = req.method==='POST' && /^\/sales\/orders\/[1-9]\d*\/actions\/(quote-conversion|authorization|assignment)$/.test(path);

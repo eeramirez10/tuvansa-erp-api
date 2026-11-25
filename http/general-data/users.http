@@ -1,0 +1,61 @@
+@origin = http://localhost:3000
+@baseUrl = {{origin}}/api
+@sessionCookie = tuvansa_session=sesion-de-prueba
+@legacyUserId = g-21
+@revision = 0
+
+### Estado de la sesión
+GET {{baseUrl}}/session
+Cookie: {{sessionCookie}}
+
+### Inicio de sesión
+POST {{baseUrl}}/session
+Origin: {{origin}}
+Content-Type: application/json
+
+{ "identification": "prueba", "password": "contraseña de prueba" }
+
+### Buscar usuarios
+GET {{baseUrl}}/general-data/users?limit=25&state=pending
+Cookie: {{sessionCookie}}
+
+### Alta web
+POST {{baseUrl}}/general-data/users
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
+Content-Type: application/json
+
+{ "identification": "prueba-local", "name": "Cuenta de prueba", "group": 18, "active": true, "administrator": false }
+
+### Cambio con revisión vigente
+PATCH {{baseUrl}}/general-data/users/{{legacyUserId}}
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
+Content-Type: application/json
+
+{ "revision": {{revision}}, "identification": "prueba-legacy", "name": "Cuenta de German", "group": 18, "active": true, "administrator": false }
+
+### Enlace de activación para un usuario activo del directorio
+POST {{baseUrl}}/general-data/users/{{legacyUserId}}/activation
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
+Content-Type: application/json
+
+{ "revision": {{revision}} }
+
+### Permisos del grupo 18
+GET {{baseUrl}}/general-data/permission-groups/18
+Cookie: {{sessionCookie}}
+
+### Restaurar MPED5 de German con revisión vigente
+PATCH {{baseUrl}}/general-data/permission-groups/18
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
+Content-Type: application/json
+
+{ "revision": {{revision}}, "changes": [{ "key": "MPED5", "allowed": null }] }
+
+### Cierre de sesión
+DELETE {{baseUrl}}/session
+Origin: {{origin}}
+Cookie: {{sessionCookie}}

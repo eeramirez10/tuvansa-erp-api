@@ -1,4 +1,5 @@
 import type { Order } from '../entities/order.js';
+import type { OrderAuthorizationActor } from '../datasources/order-authorization-access.js';
 
 export interface CaptureOptions {
   warehouses: Array<{ code: string; description: string }>;
@@ -61,11 +62,10 @@ export interface CaptureInput {
   deliveryAddress: [string, string, string]; contact: string; additionalComments: string;
   documentKind: 'order' | 'quote'; lines: CaptureLine[];
 }
-export interface OrderAuthorizationCommand {
+export type OrderAuthorizationCommand = OrderAuthorizationActor & {
   authorized: boolean;
   revision: number;
-  userId: number;
-}
+};
 export interface OrderCaptureRepository {
   options(): Promise<CaptureOptions>;
   customer(code: string): Promise<CaptureCustomer>;

@@ -8,8 +8,8 @@ import { isLocalSalesRemissionId, readSalesRemissions } from './postgres-sales-r
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
 import { readHistoricalSalesRemissionCancellations } from './historical-sales-remission-cancellation-reads.js';
 import { customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
+import { salesTicketConversionSql } from './sales-ticket-conversion-reads.js';
 
-const invoice = "(remission.result->'invoice')";
 const empty = { items: [], total: 0 };
 type InvoiceHeader = Omit<InvoiceProps, 'lines'>;
 
@@ -32,9 +32,11 @@ const collectionFields = `remission.charge::float8 AS charge, collections.paid::
 async function remissionScope(client: PostgresClient) {
   const join = joinRemissionCollections(await customerCollectionsAvailable(client), await customerCollectionReversalsAvailable(client));
   const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+  const conversion = await salesTicketConversionSql(client);
   return {
-    from: `FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join} WHERE remission.company_id = 1`,
+    from: `FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join} ${conversion.join} WHERE remission.company_id = 1`,
     fields: `${collectionFields},${cancellation.result} AS cancellation`,
+    ...conversion,
   };
 }
 
@@ -51,9 +53,10 @@ function withCollectionTotals<T extends InvoiceHeader>({ invoice, charge, paid, 
 
 function readLocalInvoice(field: 'id' | 'number', value: number | string): Promise<SalesRemissionInvoice | null> {
   return readSalesRemissions<SalesRemissionInvoice | null>(null, async (client) => {
-    const { from, fields } = await remissionScope(client);
+    const { from, fields, number, invoice } = await remissionScope(client);
+    const filter = field === 'id' ? 'remission.id = $1' : `(${number} = $1 OR remission.number = $1)`;
     const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
-      `SELECT ${invoice} AS invoice, ${fields} ${from} AND remission.${field} = $1`, [value],
+      `SELECT ${invoice} AS invoice, ${fields} ${from} AND ${filter}`, [value],
     );
     return row ? { invoice: withCollectionTotals(row), charge: row.charge } : null;
   });
@@ -130,13 +133,13 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
 
   private browseLocal(number: string | null, direction: InvoiceNavigationDirection) {
     const previous = direction === 'previous';
-    const filter = number === null ? '' : `AND remission.number ${previous ? '<' : '>'} $1`;
     const order = previous ? 'DESC' : 'ASC';
     return readSalesRemissions<InvoiceProps | null>(null, async (client) => {
-      const { from, fields } = await remissionScope(client);
+      const { from, fields, number: currentNumber, invoice } = await remissionScope(client);
+      const filter = number === null ? '' : `AND ${currentNumber} ${previous ? '<' : '>'} $1`;
       const { rows: [row] } = await client.query<InvoiceCollectionRow<InvoiceProps>>(
         `SELECT ${invoice} AS invoice, ${fields} ${from} ${filter}
-         ORDER BY remission.number ${order}, remission.id ${order} LIMIT 1`,
+         ORDER BY ${currentNumber} ${order}, remission.id ${order} LIMIT 1`,
         number === null ? [] : [number.toUpperCase()],
       );
       return row ? withCollectionTotals(row) : null;
@@ -144,42 +147,43 @@ export class InvoicesWithSalesRemissionsDataSource implements InvoicesDataSource
   }
 
   private searchLocal(criteria: InvoiceSearchCriteria, limit: number) {
-    const conditions: string[] = [];
-    const values: Array<string | number> = [];
-    if (criteria.query !== undefined) {
-      values.push(`%${criteria.query}%`);
-      conditions.push(`(remission.number ILIKE $1 OR order_number ILIKE $1 OR ${invoice}->>'customerOrderNumber' ILIKE $1
-        OR ${invoice}#>>'{customer,code}' ILIKE $1 OR ${invoice}#>>'{customer,name}' ILIKE $1)`);
-    }
-    const prefixes = [
-      ['remission.number', criteria.invoiceNumber], ['order_number', criteria.orderNumber],
-      [`${invoice}->>'customerOrderNumber'`, criteria.customerOrderNumber],
-      [`${invoice}->>'deliveryNote'`, criteria.deliveryNote],
-      [`${invoice}->>'folio'`, criteria.folio],
-      [`${invoice}#>>'{customer,code}'`, criteria.customerCode],
-      [`${invoice}->>'warehouseSeal'`, criteria.warehouseSeal],
-    ] as const;
-    for (const [field, value] of prefixes) {
-      if (value === undefined) continue;
-      values.push(`${value}%`);
-      conditions.push(`${field} ILIKE $${values.length}`);
-    }
-    if (criteria.issuedAt !== undefined) {
-      values.push(criteria.issuedAt);
-      conditions.push(`issued_at = $${values.length}::date`);
-    }
-    if (criteria.amount !== undefined) {
-      values.push(criteria.amount);
-      conditions.push(`charge = $${values.length}`);
-    }
-    const where = conditions.length === 0 ? '' : `AND ${conditions.join(' AND ')}`;
-    values.push(limit);
     return readSalesRemissions<{ items: InvoiceHeader[]; total: number }>(empty, async (client) => {
-      const { from, fields } = await remissionScope(client);
+      const { from, fields, number, issuedAt, invoice } = await remissionScope(client);
+      const conditions: string[] = [];
+      const values: Array<string | number> = [];
+      if (criteria.query !== undefined) {
+        values.push(`%${criteria.query}%`);
+        conditions.push(`(${number} ILIKE $1 OR remission.number ILIKE $1 OR order_number ILIKE $1
+          OR ${invoice}->>'customerOrderNumber' ILIKE $1
+          OR ${invoice}#>>'{customer,code}' ILIKE $1 OR ${invoice}#>>'{customer,name}' ILIKE $1)`);
+      }
+      const prefixes = [
+        [[number, 'remission.number'], criteria.invoiceNumber], [['order_number'], criteria.orderNumber],
+        [[`${invoice}->>'customerOrderNumber'`], criteria.customerOrderNumber],
+        [[`${invoice}->>'deliveryNote'`], criteria.deliveryNote],
+        [[`${invoice}->>'folio'`], criteria.folio],
+        [[`${invoice}#>>'{customer,code}'`], criteria.customerCode],
+        [[`${invoice}->>'warehouseSeal'`], criteria.warehouseSeal],
+      ] as const;
+      for (const [expressions, value] of prefixes) {
+        if (value === undefined) continue;
+        values.push(`${value}%`);
+        conditions.push(`(${expressions.map((field) => `${field} ILIKE $${values.length}`).join(' OR ')})`);
+      }
+      if (criteria.issuedAt !== undefined) {
+        values.push(criteria.issuedAt);
+        conditions.push(`${issuedAt} = $${values.length}::date`);
+      }
+      if (criteria.amount !== undefined) {
+        values.push(criteria.amount);
+        conditions.push(`remission.charge = $${values.length}`);
+      }
+      const where = conditions.length === 0 ? '' : `AND ${conditions.join(' AND ')}`;
+      values.push(limit);
       // Derivada. Busca el encabezado de las remisiones web con los filtros de Facturación.
       const { rows: [row] } = await client.query<{ items: InvoiceCollectionRow<InvoiceHeader>[]; total: number }>(
         `WITH matched AS (
-           SELECT remission.id, remission.number, ${invoice} - 'lines' AS invoice, ${fields} ${from} ${where}
+           SELECT remission.id, ${number} AS number, ${invoice} - 'lines' AS invoice, ${fields} ${from} ${where}
          )
          SELECT count(*)::float8 AS total,
                 ARRAY(SELECT to_jsonb(matched) FROM matched ORDER BY number, id LIMIT $${values.length}) AS items FROM matched`,

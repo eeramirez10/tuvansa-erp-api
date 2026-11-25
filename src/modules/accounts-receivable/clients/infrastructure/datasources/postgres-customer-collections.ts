@@ -18,6 +18,7 @@ import { customerCollectionsAvailable } from './customer-collections-reads.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from './customer-collection-reversal-reads.js';
 import { clientCatalogRecord } from './postgres-client-catalog.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
+import { salesTicketConversionSql } from '../../../../sales/invoicing/infrastructure/datasources/sales-ticket-conversion-reads.js';
 
 const idStart = 7300000000000;
 const idEnd = idStart + 99999998;
@@ -99,18 +100,19 @@ export class PostgresCustomerCollections implements CustomerCollectionDataSource
 
   private async findTarget(client: PostgresClient, identity: CustomerCollectionIdentity, hasCollections: boolean) {
     const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client), 'r');
+    const conversion = await salesTicketConversionSql(client, 'r');
     const reversal = customerCollectionReversalSql(hasCollections && await customerCollectionReversalsAvailable(client));
     const { rows: [row] } = await client.query<CustomerCollectionTarget>(
-      `SELECT r.id::float8 AS "remissionId", r.number, r.issued_at::text AS "issuedAt",
+      `SELECT r.id::float8 AS "remissionId", ${conversion.number} AS number, (${conversion.issuedAt})::text AS "issuedAt",
          r.result #>> '{invoice,movementType}' AS "movementType",
          (${cancellation.canceled} OR coalesce((r.result #>> '{invoice,canceled}')::boolean, false)) AS canceled,
          r.charge::float8 AS principal,
          (r.result #>> '{invoice,currency,id}')::integer AS "currencyId",
          (r.result #>> '{invoice,currency,exchangeRate}')::float8 AS "exchangeRate",
          (CASE WHEN ${cancellation.canceled} THEN 0 ELSE ${hasCollections ? 'greatest(r.charge - payments.paid,0)' : 'r.charge'} END)::float8 AS remaining,
-         ${hasCollections ? 'payments.revision' : '1'} AS revision,
+         ${hasCollections ? 'payments.revision' : '1'} + CASE WHEN ${conversion.converted} THEN 1 ELSE 0 END AS revision,
          ${hasCollections ? 'payments."lastReversalDate"' : 'null::text'} AS "lastReversalDate"
-       FROM tuvansa.sales_remissions r ${cancellation.join}
+       FROM tuvansa.sales_remissions r ${cancellation.join} ${conversion.join}
        ${hasCollections ? `CROSS JOIN LATERAL (
           SELECT coalesce(${reversal.paid},0) AS paid,${reversal.revision} AS revision,${reversal.latestDate} AS "lastReversalDate"
           FROM tuvansa.customer_collections collection ${reversal.join}

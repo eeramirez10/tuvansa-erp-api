@@ -16,6 +16,7 @@ import type {
 import { historicalSalesRemissionCancellationsOn } from './historical-sales-remission-cancellation-reads.js';
 import { ensureSalesRemissionSchema, isLocalSalesRemissionId, salesRemissionsAvailable } from './postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationIdEnd, salesRemissionCancellationIdStart, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
+import { salesTicketConversionSql } from './sales-ticket-conversion-reads.js';
 import { restoreSalesRemissionLayers, type SalesRemissionLayerReferences } from './sales-remission-peps.js';
 
 const migrations = [{ id: 'sales_remission_cancellations', sql: `
@@ -79,15 +80,17 @@ async function priorRequest(client: PostgresClient, companyId: number, requestKe
 
 async function original(client: PostgresClient, companyId: number, id: number, lock = false): Promise<SalesRemissionCancellationSource | null> {
   if (companyId !== 1 || !isLocalSalesRemissionId(id) || !await salesRemissionsAvailable(client)) return null;
+  if (lock) await client.query('SELECT id FROM tuvansa.sales_remissions WHERE id=$1 AND company_id=$2 FOR UPDATE', [id, companyId]);
   const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+  const conversion = await salesTicketConversionSql(client);
   const { rows: [row] } = await client.query<Omit<SalesRemissionCancellationSource, 'hasCollection' | 'lastCollectionReversalAt'>>(
-    `SELECT remission.id::float8,remission.number,remission.issued_at::text AS "issuedAt",remission.warehouse,
+    `SELECT remission.id::float8,${conversion.number} AS number,${conversion.issuedAt}::text AS "issuedAt",remission.warehouse,
        remission.customer_id::float8 AS "customerId",remission.order_id::float8 AS "orderId",remission.order_number AS "orderNumber",
-       remission.charge::float8,remission.result->'invoice' AS invoice,remission.movement,remission.line_effects AS "lineEffects",
+       remission.charge::float8,${conversion.invoice} AS invoice,remission.movement,remission.line_effects AS "lineEffects",
        ${cancellation.result} AS "alreadyRecorded",o.document AS "order"
-       FROM tuvansa.sales_remissions remission ${cancellation.join}
+       FROM tuvansa.sales_remissions remission ${cancellation.join} ${conversion.join}
        LEFT JOIN tuvansa.orders o ON o.id=remission.order_id AND o.legacy_id IS NULL AND o.deleted_at IS NULL
-       WHERE remission.id=$1 AND remission.company_id=$2 AND remission.number LIKE 'FAW%' ${lock ? 'FOR UPDATE OF remission' : ''}`, [id, companyId],
+       WHERE remission.id=$1 AND remission.company_id=$2 AND remission.number LIKE 'FAW%'`, [id, companyId],
   );
   return row ? { ...row, ...await remissionCollectionStatus(client, { id, customerId: row.customerId, companyId }) } : null;
 }

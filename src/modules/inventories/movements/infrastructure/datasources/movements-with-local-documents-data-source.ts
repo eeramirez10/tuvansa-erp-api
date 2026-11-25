@@ -3,6 +3,7 @@ import { isLocalPurchaseReceptionId, readLocalPurchaseReceptions } from '../../.
 import { isLocalPurchaseReceptionCancellationId, purchaseReceptionCancellationsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { readReceiptSupplierChanges, receiptSupplierChangesAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-reception-supplier-change-reads.js';
 import { isLocalSalesRemissionId, readSalesRemissions } from '../../../../sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
+import { salesTicketConversionSql } from '../../../../sales/invoicing/infrastructure/datasources/sales-ticket-conversion-reads.js';
 import { isLocalSalesRemissionCancellationId, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import type { MovementCancellationDataSource, MovementsDataSource } from '../../domain/datasources/movements-data-source.js';
@@ -28,6 +29,14 @@ function readTable<T>(table: LocalMovementTable, fallback: T, read: (client: Pos
 }
 
 async function inventoryMovementSource(client: PostgresClient, table: LocalMovementTable) {
+  if (table === 'sales_remissions') {
+    const conversion = await salesTicketConversionSql(client, 'r');
+    if (conversion.join) return `(
+      SELECT r.id, CASE WHEN ${conversion.converted} THEN jsonb_set(r.movement,'{header,document}',to_jsonb(${conversion.number}))
+        ELSE r.movement END AS movement
+      FROM tuvansa.sales_remissions r ${conversion.join}
+    ) AS sales_movements`;
+  }
   if (table !== 'purchase_receptions' || !await receiptSupplierChangesAvailable(client)) {
     return `tuvansa.${table}`;
   }

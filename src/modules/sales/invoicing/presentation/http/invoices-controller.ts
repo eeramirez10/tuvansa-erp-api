@@ -1,6 +1,8 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import type { CancelSalesRemission } from '../../application/use-cases/cancel-sales-remission.js';
+import type { ConvertSalesTicket } from '../../application/use-cases/convert-sales-ticket.js';
 import type { CreateInvoiceFromOrder } from '../../application/use-cases/create-invoice-from-order.js';
 import type { EditInvoicePieces } from '../../application/use-cases/edit-invoice-pieces.js';
 import type { GetFirstInvoice } from '../../application/use-cases/get-first-invoice.js';
@@ -18,6 +20,10 @@ const pieceSchema = z.strictObject({
   expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
   requestKey: z.uuid(),
   value: z.string().max(24000).refine((value) => !value.includes('\0') && !/[\r\n]/.test(value), 'Valor de una línea'),
+});
+const ticketConversionSchema = z.strictObject({
+  expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
+  requestKey: z.uuid().transform((key) => key.toLowerCase()),
 });
 const cancellationSchema = z.strictObject({
   requestKey: z.uuid(), date: z.iso.date(), reason: z.string().trim().min(1).max(90), confirmed: z.literal(true), regenerateOrder: z.boolean(),
@@ -59,6 +65,7 @@ export class InvoicesController {
     private readonly stamping: SimulateSalesStamping,
     private readonly cancellations: CancelSalesRemission,
     private readonly pieces: EditInvoicePieces,
+    private readonly conversion?: Pick<ConvertSalesTicket, 'execute'>,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -147,7 +154,18 @@ export class InvoicesController {
   panel = (key: InvoicePanelKey): RequestHandler => async (request, response, next) => {
     try {
       const { invoiceId } = invoiceParamsSchema.parse(request.params);
+      if (key === 'ticket-to-invoice') response.set('Cache-Control', 'no-store');
       response.json(await this.getInvoicePanel.execute(invoiceId, key));
+    } catch (error) { next(error); }
+  };
+
+  convertTicket: RequestHandler = async (request, response, next) => {
+    try {
+      const { invoiceId } = invoiceParamsSchema.parse(request.params);
+      const input = ticketConversionSchema.parse(request.body);
+      if (!this.conversion) throw new ApplicationError('La conversión de remisiones no está disponible.', 'SALES_TICKET_CONVERSION_UNAVAILABLE', 503);
+      const result = await this.conversion.execute(invoiceId, input);
+      response.set('Cache-Control', 'no-store').status(201).json({ data: result });
     } catch (error) { next(error); }
   };
 

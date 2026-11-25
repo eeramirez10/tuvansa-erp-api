@@ -14,6 +14,7 @@
 @piecesLineId = copiar-id-de-la-partida
 @piecesVersion = copiar-version-de-la-partida
 @piecesKey = generar-uuid-por-cambio
+@ticketConversionKey = generar-uuid-por-conversion
 
 ### Preparar una Remisión México desde un pedido web autorizado y asignado
 GET {{baseUrl}}/sales/invoices/from-order?orderNumber={{orderNumber}}
@@ -123,8 +124,18 @@ Content-Type: application/json
 
 {}
 
-### Sumarios: Tiket > Factura (solo contexto de lectura)
-GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/ticket-to-invoice
+### Sumarios: vista previa de Tiket > Factura sobre una remisión web desechable
+# @name ticketConversionPreview
+GET {{baseUrl}}/sales/invoices/{{remissionId}}/summaries/ticket-to-invoice
+
+### Confirmar la conversión en PostgreSQL de pruebas y reusar el UUID en un reintento
+POST {{baseUrl}}/sales/invoices/{{remissionId}}/summaries/ticket-to-invoice
+Content-Type: application/json
+
+{
+  "expectedVersion": "{{ticketConversionPreview.response.body.$.data.ticketConversion.version}}",
+  "requestKey": "{{ticketConversionKey}}"
+}
 
 ### Sumarios: Traspaso (solo partidas; no modifica inventario)
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/transfer

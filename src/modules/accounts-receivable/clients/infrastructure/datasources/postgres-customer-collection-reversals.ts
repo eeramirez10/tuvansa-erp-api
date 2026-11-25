@@ -40,7 +40,8 @@ async function original(client: PostgresClient, { companyId, clientId, collectio
   const { rows: [row] } = await client.query<Omit<CustomerCollectionReversalSource, 'latestBankStatementDate' | 'lastCollectionReversalAt'>>(
     `SELECT collection.number,collection.policy_number AS "policyNumber",collection.date::text AS "originalDate",
        collection.amount::float8,collection.bank_account_id::float8 AS "bankAccountId",remission.id::float8 AS "remissionId",
-       remission.number AS "remissionNumber",remission.charge::float8 AS principal,
+       coalesce(nullif(collection.result->>'remissionNumber',''),remission.number) AS "remissionNumber",
+       remission.charge::float8 AS principal,
        (collection.amount>0 AND collection.movement_type='PA' AND collection.policy_number LIKE '1CW%'
         AND remission.number LIKE 'FAW%' AND remission.result #>> '{invoice,currency,id}'='1'
         AND (remission.result #>> '{invoice,currency,exchangeRate}')::numeric=1

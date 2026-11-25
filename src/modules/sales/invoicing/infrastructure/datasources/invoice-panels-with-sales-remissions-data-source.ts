@@ -2,6 +2,7 @@ import { customerCollectionReversalSql, customerCollectionReversalsAvailable } f
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { invoicePieceVersion, originalPieceValue, type InvoicePieceStore } from '../../application/use-cases/edit-invoice-pieces.js';
 import type { SimulateSalesStamping } from '../../application/use-cases/simulate-sales-stamping.js';
+import type { ConvertSalesTicket } from '../../application/use-cases/convert-sales-ticket.js';
 import type { InvoicePanelsDataSource } from '../../domain/datasources/invoice-panels-data-source.js';
 import type { InvoicePanelKey, InvoicePanelResult } from '../../domain/repositories/invoice-panels-repository.js';
 import { readHistoricalSalesRemissionCancellations } from './historical-sales-remission-cancellation-reads.js';
@@ -14,6 +15,7 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     private readonly legacy: InvoicePanelsDataSource,
     private readonly stamping: SimulateSalesStamping,
     private readonly pieces?: InvoicePieceStore,
+    private readonly conversion?: Pick<ConvertSalesTicket, 'preview'>,
   ) {}
 
   async readPieceLines(id: number): Promise<InvoicePanelResult | null> {
@@ -76,6 +78,13 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
     if (!record) return null;
     const { invoice, charge } = record;
     const base = { invoice: { id, number: invoice.number }, key, ...invoicePanelMetadata[key], readOnly: true };
+    if (key === 'ticket-to-invoice' && this.conversion) {
+      const conversion = await this.conversion.preview(id);
+      if (conversion) return {
+        ...base, available: true, source: 'postgres', items: [], readOnly: conversion.reason !== null,
+        ticketConversion: conversion.preview, ...(conversion.reason ? { reason: conversion.reason } : {}),
+      };
+    }
     if (key === 'auxiliary') {
       const payments = await readCustomerCollections<(Record<string, unknown> & { id: number; date: string; charges: number; credits: number })[]>([], async (client) => {
         const hasReversals = await customerCollectionReversalsAvailable(client);
@@ -136,7 +145,8 @@ export class InvoicePanelsWithSalesRemissionsDataSource implements InvoicePanels
         ...base, available: Boolean(stampingSimulation), source: 'postgres', items: [{ status, cfdStatus, folio, canceled }],
         ...(stampingSimulation
           ? { stampingSimulation, readOnly: Boolean(stampingSimulation.result) }
-          : { summary: { mutationEnabled: false }, reason: 'La remisión FA se emite sin timbrado fiscal.' }),
+          : { summary: { mutationEnabled: false }, reason: cfdStatus === '1'
+            ? 'La factura está pendiente de timbrado fiscal.' : 'La remisión FA se emite sin timbrado fiscal.' }),
       };
     }
     return {

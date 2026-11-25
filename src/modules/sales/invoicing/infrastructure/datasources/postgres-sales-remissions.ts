@@ -19,6 +19,7 @@ import { allocateSalesRemissionLayers, ensureSalesRemissionPepsSchema, type Sale
 const idStart = 7100000000000;
 const idEnd = idStart + 99999998;
 export const isLocalSalesRemissionId = (id: number) => id >= idStart && id <= idEnd;
+export const localSalesRemissionNumber = (id: number) => 'FAW' + String(id - idStart + 1).padStart(8, '0');
 
 const migrations = [{
   id: 'sales_remission_capture',
@@ -149,7 +150,7 @@ export class PostgresSalesRemissions implements InvoiceFromOrderStorage {
       const posting = await allocateSalesRemissionLayers(client, draft, this.layers);
       const { rows: [sequence] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.sales_remission_ids') AS id");
       const id = Number(sequence!.id);
-      const number = 'FAW' + String(id - idStart + 1).padStart(8, '0');
+      const number = localSalesRemissionNumber(id);
       const { rows: lineIds } = await client.query<{ id: string }>(
         "SELECT nextval('tuvansa.sales_remission_line_ids') AS id FROM generate_series(1,$1::int)", [posting.invoice.lines.length],
       );

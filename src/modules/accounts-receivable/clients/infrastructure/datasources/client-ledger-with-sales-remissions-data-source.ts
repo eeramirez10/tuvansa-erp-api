@@ -2,6 +2,7 @@ import type { InvoiceProps } from '../../../../sales/invoicing/domain/entities/i
 import { readHistoricalSalesRemissionCancellations, type HistoricalSalesRemissionCancellation } from '../../../../sales/invoicing/infrastructure/datasources/historical-sales-remission-cancellation-reads.js';
 import { readSalesRemissions } from '../../../../sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
+import { salesTicketConversionSql } from '../../../../sales/invoicing/infrastructure/datasources/sales-ticket-conversion-reads.js';
 import type { ClientBalanceDataSource } from '../../domain/datasources/client-balance-data-source.js';
 import type { ClientMovementsDataSource } from '../../domain/datasources/client-movements-data-source.js';
 import { ClientBalanceDocument } from '../../domain/entities/client-balance-document.js';
@@ -45,7 +46,6 @@ interface LocalMovement {
   runningBalance: number;
 }
 
-const invoice = "((remission.result->'invoice') - 'lines')";
 const today = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City')::date";
 export const clientMoney = (value: number): number => Math.round(value * 100) / 100;
 const historicalCharge = (rows: HistoricalSalesRemissionCancellation[]) => rows.reduce((total, row) => total + row.amount, 0);
@@ -61,11 +61,12 @@ export async function salesRemissionCustomerTotals(customerIds: number[]): Promi
   const local = readSalesRemissions(new Map<number, SalesRemissionCustomerTotals>(), async (client) => {
     const join = joinRemissionCollections(await customerCollectionsAvailable(client), await customerCollectionReversalsAvailable(client));
     const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+    const conversion = await salesTicketConversionSql(client);
     // Derivada. Completa el saldo y las fechas de compra y pago de la ficha del cliente.
     const { rows } = await client.query<{ id: number } & SalesRemissionCustomerTotals>(
       `SELECT remission.customer_id::float8 AS id, sum(remission.charge - collections.paid)::float8 AS balance,
-              max(remission.issued_at)::text AS "lastPurchaseAt", max(collections.last_payment_date)::text AS "lastPaymentAt"
-       FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join}
+              max(${conversion.issuedAt})::text AS "lastPurchaseAt", max(collections.last_payment_date)::text AS "lastPaymentAt"
+       FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join} ${conversion.join}
        WHERE remission.company_id = 1 AND remission.customer_id = ANY($1::bigint[]) AND NOT (${cancellation.canceled})
        GROUP BY remission.customer_id`, [customerIds],
     );
@@ -93,7 +94,7 @@ function balancePage(criteria: ClientBalanceSearchCriteria, offset: number, limi
   if (criteria.dueStatus === 'notDue') conditions.push(`"dueAt" >= ${today}`);
   if (criteria.query !== undefined) {
     values.push(`%${criteria.query}%`);
-    conditions.push(`(number ILIKE $2 OR order_number ILIKE $2 OR invoice->>'customerOrderNumber' ILIKE $2
+    conditions.push(`(number ILIKE $2 OR original_number ILIKE $2 OR order_number ILIKE $2 OR invoice->>'customerOrderNumber' ILIKE $2
       OR invoice->>'deliveryNote' ILIKE $2)`);
   }
   const where = conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`;
@@ -101,13 +102,15 @@ function balancePage(criteria: ClientBalanceSearchCriteria, offset: number, limi
   return readSalesRemissions(emptyBalance, async (client) => {
     const join = joinRemissionCollections(await customerCollectionsAvailable(client), await customerCollectionReversalsAvailable(client));
     const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+    const conversion = await salesTicketConversionSql(client);
     // Derivada. Saldo considera el importe pendiente de cada documento con cargo.
     const { rows: [row] } = await client.query<BalancePage>(
       `WITH ledger AS (
-         SELECT remission.id, remission.number, remission.order_number, ${invoice} AS invoice,
-                remission.issued_at AS "issuedAt", remission.charge - collections.paid AS remaining,
-                coalesce((remission.result #>> '{invoice,dates,dueAt}')::date, remission.issued_at) AS "dueAt"
-         FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join}
+         SELECT remission.id, ${conversion.number} AS number, remission.number AS original_number, remission.order_number,
+                (${conversion.invoice}) - 'lines' AS invoice, ${conversion.issuedAt} AS "issuedAt",
+                remission.charge - collections.paid AS remaining,
+                coalesce(((${conversion.invoice}) #>> '{dates,dueAt}')::date, ${conversion.issuedAt}) AS "dueAt"
+         FROM tuvansa.sales_remissions AS remission ${join} ${cancellation.join} ${conversion.join}
          WHERE remission.company_id = 1 AND remission.customer_id = $1 AND remission.charge > collections.paid AND NOT (${cancellation.canceled})
        ), matches AS (SELECT * FROM ledger ${where})
        SELECT coalesce(sum(remaining), 0)::float8 AS "totalBalance",
@@ -237,21 +240,24 @@ function movementPage(
     const join = joinRemissionCollections(hasCollections, hasCollectionReversals);
     const hasCancellations = await salesRemissionCancellationsAvailable(client);
     const cancellation = remissionCancellationSql(hasCancellations);
+    const conversion = await salesTicketConversionSql(client);
+    const invoice = `((${conversion.invoice}) - 'lines')`;
     // Derivada. Los cargos y abonos se ordenan por fecha e inserción para calcular el saldo de cada movimiento.
     const { rows: [row] } = await client.query<MovementPage>(
       `WITH remissions AS (
          SELECT remission.id, CASE WHEN ${cancellation.canceled} THEN ${invoice} || jsonb_build_object('canceled',true) ELSE ${invoice} END AS invoice,
-                remission.issued_at, remission.order_number, remission.charge,
+                ${conversion.issuedAt} AS issued_at, remission.order_number, remission.charge,
+                remission.result #>> '{invoice,movementType}' AS charge_type,
                 CASE WHEN ${cancellation.canceled} THEN 0 ELSE remission.charge - collections.paid END AS remaining, remission.user_id,
                 coalesce(audit.created_at, remission.issued_at::timestamp AT TIME ZONE 'America/Mexico_City') AS created_at
          FROM tuvansa.sales_remissions AS remission
          LEFT JOIN tuvansa.order_changes AS audit
            ON audit.order_id = remission.order_id AND audit.revision = remission.order_revision
-         ${join} ${cancellation.join}
+         ${join} ${cancellation.join} ${conversion.join}
          WHERE remission.company_id = 1 AND remission.customer_id = $1 AND remission.charge > 0
        ), entries AS (
          SELECT id, invoice, issued_at AS movement_date, charge AS amount, remaining,
-                invoice->>'movementType' AS movement_type, order_number AS payment_reference,
+                charge_type AS movement_type, order_number AS payment_reference,
                 ''::text AS policy, 0 AS receipt_number, NULL::text AS collection_number, user_id, created_at,
                 NULL::jsonb AS collection_reversal,false AS is_collection_reversal
          FROM remissions

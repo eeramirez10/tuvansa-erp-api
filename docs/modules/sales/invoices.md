@@ -212,7 +212,7 @@ y queda fuera de la regeneración automática.
 | Acciones | Lotes | `/:invoiceId/actions/lots` | Producto, lote, fecha, cantidad, aduana y pedimento |
 | Acciones | Piezas | `/:invoiceId/actions/pieces` | Código, número, piezas, cantidad, almacén, pedido, referencia, alta y recepción |
 | Acciones | Sellar | `/:invoiceId/actions/seal` | Estado CFD/folio y simulación disponible para remisiones web en pruebas |
-| Sumarios | Tiket > Factura | `/:invoiceId/summaries/ticket-to-invoice` | Contexto, operación deshabilitada |
+| Sumarios | Tiket > Factura | `GET` y `POST /:invoiceId/summaries/ticket-to-invoice` | Vista previa y conversión de remisión web `FAW` a factura web `FEW` pendiente de timbrar |
 | Sumarios | Traspaso | `/:invoiceId/summaries/transfer` | Partidas a transferir; no modifica inventario |
 | Sumarios | Edita pzas | `GET /:invoiceId/summaries/edit-pieces`, `PATCH /:invoiceId/summaries/edit-pieces/:lineId` | Valor de piezas de la partida seleccionada (`FAXINV.AIPZAS`), con cambios web en PostgreSQL |
 | Sumarios | Liquidación camión | `/:invoiceId/summaries/truck-settlement` | Ruta, fecha, cliente e importe; no liquida |
@@ -259,10 +259,12 @@ siguió en −6 y la lectura de MySQL conservó `AIPZAS` vacío.
 El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
 
 - **Tiket > Factura** llama a `MFACT/86`. En México `FTIPMV` contiene la
-  conversión `FA → FE`. El procedimiento valida la partida fiscal en `/322`,
-  reasigna el folio y recalcula totales, saldos y movimientos. Falta una remisión
-  desechable y una confirmación aislada del flujo de conversión antes de migrar
-  sus efectos; el timbrado real se verifica en la etapa fiscal.
+  conversión `FA → FE`. El procedimiento valida las partidas fiscales en
+  `/322`, conserva `DSEQ` y copia el folio y la fecha originales a
+  `DTALON` y `DFECHATALON`. `/362` asigna el folio y deja `DSTATUSCFD=1`.
+  `/139` actualiza la fecha y el importe de la primera partida existente
+  en `FAX`. Para TUVANSA el factor de cambio es 1. La rama que modifica
+  precios de `FAXINV` se ejecuta con un factor distinto de 1.
 - **Traspaso** usa los permisos de `EFACT#13/34` y llama a `/197` o a `/198`
   con Shift. La copia histórica habilita `CIACOMPORTA[37]`, pero el tipo `FA`
   de `FA25675` tiene `TITRASPASOS=0`. El procedimiento requiere un tipo que
@@ -274,6 +276,46 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   con importación de archivo tabulado o colector COM1/COM2. Falta una sesión
   con liquidación de prueba y sus documentos de devolución. La lectura de ruta
   de la ficha de Facturación brinda contexto, mientras se comprueba el flujo.
+
+### Tiket > Factura en la web
+
+La vista previa devuelve `ticketConversion` junto con `readOnly` y
+`reason`. La confirmación recibe `expectedVersion` y `requestKey`.
+Se admite la remisión web de México en pesos, con partidas positivas,
+un cargo original sin movimientos PA y tipos `FA` y `FE` compatibles
+en `FTIPMV`. La fecha de emisión se toma en `America/Mexico_City`.
+El mismo envío recupera el resultado al reintentar. Una revisión
+vencida devuelve `409`.
+
+La numeración `FEW` y el vínculo con `FAW` quedan en
+`tuvansa.sales_ticket_conversions`. Facturación resuelve ambos folios
+al mismo ID y conserva el vencimiento, las partidas, el total y el saldo.
+Se conserva el código de movimiento `FA` y el estado queda pendiente
+de timbrar. Saldo, Movimientos y Auxiliar muestran el cargo único con
+la nueva fecha. El pedido y los auxiliares de inventario muestran el
+nuevo folio sobre el mismo surtido y la salida original, cuya fecha,
+cantidades y capas siguen siendo las del movimiento de remisión.
+Los cambios de piezas conservan el vínculo por ID, folio de origen
+e ID de partida.
+
+La evidencia histórica incluye `FE0061935`, antes `FA25659`, con el
+mismo `DSEQ` y un cargo `FA` fechado el día de la conversión. El
+controlador mexicano de German llama a `MFACT/86` directamente. Ese
+procedimiento puede escribir al cerrar el diálogo de tipo de cambio.
+La verificación nativa se hizo con lectura del historial y los
+procedimientos exportados.
+
+Chromium recorrió vista previa, Cancelar, Confirmar y reapertura
+de la factura `FEW` con el mismo ID. Evidencia
+`ev_233c15177c4f0abd155aa9543f27a670ea1fe4ab81d3bf51c23a7cd81a08d243`.
+En la misma instancia de PGlite se cotejaron Facturación, Pedido,
+Inventarios y Saldo. Con PostgreSQL 17 local se comprobaron carreras
+en la misma remisión contra otra conversión, una captura PA y una
+cancelación. También se verificaron el conflicto `409`, el reintento
+y el rollback tras un fallo entre `INSERT` y `COMMIT`
+(`captures/postgres-ticket-conversion/verified-run.txt`).
+
+### Contrato de los paneles
 
 Cada panel regresa `button`, `section`, `source`, `available`, `readOnly`,
 `items` y, cuando corresponde, `summary` y `reason`. Esto permite reutilizar el

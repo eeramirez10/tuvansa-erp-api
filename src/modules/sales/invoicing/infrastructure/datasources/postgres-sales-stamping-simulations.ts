@@ -7,6 +7,7 @@ import type {
   StampingSimulation, StampingSimulationDataSource,
 } from '../../domain/datasources/stamping-simulation-data-source.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
+import { salesTicketConversionSql } from './sales-ticket-conversion-reads.js';
 
 // Derivada: registro local de pruebas de la API.
 const migrations = [{
@@ -74,9 +75,10 @@ export class PostgresSalesStampingSimulations implements StampingSimulationDataS
       try {
         await client.query('SELECT id FROM tuvansa.sales_remissions WHERE id=$1 FOR UPDATE', [id]);
         const cancellation = remissionCancellationSql(await salesRemissionCancellationsAvailable(client));
+        const conversion = await salesTicketConversionSql(client);
         const { rows: [active] } = await client.query(
-          `SELECT 1 FROM tuvansa.sales_remissions remission ${cancellation.join} WHERE remission.id=$1
-             AND NOT (${cancellation.canceled}) AND remission.result #>> '{invoice,cfdStatus}'='0'
+          `SELECT 1 FROM tuvansa.sales_remissions remission ${cancellation.join} ${conversion.join} WHERE remission.id=$1
+             AND NOT (${cancellation.canceled}) AND NOT (${conversion.converted}) AND remission.result #>> '{invoice,cfdStatus}'='0'
              AND remission.result #>> '{invoice,folio}'=''
              AND NOT coalesce((remission.result #>> '{invoice,canceled}')::boolean,false)`, [id],
         );

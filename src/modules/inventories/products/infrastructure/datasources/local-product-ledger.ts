@@ -1,6 +1,7 @@
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { connectPostgres, postgresConfigured, type PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
 import { hasLocalSalesStock } from '../../../../sales/orders/infrastructure/datasources/sales-order-inventory-stock.js';
+import { salesTicketConversionSql } from '../../../../sales/invoicing/infrastructure/datasources/sales-ticket-conversion-reads.js';
 import type { MovementHeader, MovementLine } from '../../../movements/domain/entities/inventory-movement.js';
 import type { ProductLedgerFilters, ProductLotMovementTotals } from '../../domain/repositories/product-panels-repository.js';
 
@@ -60,14 +61,19 @@ export async function localProductLedger(
   try {
     client = await connectPostgres();
     const tables = await hasLocalSalesStock(client);
-    const queries = sources.filter(({ flag }) => tables[flag]).map(({ table, stock, key }) =>
-      `SELECT d.movement->'header' AS header, part AS line
-       FROM tuvansa.${table} d
-       CROSS JOIN LATERAL jsonb_array_elements(d.movement->'lines') AS part
-       WHERE d.movement #>> '{header,company}'='1'
-         AND (part->>'productId')::bigint=$1
-         AND EXISTS (SELECT 1 FROM tuvansa.${stock} i WHERE i.product_id=$1 AND i.${key}=d.id)`,
-    );
+    const conversion = tables.remissions ? await salesTicketConversionSql(client, 'd') : null;
+    const queries = sources.filter(({ flag }) => tables[flag]).map(({ flag, table, stock, key }) => {
+      const effective = flag === 'remissions' ? conversion : null;
+      const baseHeader = "d.movement->'header'";
+      const header = effective?.join ? `CASE WHEN ${effective.converted} THEN
+        jsonb_set(${baseHeader},'{document}',to_jsonb(${effective.number})) ELSE ${baseHeader} END` : baseHeader;
+      return `SELECT ${header} AS header, part AS line
+        FROM tuvansa.${table} d ${effective?.join ?? ''}
+        CROSS JOIN LATERAL jsonb_array_elements(d.movement->'lines') AS part
+        WHERE d.movement #>> '{header,company}'='1'
+          AND (part->>'productId')::bigint=$1
+          AND EXISTS (SELECT 1 FROM tuvansa.${stock} i WHERE i.product_id=$1 AND i.${key}=d.id)`;
+    });
     if (queries.length === 0) return empty;
     const source = `(${queries.join(' UNION ALL ')}) AS movements`;
     const offset = limit > 0 ? await findOffset() : 0;

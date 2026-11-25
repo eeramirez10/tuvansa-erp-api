@@ -14,6 +14,7 @@ import { ConflictError } from '../../../../../shared/domain/errors/conflict-erro
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { readSalesRemissions } from '../../../invoicing/infrastructure/datasources/postgres-sales-remissions.js';
+import { salesTicketConversionSql } from '../../../invoicing/infrastructure/datasources/sales-ticket-conversion-reads.js';
 import { compareOrders, matchesOrder } from './order-overlay-filter.js';
 
 type LegacyRead = Pick<OrdersDataSource,'findById'|'findByNumber'|'search'|'findAdjacent'|'customerExists'>;
@@ -288,9 +289,11 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     if (key === 'invoices') {
       const legacy = local.base ? await this.legacyPanels.getPanel(id, key) : null;
       const remissions = await readSalesRemissions<Record<string, unknown>[]>([], async (client) => {
+        const conversion = await salesTicketConversionSql(client);
         const { rows } = await client.query<{ id: string; documentNumber: string; date: string }>(
-          `SELECT id::text,number AS "documentNumber",issued_at::text AS date
-           FROM tuvansa.sales_remissions WHERE order_id=$1 AND order_number=$2 ORDER BY id`, [id, doc.number],
+          `SELECT remission.id::text,${conversion.number} AS "documentNumber",${conversion.issuedAt}::text AS date
+           FROM tuvansa.sales_remissions remission ${conversion.join}
+           WHERE remission.order_id=$1 AND remission.order_number=$2 ORDER BY remission.id`, [id, doc.number],
         );
         return rows.map((row) => ({ ...row, id: Number(row.id) }));
       });

@@ -1,4 +1,5 @@
 import type { StampingSimulation } from '../datasources/stamping-simulation-data-source.js';
+import type { SalesTicketConversionPreview } from '../datasources/sales-ticket-conversion-data-source.js';
 
 export const invoicePanelKeys = [
   'auxiliary', 'boxes', 'classifications', 'comments', 'ct', 'print', 'lots', 'pieces', 'seal',
@@ -20,6 +21,7 @@ export interface InvoicePanelResult {
   readOnly?: boolean;
   reason?: string;
   stampingSimulation?: { result: StampingSimulation | null };
+  ticketConversion?: SalesTicketConversionPreview;
 }
 
 export interface InvoicePanelsRepository {

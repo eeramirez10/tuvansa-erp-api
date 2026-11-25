@@ -5,6 +5,7 @@ import { connectPostgres, postgresConfigured, postgresUnavailable,
 import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { invoicePieceVersion, type InvoicePieceEdit, type InvoicePieceIdentity,
   type InvoicePieceStore, type SavedInvoicePiece } from '../../application/use-cases/edit-invoice-pieces.js';
+import { isLocalSalesRemissionId, localSalesRemissionNumber } from './postgres-sales-remissions.js';
 
 // Derivada. El historial conserva el vínculo DSEQ/DNUM/AISEQ y permite recuperar un intento confirmado.
 const migrations = [{
@@ -26,6 +27,8 @@ const migrations = [{
 const fields = 'line_id::float8 AS "lineId", value, revision, expected_version AS "expectedVersion"';
 const lineScope = 'invoice_id=$1 AND invoice_number=$2 AND line_id=$3';
 const table = 'tuvansa.sales_invoice_line_pieces';
+const storageNumber = ({ id, number }: InvoicePieceIdentity) =>
+  isLocalSalesRemissionId(id) ? localSalesRemissionNumber(id) : number;
 
 export class PostgresInvoicePieces implements InvoicePieceStore {
   private migration?: Promise<void>;
@@ -53,7 +56,7 @@ export class PostgresInvoicePieces implements InvoicePieceStore {
       const { rows } = await client.query<SavedInvoicePiece>(
         `SELECT DISTINCT ON (line_id) ${fields} FROM ${table}
           WHERE invoice_id=$1 AND invoice_number=$2 ORDER BY line_id, revision DESC`,
-        [invoice.id, invoice.number],
+        [invoice.id, storageNumber(invoice)],
       );
       return rows;
     });
@@ -80,7 +83,7 @@ export class PostgresInvoicePieces implements InvoicePieceStore {
   }
 
   private async saveLocked(client: PostgresClient, invoice: InvoicePieceIdentity, lineId: number, original: string, edit: InvoicePieceEdit) {
-    const scope = [invoice.id, invoice.number, lineId];
+    const scope = [invoice.id, storageNumber(invoice), lineId];
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-invoice-pieces:' || $1::text || ':' || $2::text,0))", [invoice.id, lineId]);
     const { rows: [replay] } = await client.query<SavedInvoicePiece>(
       `SELECT ${fields} FROM ${table} WHERE ${lineScope} AND request_key=$4`, [...scope, edit.requestKey],

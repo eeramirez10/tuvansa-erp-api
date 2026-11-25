@@ -74,6 +74,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   customer(code: string) { return this.references.customer(code); }
   searchCustomers(criteria: Parameters<OrderReferenceDataSource['searchCustomers']>[0], limit: number) { return this.references.searchCustomers(criteria, limit); }
   searchProducts(criteria: Parameters<OrderReferenceDataSource['searchProducts']>[0], warehouse: string, limit: number) { return this.references.searchProducts(criteria, normalizeOrderWarehouse(warehouse), limit); }
+  productFamilies() { return this.references.productFamilies(); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.references.product(code,normalizeOrderWarehouse(warehouse),type,customerCode); }
 
   private async prepareLines(lines: CaptureLine[], customer: CaptureCustomer, warehouse: string, exchangeRate: number) {

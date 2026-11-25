@@ -35,6 +35,14 @@ export interface CaptureProductSearchCriteria {
   code?: string;
   description?: string;
   supplierCode?: string;
+  familyPattern?: string;
+}
+export interface CaptureProductFamily {
+  position: number;
+  label: string;
+  start: number;
+  width: number;
+  options: Array<{ code: string; description: string }>;
 }
 export type CaptureCurrencyId = 1 | 2;
 export type CaptureCurrencyName = 'DOLARES' | 'PESOS';
@@ -58,6 +66,7 @@ export interface OrderCaptureRepository {
   customer(code: string): Promise<CaptureCustomer>;
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]>;
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]>;
+  productFamilies(): Promise<CaptureProductFamily[]>;
   product(code: string, warehouse: string, typeCode: string, customerCode: string): Promise<CaptureProduct>;
   create(input: CaptureInput): Promise<Order>;
   convertQuote(orderId: number): Promise<Order>;

@@ -30,12 +30,26 @@ const product: CaptureProduct = {
 const repository = (): OrderCaptureRepository => ({
   options: vi.fn().mockResolvedValue({ warehouses: [], types: [] }),
   customer: vi.fn(), searchCustomers: vi.fn(), searchProducts: vi.fn(), product: vi.fn(), create: vi.fn(), convertQuote: vi.fn(),
+  productFamilies: vi.fn(),
   setAuthorization: vi.fn(), setAssignment: vi.fn(),
 });
 const app = (repo: OrderCaptureRepository) => express().use(express.json()).use(createOrderCaptureRouter(new CaptureOrder(repo))).use(errorHandler);
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe('Alta de pedidos capturada', () => {
+  it('consulta familias y aplica una máscara de trece posiciones al almacén activo', async () => {
+    const repo = repository();
+    const families = [{ position: 1, label: 'PROVEEDOR', start: 0, width: 2, options: [{ code: 'VT', description: 'Prueba' }] }];
+    vi.mocked(repo.productFamilies).mockResolvedValue(families);
+    vi.mocked(repo.searchProducts).mockResolvedValue([]);
+    const http = request(app(repo));
+    await http.get('/capture/product-families').expect(200, { data: families });
+    await http.get('/capture/products').query({ warehouse: '01', familyPattern: 'VT' }).expect(400);
+    const familyPattern = 'VT' + '*'.repeat(11);
+    await http.get('/capture/products').query({ warehouse: '01', familyPattern }).expect(200, { data: [] });
+    expect(repo.searchProducts).toHaveBeenCalledWith({ familyPattern }, '01', 50);
+  });
+
   it('consulta sólo los almacenes configurados del catálogo de México', async () => {
     pool.execute
       .mockResolvedValueOnce([[{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }]])

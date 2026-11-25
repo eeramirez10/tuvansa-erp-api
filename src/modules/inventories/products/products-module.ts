@@ -65,8 +65,10 @@ export const createProductsModule = (): Router => {
     new DeleteProduct(repository),
     new GetProductPanel(panelsRepository),
     new SetProductBlockStatus(panelsRepository),
+    readLegacyProductPhoto,
   );
   const classifications = new ProductClassificationsController(new EditProductClassification(classificationRepository));
   const otherData = new ProductOtherDataController(new EditProductOtherData(otherDataRepository));
   return createProductsRouter(controller, classifications, otherData);
 };
+import { readLegacyProductPhoto } from './infrastructure/datasources/legacy-product-photos.js';

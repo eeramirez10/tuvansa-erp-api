@@ -61,6 +61,9 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   router.get('/capture/customers/:code', async (req, res, next) => {
     try { res.json({ data: await useCase.customer(z.string().trim().min(1).max(6).parse(req.params.code)) }); } catch (error) { next(error); }
   });
+  router.get('/capture/product-families', async (_req, res, next) => {
+    try { res.json({ data: await useCase.productFamilies() }); } catch (error) { next(error); }
+  });
   router.get('/capture/products', async (req, res, next) => {
     try {
       const query = z.object({
@@ -69,8 +72,9 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
         code: z.string().trim().min(1).max(30).optional(),
         description: z.string().trim().min(1).max(100).optional(),
         supplierCode: z.string().trim().min(1).max(30).optional(),
+        familyPattern: z.string().length(13).optional(),
         limit: z.coerce.number().int().positive().max(100).default(50),
-      }).refine(value => value.query || value.code || value.description || value.supplierCode, {
+      }).refine(value => value.query || value.code || value.description || value.supplierCode || value.familyPattern, {
         message: 'Captura código, descripción o código de proveedor',
       }).parse(req.query);
       const searchCode = query.code ?? query.query;
@@ -78,6 +82,7 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
         ...(searchCode ? { code: searchCode } : {}),
         ...(query.description ? { description: query.description } : {}),
         ...(query.supplierCode ? { supplierCode: query.supplierCode } : {}),
+        ...(query.familyPattern ? { familyPattern: query.familyPattern } : {}),
       }, query.warehouse, query.limit) });
     } catch (error) { next(error); }
   });

@@ -45,6 +45,7 @@ const legacy: OrdersDataSource = {
 };
 const customer = {id:15331,code:'000001',name:'Cliente',agentCode:'1202',agentName:'Agente',termsDays:30,store:'302',classification:'211',branches:[]};
 const references: OrderReferenceDataSource = {
+  productFamilies: async () => [],
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
   customer:async()=>customer,searchCustomers:async()=>[],searchProducts:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
   product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,costCurrencyId:1,taxPercentage:16,excisePercentage:0,currencyId:1,stock:50,assigned:0,available:50,weight:16.08,volume:0}),

@@ -16,6 +16,7 @@ export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSo
   customer(code: string) { return this.source.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.source.searchCustomers(criteria, limit); }
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }
+  productFamilies() { return this.source.productFamilies(); }
   product(code: string, warehouse: string, type: string, customerCode: string) { return this.source.product(code,warehouse,type,customerCode); }
   async customerById(id: number) {
     const record = await clientCatalogRecord(id);

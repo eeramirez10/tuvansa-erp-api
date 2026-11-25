@@ -65,6 +65,32 @@ Requisito funcional del usuario: Captura de pedido y Cambio de pedido muestran s
 | Encuentra producto | Buscar por código / IEAN o descripción | Sin nueva captura OMNIS | Derivada | GET /api/sales/orders/capture/products | FINV, FALM |
 | Encuentra producto | Doble clic / OK | Lectura existente; sin nuevo marcador | Adaptada; comparación sin mayúsculas derivada | GET /api/sales/orders/capture/products/:identifier | FINV, FALM, FTIPMV, FDESCTOS |
 
+### Alternos, Foto y Familias (2026-11-25)
+
+| Botón | Evidencia German | Consulta web |
+| --- | --- | --- |
+| Alternos | `EINVFINDEDWC/6` abre `EINV#35`. `/240` busca `FALTERNOS.ALTPROD` por `ICOD` y lee `FINV` por `ALTART`. `/5` reemplaza la lista de coincidencias con el alterno elegido. | Reutiliza `GET /api/inventories/products/:id/purchases-production/alternates` y sus listas de precio 1–10. El código elegido se resuelve en el almacén activo antes de volver al selector. |
+| Foto | `EINVFINDEDWC/7` abre `EINV#36`. `/240` usa el prefijo `CIARAIZ`, los sufijos Z/Y y el nivel de color o código completo. México usa JPG según `CIACOMPORTA[103]`. | `GET /api/inventories/products/:id/actions/photo/image?variant=normal`. El directorio es `LEGACY_PRODUCT_PHOTOS_DIR` o la ruta local de German en Windows. |
+| Familias | `EINVFINDEDWC/9` usa `EINV#57/240` y `/411`. `SFINDINVFAM` compara los primeros 13 caracteres de `IFAM` y acepta `*` en las posiciones libres. Excluye las variantes con `ICOLOR` de productos tipo 1. | `GET /api/sales/orders/capture/product-families` consulta `FFAM` y las etiquetas de `FCIA`. `GET /api/sales/orders/capture/products` aplica `familyPattern` mediante un parámetro en el almacén activo. |
+
+El selector de familias presenta los grupos que alcanzan las posiciones
+comparadas por `SFINDINVFAM` con el catálogo de México. El cálculo
+personalizado `MEMFILQUERY` requiere una regla separada. El campo
+`IPROXRECEP` se convierte a fecha en SQL para que el driver de MySQL entregue
+texto con fecha o nulo a la vista.
+
+La prueba de **Alternos** en Chromium usó un enlace temporal para elegir
+`01300958` desde `01300938`. Ambos productos se resolvieron en el almacén
+01 del MySQL histórico. El respaldo carece de filas de `FALTERNOS`.
+German mostró una foto existente de `01201603` en Inventarios. El archivo
+JPG verificado se lee desde el directorio de fotos y permanece en ese origen.
+Chromium mostró Normal y Completo para ese código. La prueba de Familias
+seleccionó `VT` en PROVEEDOR y el resultado conservó el almacén `01` y
+la familia pedida. La consulta de 50 coincidencias usó el MySQL histórico.
+**Matriz de fotos** sigue pendiente. El procedimiento actual exportado de
+`EINVFINDEDWC` carece de un manejador para el control y el perfil de
+respaldo bloquea la entrada al buscador de Pedidos con el T.M. P.
+
 La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
 
 Código, IEAN y descripción se comparan sin distinguir mayúsculas en la búsqueda parametrizada. Esta mejora es derivada y no se presenta como SQL literal de OMNIS. La validación de costo en la moneda correspondiente (listas 5/6 y conversión con T.C.) permanece en UI y backend.

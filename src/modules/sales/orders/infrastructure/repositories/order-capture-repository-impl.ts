@@ -7,6 +7,7 @@ export class OrderCaptureRepositoryImpl implements OrderCaptureRepository {
   customer(code: string) { return this.source.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.source.searchCustomers(criteria, limit); }
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }
+  productFamilies() { return this.source.productFamilies(); }
   product(code: string, warehouse: string, typeCode: string, customerCode: string) { return this.source.product(code, warehouse, typeCode, customerCode); }
   create(input: CaptureInput) { return this.source.create(input); }
   convertQuote(orderId: number) { return this.source.convertQuote(orderId); }

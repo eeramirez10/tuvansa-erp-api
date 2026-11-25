@@ -61,6 +61,7 @@ const envSchema = z.object({
   LEGACY_DB_USER: z.string().min(1).optional(),
   LEGACY_DB_PASSWORD: z.string().optional(),
   LEGACY_DB_NAME: z.string().min(1).optional(),
+  LEGACY_PRODUCT_PHOTOS_DIR: z.string().trim().optional(),
   LEGACY_DB_SSL: z
     .enum(['true', 'false'])
     .default('false')

@@ -159,6 +159,7 @@ export class ProductsController {
     private readonly deleteProduct: DeleteProduct,
     private readonly getProductPanel: GetProductPanel,
     private readonly setProductBlockStatus: SetProductBlockStatus,
+    private readonly readPhoto: typeof readLegacyProductPhoto,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -173,6 +174,17 @@ export class ProductsController {
     } catch (error) {
       next(error);
     }
+  };
+
+  photo: RequestHandler = async (request, response, next) => {
+    try {
+      const { productId } = productParamsSchema.parse(request.params);
+      const { variant } = z.object({ variant: z.enum(['normal', 'sketch', 'second-sketch', 'color', 'full']).default('normal') })
+        .parse(request.query);
+      const product = await this.getProduct.execute(productId);
+      const image = await this.readPhoto(product.code, variant);
+      response.set('Cache-Control', 'private, max-age=300').type('image/jpeg').send(image);
+    } catch (error) { next(error); }
   };
 
   getById: RequestHandler = async (request, response, next) => {
@@ -329,3 +341,4 @@ export class ProductsController {
     }
   };
 }
+import type { readLegacyProductPhoto } from '../../infrastructure/datasources/legacy-product-photos.js';

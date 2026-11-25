@@ -32,6 +32,7 @@ export const createProductsRouter = (
   router.patch('/:productId/actions/other-data', otherData.save);
   router.get('/:productId/actions/specifications', controller.panel('specifications'));
   router.get('/:productId/actions/photo', controller.panel('photo'));
+  router.get('/:productId/actions/photo/image', controller.photo);
   router.get('/:productId/actions/ct-inventory', controller.panel('ct-inventory'));
   router.get('/:productId/actions/prices', controller.panel('prices'));
   router.get('/:productId/actions/skus', controller.panel('skus'));

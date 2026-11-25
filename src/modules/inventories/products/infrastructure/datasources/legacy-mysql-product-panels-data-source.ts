@@ -224,7 +224,9 @@ const definitions: Record<ProductPanelKey, PanelDefinition> = {
     section: 'purchases-production', button: 'Alternos',
     sql: `SELECT ALTSEQ AS id, ALTPROD AS productCode, ALTART AS alternateCode,
       alternate.IDESCR AS alternateDescription, alternate.ISTKACT AS stock,
-      alternate.ILISTA1 AS price1, ALTVTA AS salePrice,
+      alternate.ILISTA1 AS price1, alternate.ILISTA2 AS price2, alternate.ILISTA3 AS price3, alternate.ILISTA4 AS price4,
+      alternate.ILISTA5 AS price5, alternate.ILISTA6 AS price6, alternate.ILISTA7 AS price7, alternate.ILISTA8 AS price8,
+      alternate.ILISTA9 AS price9, alternate.ILISTA10 AS price10, ALTVTA AS salePrice,
       ALTIGUALES AS equivalent, ALTPORCENT AS percentage,
       ALTTIPO AS alternateType, ALTVALOR AS alternateValue, ALTGEN AS generation
       FROM falternos

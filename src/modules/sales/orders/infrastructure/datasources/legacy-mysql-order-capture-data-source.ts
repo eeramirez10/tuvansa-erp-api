@@ -9,7 +9,7 @@ import {
   catalogProductByIdentifier, catalogProductsById, isNewCatalogProduct, searchChangedCatalogProducts,
 } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import type { OrderCaptureDataSource } from '../../domain/datasources/order-capture-data-source.js';
-import type { CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureInput, CaptureOptions, CaptureProduct, CaptureProductMatch, CaptureProductSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureInput, CaptureOptions, CaptureProduct, CaptureProductFamily, CaptureProductMatch, CaptureProductSearchCriteria } from '../../domain/repositories/order-capture-repository.js';
 import { amountInWords, captureTotals } from '../../domain/entities/order-capture-totals.js';
 import { readLocalWarehouseStock, scaledStock } from './sales-order-inventory-stock.js';
 import { LegacyMysqlOrdersDataSource } from './legacy-mysql-orders-data-source.js';
@@ -136,6 +136,31 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     return code;
   }
 
+  async productFamilies(): Promise<CaptureProductFamily[]> {
+    const positions = Array.from({ length: 9 }, (_, index) => index + 1);
+    const [options, titles] = await Promise.all([
+      legacyMysqlPool.execute<Row<{ position: string; code: string; description: string }>[]>(
+        `SELECT FAMT AS position,FAMNUM AS code,FAMDESCR AS description FROM FFAM
+         WHERE FAMT BETWEEN '1' AND '9' ORDER BY FAMT,FAMNUM`,
+      ),
+      legacyMysqlPool.execute<Row<Record<string, string>>[]>(
+        `SELECT ${positions.map((position) => `CIAFAMPAR${position}`).join(',')} FROM FCIA WHERE CIASEQ=1`,
+      ),
+    ]);
+    let start = 0;
+    const families: CaptureProductFamily[] = [];
+    for (const position of positions) {
+      const group = options[0].filter((row) => Number(row.position) === position);
+      const width = group[1]?.code.trim().length ?? 0;
+      if (start < 13 && width > 0) {
+        families.push({ position, label: titles[0][0]?.[`CIAFAMPAR${position}`]?.trim() || `Familia ${position}`,
+          start, width, options: group.map(({ code, description }) => ({ code: code.trim(), description: description.trim() })) });
+      }
+      start += width;
+    }
+    return families;
+  }
+
   async searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]> {
     warehouse = normalizeOrderWarehouse(warehouse);
     // Derivada: búsqueda de la ventana "Encuentra producto". La captura confirmó la vista y sus columnas,
@@ -143,21 +168,23 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const code = criteria.code ?? '';
     const description = criteria.description ?? '';
     const supplierCode = criteria.supplierCode ?? '';
+    const familyPattern = criteria.familyPattern?.replace(/[\\%_]/g, '\\$&').replace(/\*/g, '_');
     const [rows] = await legacyMysqlPool.execute<Row<CaptureProductMatch>[]>(
       `SELECT FINV.ISEQ AS id,FINV.ICOD AS code,FINV.IDESCR AS description,
        (FALM.ALMCANT-FALM.ALMASIGNADO) AS available,FINV.ILISTA1 AS price,FINV.IMONEDA1 AS currencyId,
        FALM.ALMNUM AS warehouse,FINV.IFAM AS family,FINV.IFAM1 AS secondaryFamily,
-       NULLIF(FINV.IPROXRECEP,'1900-12-31') AS nextReceipt,FINV.ICODPRV AS supplierCode
+       CAST(NULLIF(FINV.IPROXRECEP,'1900-12-31') AS DATE) AS nextReceipt,FINV.ICODPRV AS supplierCode
        FROM FINV INNER JOIN FALM ON FALM.ISEQ=FINV.ISEQ
        WHERE FALM.ALMNUM=? AND FINV.IBAJA='1900-12-31'
        AND (?='' OR UPPER(FINV.ICOD) LIKE CONCAT(UPPER(?),'%') OR UPPER(FINV.IEAN) LIKE CONCAT(UPPER(?),'%'))
        AND (?='' OR UPPER(FINV.IDESCR) LIKE CONCAT('%',UPPER(?),'%'))
        AND (?='' OR FINV.ICODPRV LIKE CONCAT(?,'%'))
+       ${familyPattern ? "AND RPAD(COALESCE(FINV.IFAM,''),13,' ') LIKE ? AND (FINV.ICOLOR='' OR FINV.ITIPO<>1)" : ''}
        ORDER BY FINV.ICOD,FINV.ISEQ LIMIT ?`,
-      [warehouse, code, code, code, description, description, supplierCode, supplierCode, limit]);
+      [warehouse, code, code, code, description, description, supplierCode, supplierCode, ...(familyPattern ? [familyPattern] : []), limit]);
     const [current, changed] = await Promise.all([
       catalogProductsById(rows.map(({ id }) => id)),
-      supplierCode ? [] : searchChangedCatalogProducts(code, description, limit),
+      supplierCode || familyPattern ? [] : searchChangedCatalogProducts(code, description, limit),
     ]);
     const matches = new Map<number, CaptureProductMatch>();
     for (const row of rows) {
@@ -184,7 +211,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       if (!isNewCatalogProduct(document.id)) {
         const [rows] = await legacyMysqlPool.execute<Row<Pick<CaptureProductMatch, 'available' | 'secondaryFamily' | 'nextReceipt' | 'supplierCode'>>[]>(
           `SELECT (a.ALMCANT-a.ALMASIGNADO) AS available, i.IFAM1 AS secondaryFamily,
-             NULLIF(i.IPROXRECEP,'1900-12-31') AS nextReceipt,i.ICODPRV AS supplierCode
+             CAST(NULLIF(i.IPROXRECEP,'1900-12-31') AS DATE) AS nextReceipt,i.ICODPRV AS supplierCode
            FROM FINV i JOIN FALM a ON a.ISEQ=i.ISEQ AND a.ALMNUM=? WHERE i.ISEQ=? LIMIT 1`, [warehouse, document.id],
         );
         if (!rows[0]) continue;

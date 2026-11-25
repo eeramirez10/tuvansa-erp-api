@@ -36,11 +36,16 @@ El buscador reproduce **Poliza, Fecha, Aplic., Familia de Poliza y Cheque**. OMN
 
 Los totales se calculan sumando cargos y abonos. `difference` permite comprobar que la poliza este balanceada.
 
-## Accion de lectura verificada
+## Clasificar
 
-| Boton OMNIS | Endpoint | Fuente real |
-|---|---|---|
-| Clasificar | `GET /:id/actions/classifications` | Valores `POPAR1/POPAR2`; catalogo `FAG`, `AGT=4`, `AGTIPO=3` |
+| Vista | Botón | Evidencia German | Procedencia | Endpoint | Tablas |
+| --- | --- | --- | --- | --- | --- |
+| Pólizas | Clasificar | `20261125-policy-class-unapplied`, `EPASIV#13/1 → EPASIV#19/239–240` | Lectura existente de MySQL y orden por código según el procedimiento | `GET /:id/actions/classifications` | `FPOLIZA`, `FAG` |
+| Clasificadores | Guardar | `20261125-epasiv19-save`, `EPASIV#19/2` | Derivada del procedimiento de guardado | `PATCH /:id/actions/classifications` | `tuvansa.accounting_policy_classifications` |
+
+German carga sólo la lista `LPAR4`, de `FAG.AGT='4'` y `AGTIPO=3`. Preselecciona el `AGTNUM` de `POPAR1`. Guardar comprueba el acceso `EPASIV#19/2` y escribe ese clasificador. El procedimiento admite pólizas vigentes con cualquiera de los dos estados de aplicación. `POPAR2` se conserva en consulta.
+
+La API devuelve el catálogo, los valores vigentes y `summary.revision`. El PATCH exige un `compositeCode` presente en el catálogo, la revisión y un `requestKey` UUID. La escritura serializa ambos guardados sobre la misma póliza, registra el cambio con el ID y folio originales y devuelve el mismo resultado al reenviar la solicitud. Se proyecta `POPAR1` en la ficha, búsqueda y navegación. Una baja del diario web impide un nuevo guardado. La prueba de German se realizó con un catálogo vacío. La prueba HTTP usó un catálogo temporal y PostgreSQL embebido. Cubrió dos solicitudes simultáneas, revisión vencida, reintento y un fallo antes de confirmar. En Chromium, Guardar cerró el diálogo y al reabrir se mostró el valor registrado. Evidencia `ev_a0e8f532669f866ae629ec4ed3a25c98953a1dddd7d7f76870a43683bb4c2554`.
 
 ## Acciones conservadas sin escritura
 
@@ -48,6 +53,16 @@ La consulta histórica conserva Duplicar pasivo e Imprimir. La sección de
 diario web detalla el alcance de Comentarios, Duplicar, Aplicar y Desaplicar.
 
 La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, dos movimientos y balance de cargos/abonos.
+
+**Duplicar pasivo.** `EPASIV#13/4` requiere una familia que empieza por
+`PASIVO`, pide permiso `EPASIV#13/19` y abre `ECIA#11H`. El procedimiento
+usa el plazo y la moneda del proveedor, toma el tipo de cambio de `FCIA` y
+calcula el IVA en proporción a los cargos de cuentas cuyo nombre contiene IVA.
+Escala las partidas por el cociente del importe capturado y el abono de la
+última partida. German mostró «La póliza no es un pasivo» al probar una
+póliza de otra familia. El respaldo México consultado tiene cero pólizas
+vigentes de esta familia. Quedan pendientes el redondeo con un folio elegible
+y el cotejo de la póliza y su cargo en Saldo y Movimientos.
 
 ## Pólizas de recepciones web
 

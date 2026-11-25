@@ -15,12 +15,14 @@ import {
 import { bankReconciliationsAvailable, joinBankReconciliation, readLegacyBankSettlements } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
+import type { PolicyClassificationsStorage } from '../../domain/datasources/policy-classifications-storage.js';
 import { AccountingPolicy, type AccountingPolicyCommentMetadata, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
 import type {
-  AccountingPolicyNavigationDirection, AccountingPolicySearchCriteria, AccountingPolicySearchResult,
+  AccountingPolicyClassificationsResult, AccountingPolicyNavigationDirection, AccountingPolicySearchCriteria, AccountingPolicySearchResult,
 } from '../../domain/repositories/accounting-policies-repository.js';
 import type { LegacyMysqlAccountingPoliciesDataSource } from './legacy-mysql-accounting-policies-data-source.js';
 import { isManualPolicyId, manualLineSettlement, manualPoliciesAvailable, manualPolicyCommentFields, manualPolicyIdStart, readAppliedHistoricalPolicies } from './manual-policy-reads.js';
+import { PostgresPolicyClassifications } from './postgres-policy-classifications.js';
 
 interface LocalPolicyHeader {
   id: number;
@@ -294,7 +296,25 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
 }
 
 export class AccountingPoliciesWithLocalPostingsDataSource implements AccountingPoliciesDataSource {
-  constructor(private readonly legacy: LegacyMysqlAccountingPoliciesDataSource) {}
+  constructor(
+    private readonly legacy: LegacyMysqlAccountingPoliciesDataSource,
+    private readonly classifications: PolicyClassificationsStorage = new PostgresPolicyClassifications(),
+  ) {}
+
+  private async withClassifications(policies: AccountingPolicy[]) {
+    const entries = policies.map((policy) => policy.toPrimitives());
+    const changes = await this.classifications.find(entries);
+    const byId = new Map(changes.map((change) => [change.id, change]));
+    return entries.map((entry, index) => {
+      const change = byId.get(entry.id);
+      if (change?.number !== entry.number) return policies[index]!;
+      return AccountingPolicy.create({ ...entry, classifications: [change.compositeCode, ...entry.classifications.slice(1)] });
+    });
+  }
+
+  private async projectClassifications(policy: AccountingPolicy | null) {
+    return policy ? (await this.withClassifications([policy]))[0]! : null;
+  }
 
   private async projectLegacy(policy: AccountingPolicy | null) {
     if (!policy) return null;
@@ -320,14 +340,14 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
   }
 
   async findById(id: number) {
-    if (!isLocalPolicyId(id)) return this.projectLegacy(await this.legacy.findById(id));
+    if (!isLocalPolicyId(id)) return this.projectClassifications(await this.projectLegacy(await this.legacy.findById(id)));
     const local = await this.record('id', id);
-    return local ? policyWithMovements(local) : null;
+    return this.projectClassifications(local ? await policyWithMovements(local) : null);
   }
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
-    return local ? policyWithMovements(local) : this.projectLegacy(await this.legacy.findByNumber(number));
+    return this.projectClassifications(local ? await policyWithMovements(local) : await this.projectLegacy(await this.legacy.findByNumber(number)));
   }
 
   private searchLocal(criteria: AccountingPolicySearchCriteria, filtered: boolean, offset: number, limit: number) {
@@ -375,11 +395,17 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       this.searchLocal(criteria, filtered, filtered ? 0 : offset, filtered ? offset + limit : limit),
       readAppliedHistoricalPolicies(),
     ]);
-    if (local.total === 0) return this.legacy.search(criteria, appliedHere);
+    if (local.total === 0) {
+      const legacy = await this.legacy.search(criteria, appliedHere);
+      return { ...legacy, items: await this.withClassifications(legacy.items) };
+    }
     if (!filtered) {
       // New local postings precede the historical ledger in the default order.
       const legacy = await this.legacy.search({ ...criteria, offset: Math.max(offset - local.total, 0), limit: limit - local.items.length }, appliedHere);
-      return { items: [...local.items.map((header) => localPolicy(header)), ...legacy.items], total: local.total + legacy.total };
+      return {
+        items: await this.withClassifications([...local.items.map((header) => localPolicy(header)), ...legacy.items]),
+        total: local.total + legacy.total,
+      };
     }
 
     // Every legacy row before this offset is also before the requested combined page.
@@ -393,7 +419,7 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       }),
     ].sort((left, right) => comparePolicyNumbers(left.number, right.number) || left.id - right.id);
     return {
-      items: merged.slice(offset - legacyOffset, offset + limit - legacyOffset).map(({ entity }) => entity),
+      items: await this.withClassifications(merged.slice(offset - legacyOffset, offset + limit - legacyOffset).map(({ entity }) => entity)),
       total: local.total + legacy.total,
     };
   }
@@ -418,17 +444,32 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       this.legacy.findAdjacentByNumber(number, direction),
     ]);
 
-    if (!local) return this.projectLegacy(legacy);
+    if (!local) return this.projectClassifications(await this.projectLegacy(legacy));
     if (legacy) {
       const comparison = comparePolicyNumbers(local.number, legacy.toPrimitives().number);
-      if (previous ? comparison < 0 : comparison > 0) return this.projectLegacy(legacy);
+      if (previous ? comparison < 0 : comparison > 0) return this.projectClassifications(await this.projectLegacy(legacy));
     }
-    return policyWithMovements(local);
+    return this.projectClassifications(await policyWithMovements(local));
   }
 
-  async getClassifications(id: number) {
-    if (!isLocalPolicyId(id)) return this.legacy.getClassifications(id);
-    const local = await this.record('id', id);
-    return local ? this.legacy.getClassificationCatalog(localPolicy(local)) : null;
+  async getClassifications(id: number): Promise<AccountingPolicyClassificationsResult | null> {
+    const local = isLocalPolicyId(id) ? await this.record('id', id) : null;
+    const panel = isLocalPolicyId(id)
+      ? local && await this.legacy.getClassificationCatalog(localPolicy(local))
+      : await this.legacy.getClassifications(id);
+    if (!panel) return null;
+    const [saved] = await this.classifications.find([panel.policy]);
+    const reason = panel.summary.reason ?? (!this.classifications.writable()
+      ? 'La escritura en PostgreSQL no está habilitada.'
+      : panel.items.some(({ compositeCode }) => compositeCode.length > 0 && compositeCode.length <= 4)
+        ? null : 'El catálogo de clasificadores de pólizas está vacío.');
+    return {
+      ...panel,
+      source: saved ? 'mysql+postgres' : panel.source,
+      summary: {
+        current: saved ? [saved.compositeCode, ...panel.summary.current.slice(1)] : panel.summary.current,
+        revision: saved?.revision ?? 0, canWrite: reason === null, reason,
+      },
+    };
   }
 }

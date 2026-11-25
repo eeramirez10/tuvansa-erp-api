@@ -29,6 +29,16 @@ GET {{baseUrl}}/accounting/policies/{{policyId}}/next
 ### Accion: Clasificar
 GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/classifications
 
+### Guardar el AGTNUM elegido en PostgreSQL de pruebas. Usa summary.revision del GET y un UUID nuevo por cambio.
+PATCH {{baseUrl}}/accounting/policies/{{policyId}}/actions/classifications
+Content-Type: application/json
+
+{
+  "compositeCode": "{{policyClassifierCompositeCode}}",
+  "revision": {{policyClassifierRevision}},
+  "requestKey": "{{policyClassifierRequestKey}}"
+}
+
 ### Duplicar una póliza ordinaria, consultar la fecha y revisión de la fuente
 GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/duplicate
 

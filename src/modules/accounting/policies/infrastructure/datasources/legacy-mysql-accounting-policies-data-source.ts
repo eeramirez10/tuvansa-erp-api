@@ -234,17 +234,20 @@ export class LegacyMysqlAccountingPoliciesDataSource implements AccountingPolici
 
   async getClassificationCatalog(policy: AccountingPolicy): Promise<AccountingPolicyClassificationsResult> {
     const primitive = policy.toPrimitives();
-    const [rows] = await legacyMysqlPool.execute<RowDataPacket[]>(
+    const [rows] = await legacyMysqlPool.execute<(RowDataPacket & AccountingPolicyClassificationsResult['items'][number])[]>(
       `SELECT FAG.AGNUM AS code, FAG.AGDESCR AS description, FAG.AGTNUM AS compositeCode
        FROM FAG
        WHERE FAG.AGT = '4' AND FAG.AGTIPO = 3
-       ORDER BY FAG.AGT, FAG.AGSEQ`,
+       ORDER BY FAG.AGNUM, FAG.AGSEQ`,
     );
     return {
       policy: { id: primitive.id, number: primitive.number },
       key: 'classifications', section: 'actions', button: 'Clasificar', source: 'mysql',
-      items: rows.map((row) => ({ ...row })),
-      summary: { current: primitive.classifications },
+      items: rows.map(({ code, description, compositeCode }) => ({ code, description, compositeCode: compositeCode.trimEnd() })),
+      summary: {
+        current: primitive.classifications, revision: 0, canWrite: false,
+        reason: primitive.manual?.canceled ? 'La póliza está dada de baja.' : null,
+      },
     };
   }
 }

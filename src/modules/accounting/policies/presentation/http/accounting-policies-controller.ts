@@ -2,12 +2,18 @@ import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import type { GetAccountingPolicyByNumber } from '../../application/use-cases/get-accounting-policy-by-number.js';
 import type { GetAccountingPolicyClassifications } from '../../application/use-cases/get-accounting-policy-classifications.js';
+import type { UpdateAccountingPolicyClassification } from '../../application/use-cases/update-accounting-policy-classification.js';
 import type { GetAccountingPolicy } from '../../application/use-cases/get-accounting-policy.js';
 import type { NavigateAccountingPolicy } from '../../application/use-cases/navigate-accounting-policy.js';
 import type { SearchAccountingPolicies } from '../../application/use-cases/search-accounting-policies.js';
 
 const idParamsSchema = z.object({ policyId: z.coerce.number().int().positive() });
 const numberParamsSchema = z.object({ policyNumber: z.string().trim().min(1).max(20) });
+const classificationSchema = z.strictObject({
+  compositeCode: z.string().min(1).max(4).refine((code) => !code.includes('\0')),
+  revision: z.int().nonnegative().max(2147483646),
+  requestKey: z.uuid(),
+});
 const searchSchema = z.object({
   q: z.string().trim().min(1).optional(),
   number: z.string().trim().min(1).max(20).optional(),
@@ -26,6 +32,7 @@ export class AccountingPoliciesController {
     private readonly searchPolicies: SearchAccountingPolicies,
     private readonly navigatePolicy: NavigateAccountingPolicy,
     private readonly getClassifications: GetAccountingPolicyClassifications,
+    private readonly saveClassification: UpdateAccountingPolicyClassification,
   ) {}
 
   search: RequestHandler = async (request, response, next) => {
@@ -75,7 +82,14 @@ export class AccountingPoliciesController {
   classifications: RequestHandler = async (request, response, next) => {
     try {
       const { policyId } = idParamsSchema.parse(request.params);
-      response.json(await this.getClassifications.execute(policyId));
+      response.set('Cache-Control', 'no-store').json(await this.getClassifications.execute(policyId));
+    } catch (error) { next(error); }
+  };
+
+  updateClassification: RequestHandler = async (request, response, next) => {
+    try {
+      const { policyId } = idParamsSchema.parse(request.params);
+      response.json(await this.saveClassification.execute(policyId, classificationSchema.parse(request.body)));
     } catch (error) { next(error); }
   };
 }

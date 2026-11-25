@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { GetAccountingPolicyByNumber } from './application/use-cases/get-accounting-policy-by-number.js';
 import { GetAccountingPolicyClassifications } from './application/use-cases/get-accounting-policy-classifications.js';
+import { UpdateAccountingPolicyClassification } from './application/use-cases/update-accounting-policy-classification.js';
 import { GetAccountingPolicy } from './application/use-cases/get-accounting-policy.js';
 import { NavigateAccountingPolicy } from './application/use-cases/navigate-accounting-policy.js';
 import { SearchAccountingPolicies } from './application/use-cases/search-accounting-policies.js';
@@ -10,6 +11,7 @@ import { AccountingPoliciesWithLocalPostingsDataSource } from './infrastructure/
 import { AccountingPoliciesRepositoryImpl } from './infrastructure/repositories/accounting-policies-repository-impl.js';
 import { MysqlManualPolicyReferences } from './infrastructure/datasources/mysql-manual-policy-references.js';
 import { PostgresManualPolicies } from './infrastructure/datasources/postgres-manual-policies.js';
+import { PostgresPolicyClassifications } from './infrastructure/datasources/postgres-policy-classifications.js';
 import { AccountingPoliciesController } from './presentation/http/accounting-policies-controller.js';
 import { createAccountingPoliciesRouter } from './presentation/http/accounting-policies-routes.js';
 import { createManualPolicyRouter } from './presentation/http/manual-policy-routes.js';
@@ -18,13 +20,15 @@ import { BankAccountsWithCatalogDataSource } from '../../treasury/banking/infras
 export const createAccountingPoliciesModule = (): Router => {
   const legacy = new LegacyMysqlAccountingPoliciesDataSource();
   const chart = new BankAccountsWithCatalogDataSource();
-  const repository = new AccountingPoliciesRepositoryImpl(new AccountingPoliciesWithLocalPostingsDataSource(legacy));
+  const classifications = new PostgresPolicyClassifications();
+  const repository = new AccountingPoliciesRepositoryImpl(new AccountingPoliciesWithLocalPostingsDataSource(legacy, classifications));
   const controller = new AccountingPoliciesController(
     new GetAccountingPolicy(repository),
     new GetAccountingPolicyByNumber(repository),
     new SearchAccountingPolicies(repository),
     new NavigateAccountingPolicy(repository),
     new GetAccountingPolicyClassifications(repository),
+    new UpdateAccountingPolicyClassification(repository, classifications),
   );
   return createAccountingPoliciesRouter(controller,
     createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(chart), new PostgresManualPolicies(undefined, undefined, chart), repository,

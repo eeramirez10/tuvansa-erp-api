@@ -9,6 +9,7 @@ export const createAccountingPoliciesRouter = (controller: AccountingPoliciesCon
   router.get('/:policyId/previous', controller.previous);
   router.get('/:policyId/next', controller.next);
   router.get('/:policyId/actions/classifications', controller.classifications);
+  router.patch('/:policyId/actions/classifications', controller.updateClassification);
   router.get('/:policyId', controller.getById);
   return router;
 };

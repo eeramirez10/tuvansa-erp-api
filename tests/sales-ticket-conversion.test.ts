@@ -4,6 +4,7 @@ import request from 'supertest';
 import { expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { env } from '../src/config/env.js';
+import { webAccess } from '../src/modules/general-data/users/users-module.js';
 import { ConvertSalesTicket } from '../src/modules/sales/invoicing/application/use-cases/convert-sales-ticket.js';
 import { CreateInvoiceFromOrder } from '../src/modules/sales/invoicing/application/use-cases/create-invoice-from-order.js';
 import type { SalesTicketConversionSource } from '../src/modules/sales/invoicing/domain/datasources/sales-ticket-conversion-data-source.js';
@@ -28,9 +29,54 @@ vi.mock('../src/shared/infrastructure/database/postgres-pool.js', async (importO
 
 vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({
   legacyMysqlPool: { execute: async (sql: string) => {
+    if (sql.startsWith('SELECT') && sql.includes('FROM FPENC')) return [[], []];
+    if (sql.includes('AS onHand') && sql.includes('FROM FINV I LEFT JOIN FALM')) {
+      return [[{ productId: 7, unit: 'PZ', onHand: 20, assigned: 0 }], []];
+    }
     if (!sql.includes('JOIN FTIPMV fe') || !sql.startsWith('SELECT')) throw new Error('Unexpected legacy query');
     return [runtime.enabled ? [{ enabled: 1 }] : [], []];
   } },
+}));
+
+vi.mock('../src/modules/general-data/users/infrastructure/legacy-user-directory.js', () => {
+  const admin = { legacyId: 1, identification: 'admin', name: 'Administración', group: 0, active: true, shared: false };
+  return { legacyUserDirectory: {
+    users: async () => [admin],
+    user: async (id: number) => id === 1 ? admin : undefined,
+    permissions: async (group: number, keys?: string[]) => [
+      { key: 'INICIO13', label: 'Datos Generales', allowed: group === 0, requiresSupervisor: false },
+      { key: 'MCATALOGOS8', label: 'Usuarios', allowed: group === 0, requiresSupervisor: false },
+      { key: 'MPED5', label: 'Autorizar', allowed: false, requiresSupervisor: false },
+    ].filter(({ key }) => !keys || keys.includes(key)),
+  } };
+});
+
+vi.mock('../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-order-reference-data-source.js', () => ({
+  LegacyMysqlOrderReferenceDataSource: class {
+    async options() {
+      return { warehouses: [{ code: '01', description: 'México' }], types: [], agents: [{ code: '1202', name: 'Ventas' }] };
+    }
+    async customer() {
+      return { id: 100, code: 'C001', name: 'Cliente de pruebas', agentCode: '1202', agentName: 'Ventas',
+        termsDays: 30, classification: '', store: '', branches: [] };
+    }
+    async product() {
+      return { id: 7, code: 'A', description: 'Producto A', unit: 'PZ', price: 50, cost: 25, costCurrencyId: 1,
+        taxPercentage: 16, excisePercentage: 0, currencyId: 1, stock: 20, assigned: 0, available: 20 };
+    }
+    async canAuthorizeCustomer() { return true; }
+    async authorizationCosts() { return new Map([[7, { cost: 25, costCurrencyId: 1 }]]); }
+  },
+}));
+
+vi.mock('../src/modules/sales/invoicing/infrastructure/datasources/mysql-invoice-from-order-references.js', () => ({
+  MysqlInvoiceFromOrderReferences: class {
+    async context() {
+      return { fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31', reason: null, vat: 16, customerTermsDays: 30,
+        creditLimit: 1000, creditBalance: 0, products: new Map([[7, { id: 7, code: 'A', unit: 'PZ', package: '', family: '',
+          cost: 25, legacyOnHand: 20, legacyAssigned: 0, supported: true }]]) };
+    }
+  },
 }));
 
 const originalDate = '2025-11-20';
@@ -100,6 +146,97 @@ it('propone la fecha de México sólo dentro del ejercicio fiscal, incluidos amb
     }
   } finally { vi.useRealTimers(); }
 });
+
+it('captura, autoriza, remite parcialmente y factura un pedido con tres sesiones web', async () => {
+  const db = new PGlite();
+  try {
+    runtime.connect.mockImplementation(async () => ({
+      async query<T extends object>(sql: string, values?: unknown[]) {
+        if (values) return db.query<T>(sql, values);
+        return { rows: ((await db.exec(sql)).at(-1)?.rows ?? []) as T[] };
+      },
+      release() {},
+    }));
+    runtime.enabled = true;
+    const api = request(createApp());
+    const password = 'Prueba#6';
+    const change = (verb: 'post' | 'patch', path: string, cookie?: string) => {
+      const mutation = api[verb](path).set('Host', 'localhost:5173').set('Origin', 'http://localhost:5173');
+      return cookie ? mutation.set('Cookie', cookie) : mutation;
+    };
+    const activate = (token: string) => change('post', '/api/session/activation').send({ token, password }).expect(204);
+    const login = async (identification: string) => {
+      const { headers } = await change('post', '/api/session').send({ identification, password }).expect(200);
+      return (headers['set-cookie'] as unknown as string[])[0]!.split(';')[0]!;
+    };
+    await activate((await webAccess.bootstrapAdministrator(1, 'administracion-web')).token);
+    const admin = await login('administracion-web');
+    const users = '/api/general-data/users';
+    const createUser = async (identification: string, name: string, group: number) => {
+      const { body: { data: user } } = await change('post', users, admin)
+        .send({ identification, name, group, active: true, administrator: false }).expect(201);
+      const activation = await change('post', `${users}/${user.id}/activation`, admin)
+        .send({ revision: user.revision }).expect(200);
+      await activate(activation.body.data.token);
+      return { id: user.id, session: await login(identification) };
+    };
+    const seller = await createUser('vendedor', 'Vendedor', 4);
+    const approver = await createUser('autorizador', 'Autorizador', 18);
+    const biller = await createUser('facturador', 'Facturador', 5);
+    await change('patch', '/api/general-data/permission-groups/18', admin)
+      .send({ revision: 0, changes: [{ key: 'MPED5', allowed: true }] }).expect(200);
+
+    const orders = '/api/sales/orders';
+    const { body: { data: order } } = await change('post', `${orders}/capture`, seller.session).send({
+      warehouse: '01', typeCode: 'P', customerCode: 'C001', orderedAt: originalDate, from: originalDate, dueAt: originalDate,
+      agentCode: '1202', termsDays: 30, store: '', documentKind: 'order',
+      lines: [{ productCode: 'A', quantity: 3, price: 50 }],
+    }).expect(201);
+    const authorization = `${orders}/${order.id}/actions/authorization`;
+    const decision = { authorized: true, revision: order.storage.revision };
+    const denied = await change('post', authorization, seller.session).send(decision).expect(403);
+    expect(denied.body.error.code).toBe('ORDER_APPROVER_FORBIDDEN');
+    const { body: { data: approved } } = await change('post', authorization, approver.session).send(decision).expect(200);
+    expect(approved).toMatchObject({ authorization: 'O.K.', authorizedByName: 'Autorizador', authorizedByWebUserId: approver.id });
+
+    await change('post', `${orders}/${order.id}/actions/assignment`, approver.session)
+      .send({ lines: [{ lineId: order.lines[0].id, assigned: 3 }] }).expect(200);
+    const remissions = `${root}/from-order`;
+    const { body: { data: ready } } = await api.get(remissions).set('Cookie', biller.session).query({ orderNumber: order.number }).expect(200);
+    expect(ready).toMatchObject({ canWrite: true, fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31', lines: [{ maximum: 3 }] });
+    const issue = { orderNumber: order.number, revision: ready.revision, issuedAt: originalDate,
+      requestKey: randomUUID(), lines: [{ orderLineId: order.lines[0].id, quantity: 2 }] };
+    await change('post', remissions, biller.session).send({ ...issue, issuedAt: '2026-01-01' }).expect(422);
+    const { body: { data: posted } } = await change('post', remissions, biller.session).send(issue).expect(201);
+    expect(posted).toMatchObject({ orderComplete: false, invoice: { orderNumber: order.number, totals: { total: 116 } } });
+    expect((await change('post', remissions, biller.session).send(issue).expect(201)).body.data).toEqual(posted);
+
+    const { invoice } = posted;
+    const { body: { data: offer } } = await api.get(previewPath(invoice.id)).set('Cookie', biller.session).expect(200);
+    const conversion = { expectedVersion: offer.ticketConversion.version, requestKey: randomUUID() };
+    const { body: { data: converted } } = await change('post', previewPath(invoice.id), biller.session).send(conversion).expect(201);
+    expect(converted).toMatchObject({ sourceNumber: invoice.number, number: expect.stringMatching(/^FEW\d{8}$/) });
+    expect((await change('post', previewPath(invoice.id), biller.session).send(conversion).expect(201)).body.data).toEqual(converted);
+    expect((await api.get(`${root}/${invoice.id}`).set('Cookie', biller.session).expect(200)).body.data).toMatchObject({
+      number: converted.number, cfdStatus: '1', totals: { total: 116, balance: 116, paid: 0 },
+    });
+
+    const { body: { data: partial } } = await api.get(`${orders}/${order.id}`).set('Cookie', seller.session).expect(200);
+    expect(partial).toMatchObject({ authorization: 'O.K.', authorizedByWebUserId: approver.id,
+      lines: [{ ordered: 3, fulfilled: 2, remaining: 1, assigned: 1 }] });
+    const movement = await api.get(`/api/inventories/movements/${invoice.id}`).set('Cookie', biller.session).expect(200);
+    expect(movement.body.data).toMatchObject({ header: { document: converted.number, reference: order.number, warehouse: '01' },
+      lines: [{ productId: 7, quantity: -2 }], totals: { quantity: -2 } });
+    const stock = await db.query('SELECT product_id::int AS product, warehouse, quantity::float8 FROM tuvansa.sales_remission_inventory');
+    expect(stock.rows).toEqual([{ product: 7, warehouse: '01', quantity: -2 }]);
+    const charges = await db.query('SELECT charge::float8 FROM tuvansa.sales_remissions');
+    expect(charges.rows).toEqual([{ charge: 116 }]);
+    const auxiliary = await api.get(`${root}/${invoice.id}/actions/auxiliary`).set('Cookie', biller.session).expect(200);
+    expect(auxiliary.body.data).toMatchObject({ summary: { charges: 116, credits: 0, balance: 116 }, items: [{ amount: 116 }] });
+  } finally {
+    await db.close();
+  }
+}, 30_000);
 
 it('convierte una FAW en Facturación y conserva la remisión, el surtido y el cargo de origen', async () => {
   const db = new PGlite();

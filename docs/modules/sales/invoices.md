@@ -68,6 +68,17 @@ de inventario. Una carrera separada de dos POST para la unidad restante
 produjo un `201` y un `409` con los dos procesos observados en espera.
 Evidencia local en `captures/approved-plan-browser-result.txt`.
 
+La regresión con los permisos web agrega tres sesiones independientes.
+Ventas captura el pedido y recibe `403` al intentar autorizarlo. El grupo
+Autorizador recibe `MPED5` desde Usuarios y puede autorizar y asignar.
+Facturación remite dos de tres unidades dentro del ejercicio y convierte
+el folio a FEW pendiente de timbrar. La automatización de Chromium usa la
+interfaz para **Ctrl+A**, **Facturar de pedido** y **Tiket > Factura** contra
+la API real con PostgreSQL aislado y referencias de catálogo de prueba.
+Queda una unidad pendiente, un movimiento de dos unidades de salida y
+un cargo de 116 MXN en Auxiliar. Repetir la remisión o la conversión con
+la misma solicitud devuelve el folio guardado. [Prueba HTTP](../../../tests/sales-ticket-conversion.test.ts)
+
 Los depósitos de [Cobranza](../accounts-receivable/clients.md#cobrar-una-remisión-web) actualizan **Pagado** y **Saldo**. **Auxiliar** conserva el cargo FA, muestra los abonos PA por fecha y enlaza cada póliza. Al liquidar, Facturación muestra la fecha del último cobro aplicado.
 
 ### Remisión con PEPS global

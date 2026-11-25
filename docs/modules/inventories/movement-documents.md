@@ -8,6 +8,7 @@ propios filtros, independientemente del producto que se estaba consultando.
 | --- | --- | --- | --- |
 | Búsqueda | `GET /api/inventories/movements` | FDOC, FCLI, FPRV | Derivada de `EINV#24/243` → `EMOVSINVFIND/100`; reglas en `/131` y lista en `/133` |
 | Abrir el documento | `GET /api/inventories/movements/:id` | FDOC, FAXINV, FINV, FCLI, FPRV | Adaptación basada en el procedimiento `EINV#24/240` |
+| Comentarios | `GET /api/inventories/movements/:id` | `FCOMENT.COML1` por `COMSEQFACT = FDOC.DSEQ` | Consulta de la nota del folio sin guardar cambios |
 | Cancelar | `DELETE /api/inventories/movements/:id` | `tuvansa.inventory_movement_documents` y los saldos de apertura de PostgreSQL | Derivada de `EINV#24/41`, `MFACT/112` y `MCPAR03/21` |
 
 El marcador histórico [INV_QUERY_DOCUMENTOS_RETRY](product-buttons-capture.md#inv_query_documentos_retry)
@@ -29,6 +30,15 @@ El costo total es la suma de los costos por cantidad. `piecesText` conserva
 el valor de origen de `AIPZAS`; `pieces` representa su valor numérico.
 
 La API usa `FDOC.DITIPMV` para exponer el tipo de movimiento del encabezado.
+
+En German, **Comentarios** mostró la nota de los folios `EI1981` y
+`SI1148` en un cuadro con **OK**. Para `TR0005` abrió el mismo cuadro
+vacío. Chromium reprodujo los tres resultados y el cierre del cuadro
+con **OK**, conservando el folio abierto. La ficha web incluye `comment`
+cuando el documento tiene una nota de origen. Una apertura PostgreSQL
+o un documento web puede omitir ese campo. La consulta conserva `DFECHA`
+como fecha para que MySQL 5.1 la devuelva en formato ISO. **CT** no mostró
+un panel para la entrada `EI1981`.
 
 ## Prueba de cancelación en Omnis 7
 
@@ -72,6 +82,13 @@ y carga la apertura una sola vez.
 ```powershell
 pnpm exec tsx scripts/stage-postgres-inventory-movements.ts --snapshot archivo-de-apertura.json
 ```
+
+En la prueba de noviembre con PostgreSQL habilitado se usó una copia
+temporal del histórico `EI2096`. Desde **Documentos → Buscar → Cancelar**,
+existencias, piezas y cantidad por almacén pasaron de cinco a tres. Las
+partidas quedaron tipo `K` con importes y cantidades en cero. Dos
+solicitudes de cancelación devolvieron `204`. Se retiró la copia y se
+verificó que el documento de apertura original conservaba su estado.
 
 El archivo contiene `policy` con `warehouseTracking`, `layerEffects` y
 `transitEffects`, `documents` con `header`, `lines` y `totals` del detalle,

@@ -102,15 +102,18 @@ describe('inventory movement lookup', () => {
   });
 
   it('loads the selected document by its id and keeps the details in movement sequence', async () => {
-    execute.mockResolvedValueOnce([[header]]).mockResolvedValueOnce([[line]]);
+    execute.mockResolvedValueOnce([[{ ...header, comment: ' Ajuste de inventario ' }]]).mockResolvedValueOnce([[line]]);
     const response = await request(app).get('/api/inventories/movements/125');
     expect(response.status).toBe(200);
     expect(response.body.data).toMatchObject({
       header,
       lines: [line],
       totals: { quantity: 2, cost: 11554.17 },
+      comment: 'Ajuste de inventario',
       cancellationAvailable: false,
     });
+    expect(response.body.data.header).not.toHaveProperty('comment');
+    expect(execute.mock.calls[0]?.[0]).toContain('FCOMENT.COMSEQFACT = FDOC.DSEQ');
     expect(execute.mock.calls[0]).toEqual([
       expect.stringContaining('WHERE FDOC.DSEQ = ? LIMIT 1'),
       [125],

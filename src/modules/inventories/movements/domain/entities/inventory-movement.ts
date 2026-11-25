@@ -38,4 +38,5 @@ export interface MovementDocument {
   header: MovementHeader;
   lines: MovementLine[];
   totals: { quantity: number; cost: number };
+  comment?: string;
 }

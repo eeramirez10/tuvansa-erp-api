@@ -7,13 +7,14 @@ import type { MovementDocument, MovementHeader, MovementLine } from '../../domai
 import type { MovementSearchCriteria, MovementSearchResult } from '../../domain/repositories/movements-repository.js';
 
 interface HeaderRow extends RowDataPacket, MovementHeader {}
+interface DetailRow extends HeaderRow { comment: string | null }
 interface LineRow extends RowDataPacket, Omit<MovementLine, 'pieces'> {}
 interface CountRow extends RowDataPacket { total: number }
 
 const headerFields = (supplierCode = 'FPRV.PRVCOD') => `
   FDOC.DSEQ AS id,
   COALESCE(FDOC.DNUM, '') AS document,
-  COALESCE(FDOC.DFECHA, '') AS date,
+  FDOC.DFECHA AS date,
   COALESCE(FDOC.DREFER, '') AS reference,
   COALESCE(FDOC.DREFERELLOS, '') AS reference2,
   COALESCE(FDOC.DALMACEN, '') AS warehouse,
@@ -102,12 +103,16 @@ export class LegacyMysqlMovementsDataSource implements MovementsDataSource {
 
   async findById(id: number, changes: ReceiptSupplierChange[] = []): Promise<MovementDocument | null> {
     const supplier = legacyReceiptSupplierSearch(changes);
-    const [result] = await legacyMysqlPool.execute<HeaderRow[]>(
-      `SELECT ${headerFields(supplier.code)} ${headers} ${supplier.join} WHERE FDOC.DSEQ = ? LIMIT 1`,
+    const [result] = await legacyMysqlPool.execute<DetailRow[]>(
+      `SELECT ${headerFields(supplier.code)},
+        (SELECT FCOMENT.COML1 FROM FCOMENT WHERE FCOMENT.COMSEQFACT = FDOC.DSEQ
+         ORDER BY FCOMENT.COMSEQ LIMIT 1) AS comment
+       ${headers} ${supplier.join} WHERE FDOC.DSEQ = ? LIMIT 1`,
       [...supplier.values, id],
     );
-    const header = result[0];
-    if (!header) return null;
+    const row = result[0];
+    if (!row) return null;
+    const { comment, ...header } = row;
     const [lineRows] = await legacyMysqlPool.execute<LineRow[]>(
       `SELECT ${lineFields}
        FROM FAXINV LEFT JOIN FINV ON FINV.ISEQ = FAXINV.ISEQ
@@ -121,6 +126,6 @@ export class LegacyMysqlMovementsDataSource implements MovementsDataSource {
       const pieces = Number(line.piecesText);
       return { ...line, pieces: Number.isFinite(pieces) ? pieces : 0 };
     });
-    return { header, lines, totals };
+    return { header, lines, totals, ...(comment?.trim() ? { comment: comment.trim() } : {}) };
   }
 }

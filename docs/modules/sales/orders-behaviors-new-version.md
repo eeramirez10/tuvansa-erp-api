@@ -120,6 +120,14 @@ Matriz de fotos. La guía de Proscai describe la búsqueda por familias y
 fotos desde el selector de productos cuando el módulo Fotos está
 disponible. [Matriz de fotos en búsqueda](https://ayuda.proscai.com/hc/es-419/articles/235836227-Matriz-de-fotos-en-b%C3%BAsqueda)
 
+Para cerrar Matriz se requiere una sesión de México que muestre el control
+en **Encuentra producto** con el registro con foto cargado y permita observar
+el renglón que vuelve a la captura. Para el cálculo libre de **Familias** se
+requiere una expresión usada en México y un resultado comprobable contra el
+catálogo. `EINVFINDEDWC/9` inicia `MEMFILQUERY` en `1`, valida su sintaxis y
+vuelve a `1` si es inválida. La selección de `VT` acredita el filtro por
+catálogo. Falta comprobar una expresión distinta de `1` en uso.
+
 La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
 
 Código, IEAN y descripción se comparan sin distinguir mayúsculas en la búsqueda parametrizada. Esta mejora es derivada y no se presenta como SQL literal de OMNIS. La validación de costo en la moneda correspondiente (listas 5/6 y conversión con T.C.) permanece en UI y backend.

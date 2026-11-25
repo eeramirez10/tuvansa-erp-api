@@ -7,6 +7,8 @@ import type {
   ManualPolicyActionInput, ManualPolicyCommentsInput, ManualPolicyDataSource, ManualPolicyDocument, ManualPolicyInput, ManualPolicyLine, ManualPolicyOperation,
 } from '../../domain/datasources/manual-policy-data-source.js';
 import type { AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
+import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
+import type { BankAccountsWithCatalogDataSource } from '../../../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 import { getManualPolicy, isManualPolicyId, manualPoliciesAvailable, manualPolicyIdStart, manualPolicyLineIdStart, manualPolicyProps } from './manual-policy-reads.js';
 
 const migrations = [{ id: 'manual_accounting_policy', sql: `
@@ -58,9 +60,10 @@ async function lockAccounts(client: PostgresClient, lines: ManualPolicyLine[]) {
 
 async function insertLines(client: PostgresClient, id: number, lines: ManualPolicyLine[]) {
   await client.query(
-    `INSERT INTO tuvansa.manual_accounting_policy_lines(policy_id,position,account_id,account_type,account,parents,cost_center,debit,credit,reference,
+    `INSERT INTO tuvansa.manual_accounting_policy_lines(id,policy_id,position,account_id,account_type,account,parents,cost_center,debit,credit,reference,
        bank_movement_type,bank_source_movement_id)
-     SELECT $1,(ordinality)::int,(line #>> '{account,id}')::bigint,(line #>> '{account,type}')::int,line->'account',line->'parents',
+     SELECT coalesce((line->>'historicalMovementId')::bigint,nextval('tuvansa.manual_policy_line_ids')),
+       $1,(ordinality)::int,(line #>> '{account,id}')::bigint,(line #>> '{account,type}')::int,line->'account',line->'parents',
        (line->>'costCenter')::int,(line->>'debit')::numeric,(line->>'credit')::numeric,line->>'reference',
        line->>'bankMovementType',(line->>'bankSourceMovementId')::bigint
      FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY parts(line,ordinality)`, [id, JSON.stringify(lines)],
@@ -69,7 +72,8 @@ async function insertLines(client: PostgresClient, id: number, lines: ManualPoli
 
 export class PostgresManualPolicies implements ManualPolicyDataSource {
   private migration?: Promise<void>;
-  constructor(private readonly connect: PostgresConnectionFactory = connectPostgres, private readonly configured = postgresConfigured) {}
+  constructor(private readonly connect: PostgresConnectionFactory = connectPostgres, private readonly configured = postgresConfigured,
+    private readonly bankCatalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>) {}
 
   writable() { return this.configured(); }
 
@@ -90,7 +94,17 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
     return this.withClient(async (client) => await manualPoliciesAvailable(client) ? replay(client, key, fingerprint) : null);
   }
 
-  private async transaction(key: string, fingerprint: string, action: string, work: (client: PostgresClient) => Promise<number>) {
+  historicalApplied(id: number) {
+    if (!this.writable()) return Promise.resolve(false);
+    return this.withClient(async (client) => {
+      if (!await manualPoliciesAvailable(client)) return false;
+      const { rows } = await client.query('SELECT 1 FROM tuvansa.manual_accounting_policies WHERE id=$1 AND applied', [id]);
+      return rows.length > 0;
+    });
+  }
+
+  private async transaction(key: string, fingerprint: string, action: string, work: (client: PostgresClient) => Promise<number>,
+    present = manualPolicyProps) {
     this.migration ??= this.withClient((client) => migratePostgres(client, migrations)).catch((error: unknown) => {
       delete this.migration;
       throw error;
@@ -107,7 +121,7 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
         }
         const id = await work(client);
         const policy = (await getManualPolicy(client, id))!;
-        const result = manualPolicyProps(policy);
+        const result = present(policy);
         await client.query(
           `INSERT INTO tuvansa.manual_accounting_policy_changes(policy_id,revision,request_key,fingerprint,action,result)
            VALUES($1,$2,$3,$4,$5,$6::jsonb)`, [id, policy.revision, key, fingerprint, action, JSON.stringify(result)],
@@ -119,6 +133,21 @@ export class PostgresManualPolicies implements ManualPolicyDataSource {
         throw error;
       }
     });
+  }
+
+  applyHistorical(policy: AccountingPolicyProps & { date: string }, requestKey: string, lines: ManualPolicyLine[],
+    fingerprint: string, verify: (lookup?: BankAccountLookup) => Promise<void>) {
+    return this.transaction(requestKey, fingerprint, 'apply', async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('historical-policy:'||$1::text,0))", [policy.id]);
+      const { rows } = await client.query('SELECT 1 FROM tuvansa.manual_accounting_policies WHERE id=$1', [policy.id]);
+      if (rows.length) throw new ConflictError('La póliza ya está aplicada.', 'MANUAL_POLICY_BLOCKED');
+      await lockAccounts(client, lines);
+      await verify(this.bankCatalog?.lookupOn(client));
+      await client.query(`INSERT INTO tuvansa.manual_accounting_policies(id,number,company_id,date,concept,beneficiary,family,revision,applied)
+        VALUES($1,$2,1,$3,$4,$5,$6,1,true)`, [policy.id, policy.number, policy.date, policy.concept, policy.beneficiary, policy.family]);
+      await insertLines(client, policy.id, lines);
+      return policy.id;
+    }, () => ({ ...policy, applied: true }));
   }
 
   create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>,

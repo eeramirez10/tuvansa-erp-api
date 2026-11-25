@@ -13,9 +13,11 @@ import { PostgresManualPolicies } from './infrastructure/datasources/postgres-ma
 import { AccountingPoliciesController } from './presentation/http/accounting-policies-controller.js';
 import { createAccountingPoliciesRouter } from './presentation/http/accounting-policies-routes.js';
 import { createManualPolicyRouter } from './presentation/http/manual-policy-routes.js';
+import { BankAccountsWithCatalogDataSource } from '../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
 
 export const createAccountingPoliciesModule = (): Router => {
   const legacy = new LegacyMysqlAccountingPoliciesDataSource();
+  const chart = new BankAccountsWithCatalogDataSource();
   const repository = new AccountingPoliciesRepositoryImpl(new AccountingPoliciesWithLocalPostingsDataSource(legacy));
   const controller = new AccountingPoliciesController(
     new GetAccountingPolicy(repository),
@@ -25,6 +27,6 @@ export const createAccountingPoliciesModule = (): Router => {
     new GetAccountingPolicyClassifications(repository),
   );
   return createAccountingPoliciesRouter(controller,
-    createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(), new PostgresManualPolicies(), repository,
-      (id) => legacy.commentLines(id))));
+    createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(chart), new PostgresManualPolicies(undefined, undefined, chart), repository,
+      (id) => legacy.commentLines(id), (id) => legacy.historicalApplication(id))));
 };

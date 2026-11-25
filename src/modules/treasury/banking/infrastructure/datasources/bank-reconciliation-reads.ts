@@ -8,6 +8,25 @@ interface BankReconciliationState {
 
 const empty: BankReconciliationState = { delta: 0, lastStatementDate: null };
 
+export async function readLegacyBankSettlements(accountId: number | null, movementIds: number[] | null = null) {
+  if (!postgresConfigured() || movementIds?.length === 0) return [];
+  let client: PostgresClient | undefined;
+  try {
+    client = await connectPostgres();
+    if (!await bankReconciliationsAvailable(client)) return [];
+    const { rows } = await client.query<{ movementId: number; accountId: number; statementDate: string }>(
+      `SELECT m.movement_id::float8 AS "movementId",r.bank_account_id::float8 AS "accountId",r.statement_date::text AS "statementDate"
+       FROM tuvansa.bank_reconciliation_movements m JOIN tuvansa.bank_reconciliations r ON r.id=m.reconciliation_id
+       WHERE r.company_id=1 AND m.movement_id BETWEEN 1 AND 4294967295
+         AND ($1::bigint IS NULL OR r.bank_account_id=$1) AND ($2::bigint[] IS NULL OR m.movement_id=ANY($2))`,
+      [accountId, movementIds],
+    );
+    return rows;
+  } catch {
+    throw new ApplicationError('No fue posible consultar la conciliación histórica.', 'BANK_RECONCILIATION_POSTGRES_UNAVAILABLE', 503);
+  } finally { client?.release(); }
+}
+
 export async function bankReconciliationsAvailable(client: PostgresClient): Promise<boolean> {
   const { rows: [row] } = await client.query<{ available: boolean }>(
     `SELECT to_regclass('tuvansa.bank_reconciliations') IS NOT NULL

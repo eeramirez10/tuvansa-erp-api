@@ -149,6 +149,22 @@ fuentes archivadas.
 
 Al registrar la conciliación de un depósito o pago web, la partida bancaria de su póliza aparece como conciliada. El estado se consulta en `bank_reconciliation_movements`. La póliza conserva sus cuentas, importes y aplicación.
 
+### Aplicar un diario histórico desde Bancos
+
+**Aux. no aplicados → Aplicar** reutiliza la consulta y la confirmación
+de diario. El origen puede ser un folio tipo 3 de México en el periodo
+autorizado si sus partidas son de detalle, cuadran en pesos y el asiento
+carece de vínculos en `FAX`. La vista histórica conserva el folio, la
+fecha, los identificadores y las referencias. El diario PostgreSQL
+registra los cargos, abonos, centros y agrupadoras del asiento.
+
+La revisión detecta cambios en el origen. La transacción vuelve a
+validar los datos y el catálogo con el bloqueo de las cuentas. La misma
+clave devuelve el resultado original. Una segunda aplicación es un
+conflicto. Las consultas y los filtros **Aplicadas** y **No aplicadas**
+reflejan el estado registrado en PostgreSQL. El corte puede conciliar
+cada partida bancaria por separado con el `BASEQ` original.
+
 ## Reportes de la versión nueva
 
 La captura de Contabilidad → Reportes → Estado de resultados se documenta en [income-statement.md](income-statement.md). La lectura usa FCCBENC + FBENC y está disponible en GET /api/accounting/reports/income-statement, con parámetros en GET /api/accounting/reports/income-statement/options y vista imprimible en el frontend.

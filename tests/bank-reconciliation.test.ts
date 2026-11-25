@@ -42,6 +42,11 @@ it('reconciles applied income and expense atomically against the statement', asy
     const useCase = new CaptureBankReconciliation(new PostgresBankReconciliations(connect, () => true, undefined,
       async (company, accountId, movementId) => company === 1 && accountId === 6610 && movementId === 123
         ? { amount: -27, inTransit: true } : null,
+      {
+        movements: async (company, accountId, ids) => company === 1 && accountId === 6610 && ids.includes(123)
+          ? [{ id: 123, date: '2025-01-01', amount: -27, inTransit: true, applied: true }] : [],
+        latest: async () => '2025-02-28',
+      },
     ), {
       findById: async () => account,
     });
@@ -92,8 +97,20 @@ it('reconciles applied income and expense atomically against the statement', asy
     await expect(useCase.save(1, 6610, { ...pending, expectedBankBalance: 1076, statementDate: '2025-01-30' })).rejects
       .toMatchObject({ code: 'BANK_RECONCILIATION_INVALID_DATE' });
     expect(await bankReconciliationState(await connect(), 1, 6610)).toEqual({ delta: 76, lastStatementDate: '2025-01-31' });
+    const mixed = { ...pending, movementIds: [123, ...pending.movementIds], statementDate: '2025-02-28',
+      expectedBankBalance: 1076, statementBalance: 1059 };
+    await expect(useCase.save(1, 6610, mixed)).rejects.toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_IN_TRANSIT' });
+    await useCase.setTransit(1, 6610, legacy);
+    await expect(useCase.save(1, 6610, { ...mixed, statementDate: '2025-02-27' })).rejects
+      .toMatchObject({ code: 'BANK_RECONCILIATION_INVALID_DATE' });
+    const cut = await useCase.save(1, 6610, mixed);
+    expect(cut).toMatchObject({ previousBankBalance: 1076, netMovement: -17, bankBalance: 1059 });
+    expect(await useCase.save(1, 6610, mixed)).toEqual(cut);
+    await expect(useCase.setTransit(1, 6610, { ...legacy, inTransit: true })).rejects
+      .toMatchObject({ code: 'BANK_RECONCILIATION_MOVEMENT_UNAVAILABLE' });
+    expect(await readBankTransitOn(await connect(), 1, 6610)).toEqual([{ ...legacy, delta: 27 }]);
     const { rows } = await db.query('SELECT movement_id::float8 AS id FROM tuvansa.bank_reconciliation_movements ORDER BY id');
-    expect(rows).toEqual([{ id: 6900000000000 }, { id: 7300000000000 }]);
+    expect(rows).toEqual([{ id: 123 }, { id: 6900000000000 }, { id: 7300000000000 }, { id: 7300000000001 }]);
   } finally {
     await db.close();
   }

@@ -151,11 +151,24 @@ export class LegacyMysqlAccountingPoliciesDataSource implements AccountingPolici
     return this.header('FPOLIZA.POSEQ = ?', [id]);
   }
 
+  async historicalApplication(id: number) {
+    if (id > 4_294_967_295) return null;
+    const policy = (await this.findById(id))?.toPrimitives();
+    if (!policy) return null;
+    const [[row]] = await legacyMysqlPool.execute<(RowDataPacket & { ordinary: number })[]>(
+      `SELECT (
+        NOT EXISTS (SELECT 1 FROM FAX WHERE APOLIZA=FPOLIZA.PONUM)
+        AND NOT EXISTS (SELECT 1 FROM FBANMOV WHERE POSEQ=FPOLIZA.POSEQ AND (BAMES<>'1' OR BATIP<>'3'))
+       ) AS ordinary FROM FPOLIZA WHERE POSEQ=?`, [id],
+    );
+    return row ? { policy, ordinary: Number(row.ordinary) === 1 } : null;
+  }
+
   findByNumber(number: string): Promise<AccountingPolicy | null> {
     return this.header('FPOLIZA.PONUM = ?', [number]);
   }
 
-  async search(criteria: AccountingPolicySearchCriteria): Promise<AccountingPolicySearchResult> {
+  async search(criteria: AccountingPolicySearchCriteria, appliedHere: number[] = []): Promise<AccountingPolicySearchResult> {
     const conditions = [policyFilter];
     const parameters: Array<string | number> = [];
     if (criteria.query !== undefined) {
@@ -164,7 +177,12 @@ export class LegacyMysqlAccountingPoliciesDataSource implements AccountingPolici
     }
     if (criteria.number !== undefined) { conditions.push('FPOLIZA.PONUM LIKE ?'); parameters.push(`${criteria.number}%`); }
     if (criteria.date !== undefined) { conditions.push('FPOLIZA.POFECHA = ?'); parameters.push(criteria.date); }
-    if (criteria.applied !== undefined) { conditions.push('FPOLIZA.POAPLICADA = ?'); parameters.push(criteria.applied ? 1 : 0); }
+    if (criteria.applied !== undefined) {
+      const applied = 'FPOLIZA.POAPLICADA = ?';
+      const appliedLocally = `FPOLIZA.POSEQ IN (${appliedHere.map(() => '?').join(',')})`;
+      conditions.push(!appliedHere.length ? applied : criteria.applied ? `(${applied} OR ${appliedLocally})` : `(${applied} AND NOT (${appliedLocally}))`);
+      parameters.push(criteria.applied ? 1 : 0, ...appliedHere);
+    }
     if (criteria.family !== undefined) { conditions.push('FPOLIZA.POFAMILIA LIKE ?'); parameters.push(`${criteria.family}%`); }
     if (criteria.cheque !== undefined) { conditions.push('FPOLIZA.POCHEQUE LIKE ?'); parameters.push(`${criteria.cheque}%`); }
     const where = conditions.join(' AND ');
@@ -180,7 +198,8 @@ export class LegacyMysqlAccountingPoliciesDataSource implements AccountingPolici
       `SELECT COUNT(*) AS total FROM FPOLIZA WHERE ${where}`,
       parameters,
     );
-    return { items: rows.map((row) => toPolicy(row, [])), total: countRows[0]?.total ?? 0 };
+    const projected = new Set(appliedHere);
+    return { items: rows.map((row) => toPolicy(projected.has(row.id) ? { ...row, applied: 1 } : row, [])), total: countRows[0]?.total ?? 0 };
   }
 
   async findNumberById(id: number): Promise<string | null> {

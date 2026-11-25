@@ -47,10 +47,16 @@ export class MysqlManualPolicyReferences implements ManualPolicyReferences {
     return items.map((item) => item.toPrimitives()).filter(authorized).slice(0, 30).map(chartAccount);
   }
 
-  async accounts(codes: string[], levels: number[]) {
+  async accounts(codes: string[], levels: number[], lookup?: (code: string) => Promise<BankAccountProps | null>) {
     const prefixes = (code: string) => levels.filter((length) => length < code.length).map((length) => code.slice(0, length));
     const allCodes = [...new Set(codes.flatMap((code) => [code, ...prefixes(code)]))];
-    const records = new Map(await Promise.all(allCodes.map(async (code) => [code, (await this.chart.findByCode(code))?.toPrimitives()] as const)));
+    const records = new Map<string, BankAccountProps | null>();
+    if (lookup) {
+      for (const code of allCodes) records.set(code, await lookup(code));
+    } else {
+      const found = await Promise.all(allCodes.map((code) => this.chart.findByCode(code)));
+      allCodes.forEach((code, index) => records.set(code, found[index]?.toPrimitives() ?? null));
+    }
     const result = new Map<string, { account: ManualPolicyAccount; parents: ManualPolicyAccount[] }>();
     for (const code of codes) {
       const leaf = records.get(code);

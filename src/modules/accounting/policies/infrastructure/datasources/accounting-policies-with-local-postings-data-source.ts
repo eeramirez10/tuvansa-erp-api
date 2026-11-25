@@ -12,7 +12,7 @@ import {
   isLocalPurchaseExpenseCancellationId, isLocalPurchaseReceptionCancellationId, isLocalSupplierPaymentReversalId,
   purchaseExpenseCancellationsAvailable, purchaseReceptionCancellationsAvailable, supplierPaymentReversalsAvailable,
 } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
-import { bankReconciliationsAvailable, joinBankReconciliation } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
+import { bankReconciliationsAvailable, joinBankReconciliation, readLegacyBankSettlements } from '../../../../treasury/banking/infrastructure/datasources/bank-reconciliation-reads.js';
 import { isLocalBankTransferId } from '../../../../treasury/banking/infrastructure/datasources/postgres-bank-transfers.js';
 import type { AccountingPoliciesDataSource } from '../../domain/datasources/accounting-policies-data-source.js';
 import { AccountingPolicy, type AccountingPolicyCommentMetadata, type AccountingPolicyMovement } from '../../domain/entities/accounting-policy.js';
@@ -20,7 +20,7 @@ import type {
   AccountingPolicyNavigationDirection, AccountingPolicySearchCriteria, AccountingPolicySearchResult,
 } from '../../domain/repositories/accounting-policies-repository.js';
 import type { LegacyMysqlAccountingPoliciesDataSource } from './legacy-mysql-accounting-policies-data-source.js';
-import { isManualPolicyId, manualLineSettlement, manualPoliciesAvailable, manualPolicyCommentFields } from './manual-policy-reads.js';
+import { isManualPolicyId, manualLineSettlement, manualPoliciesAvailable, manualPolicyCommentFields, manualPolicyIdStart, readAppliedHistoricalPolicies } from './manual-policy-reads.js';
 
 interface LocalPolicyHeader {
   id: number;
@@ -242,7 +242,7 @@ async function readLocalPolicies<T>(
               'accountName',l.account->>'name','accountType',l.account_type,'department',l.cost_center,'debit',l.debit,'credit',l.credit,
               'reference',l.reference,'reconciled',settlement.statement_date IS NOT NULL) ORDER BY l.position),'[]'::jsonb)` : "'[]'::jsonb"} AS lines
           FROM tuvansa.manual_accounting_policy_lines l ${reconciled} WHERE l.policy_id=p.id
-        ) lineInfo WHERE p.company_id=1`);
+        ) lineInfo WHERE p.company_id=1 AND p.id>=${manualPolicyIdStart}`);
     }
     return projections.length ? await read(client, projections.join(' UNION ALL ')) : fallback;
   } catch (error) {
@@ -296,6 +296,19 @@ async function policyWithMovements(record: LocalPolicyRecord): Promise<Accountin
 export class AccountingPoliciesWithLocalPostingsDataSource implements AccountingPoliciesDataSource {
   constructor(private readonly legacy: LegacyMysqlAccountingPoliciesDataSource) {}
 
+  private async projectLegacy(policy: AccountingPolicy | null) {
+    if (!policy) return null;
+    const data = policy.toPrimitives();
+    const [settled, appliedHere] = await Promise.all([
+      readLegacyBankSettlements(null, data.movements.map(({ id }) => id)),
+      data.applied ? [] : readAppliedHistoricalPolicies([data.id]),
+    ]);
+    if (!settled.length && !appliedHere.length) return policy;
+    const byId = new Map(settled.map((match) => [match.movementId, match.accountId]));
+    return AccountingPolicy.create({ ...data, applied: data.applied || appliedHere.length > 0, movements: data.movements.map((movement) =>
+      byId.get(movement.id) === movement.accountId ? { ...movement, reconciled: true } : movement) });
+  }
+
   private record(field: 'id' | 'number', value: number | string) {
     const filter = field === 'id' ? 'id' : 'upper(number)';
     return readLocalPolicies<LocalPolicyRecord | null>(null, true, async (client, view) => {
@@ -307,14 +320,14 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
   }
 
   async findById(id: number) {
-    if (!isLocalPolicyId(id)) return this.legacy.findById(id);
+    if (!isLocalPolicyId(id)) return this.projectLegacy(await this.legacy.findById(id));
     const local = await this.record('id', id);
     return local ? policyWithMovements(local) : null;
   }
 
   async findByNumber(number: string) {
     const local = await this.record('number', number.toUpperCase());
-    return local ? policyWithMovements(local) : this.legacy.findByNumber(number);
+    return local ? policyWithMovements(local) : this.projectLegacy(await this.legacy.findByNumber(number));
   }
 
   private searchLocal(criteria: AccountingPolicySearchCriteria, filtered: boolean, offset: number, limit: number) {
@@ -358,17 +371,20 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
     const { offset, limit } = criteria;
     const filtered = [criteria.query, criteria.number, criteria.date, criteria.applied, criteria.family, criteria.cheque]
       .some((value) => value !== undefined);
-    const local = await this.searchLocal(criteria, filtered, filtered ? 0 : offset, filtered ? offset + limit : limit);
-    if (local.total === 0) return this.legacy.search(criteria);
+    const [local, appliedHere] = await Promise.all([
+      this.searchLocal(criteria, filtered, filtered ? 0 : offset, filtered ? offset + limit : limit),
+      readAppliedHistoricalPolicies(),
+    ]);
+    if (local.total === 0) return this.legacy.search(criteria, appliedHere);
     if (!filtered) {
       // New local postings precede the historical ledger in the default order.
-      const legacy = await this.legacy.search({ ...criteria, offset: Math.max(offset - local.total, 0), limit: limit - local.items.length });
+      const legacy = await this.legacy.search({ ...criteria, offset: Math.max(offset - local.total, 0), limit: limit - local.items.length }, appliedHere);
       return { items: [...local.items.map((header) => localPolicy(header)), ...legacy.items], total: local.total + legacy.total };
     }
 
     // Every legacy row before this offset is also before the requested combined page.
     const legacyOffset = Math.max(offset - local.total, 0);
-    const legacy = await this.legacy.search({ ...criteria, offset: legacyOffset, limit: offset + limit - legacyOffset });
+    const legacy = await this.legacy.search({ ...criteria, offset: legacyOffset, limit: offset + limit - legacyOffset }, appliedHere);
     const merged = [
       ...local.items.map((header) => ({ id: header.id, number: header.number, entity: localPolicy(header) })),
       ...legacy.items.map((entity) => {
@@ -402,10 +418,10 @@ export class AccountingPoliciesWithLocalPostingsDataSource implements Accounting
       this.legacy.findAdjacentByNumber(number, direction),
     ]);
 
-    if (!local) return legacy;
+    if (!local) return this.projectLegacy(legacy);
     if (legacy) {
       const comparison = comparePolicyNumbers(local.number, legacy.toPrimitives().number);
-      if (previous ? comparison < 0 : comparison > 0) return legacy;
+      if (previous ? comparison < 0 : comparison > 0) return this.projectLegacy(legacy);
     }
     return policyWithMovements(local);
   }

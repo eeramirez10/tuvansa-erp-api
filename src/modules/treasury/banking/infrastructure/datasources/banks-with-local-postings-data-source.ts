@@ -6,14 +6,14 @@ import {
 import { supplierPaymentReversalsAvailable } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/purchase-posting-reversal-tables.js';
 import { readCustomerCollections } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-customer-collections.js';
 import { customerCollectionReversalSql, customerCollectionReversalsAvailable } from '../../../../accounts-receivable/clients/infrastructure/datasources/customer-collection-reversal-reads.js';
-import { activeManualPolicyLines, manualLineSettlement, manualPolicyAffectsAccount, manualPolicyLines, readManualPolicies } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
+import { activeManualPolicyLines, manualLineSettlement, manualPolicyAffectsAccount, manualPolicyLines, readAppliedHistoricalPolicies, readManualPolicies } from '../../../../accounting/policies/infrastructure/datasources/manual-policy-reads.js';
 import { BankAccount } from '../../domain/entities/bank-account.js';
 import type { BankPanelKey, BankPanelOptions, BankPanelResponse } from '../../domain/repositories/bank-panels-repository.js';
 import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
-import { bankReconciliationsAvailable, joinBankReconciliation, readBankReconciliationState } from './bank-reconciliation-reads.js';
+import { bankReconciliationsAvailable, joinBankReconciliation, readBankReconciliationState, readLegacyBankSettlements } from './bank-reconciliation-reads.js';
 import { readBankTransit } from './bank-transit-reads.js';
 import { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
-import { LegacyMysqlBankPanelsDataSource, sumBankPanelColumn } from './legacy-mysql-bank-panels-data-source.js';
+import { isLegacyBankMovementId, LegacyMysqlBankPanelsDataSource, readLegacyBankStatementDate, sumBankPanelColumn } from './legacy-mysql-bank-panels-data-source.js';
 import { bankTransferCheque, readBankTransfers } from './postgres-bank-transfers.js';
 
 const money = (value: number) => Number(value.toFixed(2));
@@ -156,25 +156,36 @@ const pendingReconciliation = (key: BankPanelKey) => key === 'reconciliation' ||
 
 export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanelsDataSource {
   override async getPanel(id: number, key: BankPanelKey, options: BankPanelOptions): Promise<BankPanelResponse> {
-    const base = await super.getPanel(id, key, options);
+    const historyForAuxiliary = key === 'auxiliary' ? await readAppliedHistoricalPolicies() : [];
+    const base = await super.getPanel(id, key, options, historyForAuxiliary);
     const keys: BankPanelKey[] = ['auxiliary', 'unapplied-auxiliary', 'reconciliation', 'automatic-reconciliation', 'authorization-review', 'payments', 'deposits'];
     if (!keys.includes(key) || (!base.available && key !== 'payments' && key !== 'deposits')) return base;
     const fiscalYear = typeof base.summary?.fiscalYear === 'number' ? base.summary.fiscalYear : options.fiscalYear;
     const panelOptions = { ...options, fiscalYear };
     const unapplied = key === 'unapplied-auxiliary';
-    const [payments, collections, transfers, journals, reconciliation, transit] = await Promise.all([
+    const pending = pendingReconciliation(key);
+    const canSettle = pending && postgresConfigured() && base.summary?.transitEligible === true;
+    const legacyRows = base.items as Record<string, unknown>[];
+    const [payments, collections, transfers, journals, reconciliation, transit, settled, legacyStatementDate, appliedHere] = await Promise.all([
       key === 'deposits' || unapplied ? [] : this.paymentRows(id, key, panelOptions),
       key === 'payments' || unapplied ? [] : this.collectionRows(id, key, panelOptions),
       unapplied ? [] : this.transferRows(id, key, panelOptions),
       key === 'deposits' || key === 'payments' ? [] : this.manualRows(id, key, panelOptions),
       pendingReconciliation(key) ? readBankReconciliationState(1, id) : null,
       pendingReconciliation(key) ? readBankTransit(1, id) : [],
+      pending || key === 'auxiliary' ? readLegacyBankSettlements(id) : [],
+      canSettle ? readLegacyBankStatementDate(1, id) : null,
+      unapplied || pending || key === 'authorization-review' ? readAppliedHistoricalPolicies(
+        [...new Set(legacyRows.map(({ policyId }) => Number(policyId)).filter(isLegacyBankMovementId))],
+      ) : [],
     ]);
-    const local = [...payments, ...collections, ...transfers, ...journals].sort((a, b) =>
+    const webJournals = journals.filter(({ movementId }) => !isLegacyBankMovementId(movementId));
+    const local = [...payments, ...collections, ...transfers, ...webJournals].sort((a, b) =>
       a.policyDate.localeCompare(b.policyDate) || a.movementId - b.movementId);
     const summary = { ...base.summary };
     if (reconciliation?.lastStatementDate) summary.lastStatementDate = reconciliation.lastStatementDate;
-    if (!local.length && !pendingReconciliation(key)) return base;
+    if (legacyStatementDate) summary.lastLegacyStatementDate = legacyStatementDate;
+    if (!local.length && !pending && !settled.length && !unapplied && !appliedHere.length) return base;
     const charges = local.reduce((total, { charge }) => total + charge, 0);
     const credits = local.reduce((total, { credit }) => total + credit, 0);
     if (key === 'auxiliary' || unapplied || key === 'payments' || key === 'deposits') {
@@ -186,17 +197,36 @@ export class BankPanelsWithLocalPostingsDataSource extends LegacyMysqlBankPanels
     if (payments.length) source.push('supplier_payments');
     if (collections.length) source.push('customer_collections');
     if (transfers.length) source.push('bank_transfers');
-    if (journals.length) source.push('manual_accounting_policy_lines');
+    if (webJournals.length || appliedHere.length || historyForAuxiliary.length) source.push('manual_accounting_policy_lines');
     if (transit.length) source.push('bank_reconciliation_transit');
-    let items = [...base.items, ...local] as Record<string, unknown>[];
+    if (settled.length) source.push('bank_reconciliation_movements');
+    const settledDates = new Map(settled.map(({ movementId, statementDate }) => [movementId, statementDate]));
+    const appliedIds = new Set(appliedHere);
+    const historical = legacyRows.flatMap<Record<string, unknown>>(({ applyCandidate, ...row }) => {
+      const applied = appliedIds.has(Number(row.policyId));
+      if (unapplied) {
+        return applied ? [] : [{ ...row, canApplyPolicy: postgresConfigured() && Number(applyCandidate) === 1 }];
+      }
+      const statementDate = settledDates.get(Number(row.movementId));
+      if (statementDate && pending) return [];
+      return [{ ...row, ...(statementDate ? { reconciled: 'X', statementDate } : {}), ...(applied ? { applied: 1 } : {}) }];
+    });
+    let items = [...historical, ...local] as Record<string, unknown>[];
+    if (unapplied) {
+      summary.charges = money(sumBankPanelColumn(items, 'charge'));
+      summary.credits = money(sumBankPanelColumn(items, 'credit'));
+      summary.balance = money(Number(summary.charges) - Number(summary.credits));
+    }
     const manual = key === 'reconciliation';
-    if (pendingReconciliation(key)) {
+    if (pending) {
       const marks = new Map(transit.map((mark) => [mark.movementId, mark.inTransit]));
-      const canChangeTransit = manual && postgresConfigured() && summary.transitEligible === true;
       items = items.map((row) => {
         const marked = marks.get(Number(row.movementId)) ?? row.inTransit === '*';
-        return { ...row, inTransit: marked ? '*' : '', canReconcile: Boolean(row.mode) && !marked,
-          ...(canChangeTransit ? { canChangeTransit: true } : {}) };
+        const historicalEligible = Number(row.applied) === 1 && Number(row.accountingType) === 1 && row.reconciled === ''
+          && Number(row.charge) !== Number(row.credit) && typeof row.policyDate === 'string' && row.policyDate > '1900-12-31';
+        return { ...row, inTransit: marked ? '*' : '', canReconcile: (Boolean(row.mode) || (canSettle && historicalEligible)) && !marked,
+          ...(historicalEligible ? { historical: true } : {}),
+          ...(manual && canSettle ? { canChangeTransit: true } : {}) };
       });
       if (!manual) items = items.filter((row) => row.inTransit !== '*');
       const charges = sumBankPanelColumn(items, 'charge');

@@ -19,7 +19,7 @@ import { bankReconciliationsAvailable, bankReconciliationState, joinBankReconcil
 import { bankTransfersAvailable, isLocalBankTransferMovementId } from './postgres-bank-transfers.js';
 import type { BankAccountsWithCatalogDataSource } from './bank-accounts-with-catalog-data-source.js';
 import { readBankTransitOn } from './bank-transit-reads.js';
-import { readLegacyTransitMovement } from './legacy-mysql-bank-panels-data-source.js';
+import { isLegacyBankMovementId, readLegacyBankReconciliationMovements, readLegacyBankStatementDate, readLegacyTransitMovement } from './legacy-mysql-bank-panels-data-source.js';
 
 // Derivada: guarda el corte y relaciona el asiento bancario web con su conciliación.
 const migrations = [{
@@ -85,6 +85,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     private readonly configured = postgresConfigured,
     private readonly catalog?: Pick<BankAccountsWithCatalogDataSource, 'lookupOn'>,
     private readonly legacyTransit = readLegacyTransitMovement,
+    private readonly legacyCut = { movements: readLegacyBankReconciliationMovements, latest: readLegacyBankStatementDate },
   ) {}
 
   writable() { return this.configured(); }
@@ -126,6 +127,7 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     return this.transaction(async (client) => {
       await lockAccount(client, companyId, bankAccountId);
       await bankOpeningBalance(this.catalog?.lookupOn(client));
+      await this.ensureUnsettled(client, [input.movementId]);
       const [local] = await this.pendingMovements(client, companyId, bankAccountId, [input.movementId]);
       const original = local ? { amount: local.amount, inTransit: false }
         : await this.legacyTransit(companyId, bankAccountId, input.movementId);
@@ -148,6 +150,13 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
       }
       return input;
     });
+  }
+
+  private async ensureUnsettled(client: PostgresClient, ids: number[]) {
+    const { rows } = await client.query(
+      'SELECT 1 FROM tuvansa.bank_reconciliation_movements WHERE movement_id=ANY($1::bigint[]) LIMIT 1', [ids],
+    );
+    if (rows.length) throw movementUnavailable();
   }
 
   private async transaction<T>(operation: (client: PostgresClient) => Promise<T>) {
@@ -265,13 +274,34 @@ export class PostgresBankReconciliations implements BankReconciliationDataSource
     await lockAccount(client, companyId, bankAccountId);
     const opening = await command.bankOpeningBalance(this.catalog?.lookupOn(client));
     const { delta, lastStatementDate } = await bankReconciliationState(client, companyId, bankAccountId);
-    const movements = await this.pendingMovements(client, companyId, bankAccountId, input.movementIds);
+    await this.ensureUnsettled(client, input.movementIds);
+    const historicalIds = input.movementIds.filter(isLegacyBankMovementId);
+    const history = await this.legacyCut.movements(companyId, bankAccountId, historicalIds);
+    const locallyApplied = history.filter(({ applied }) => !applied).map(({ id }) => id);
+    const adopted = new Map<number, BankReconciliationMovement>();
+    if (locallyApplied.length && await manualPoliciesAvailable(client)) {
+      const { rows } = await client.query<BankReconciliationMovement>(
+        `SELECT l.id::float8,p.date::text,(l.debit-l.credit)::float8 AS amount ${activeManualPolicyLines}
+         WHERE p.company_id=$1 AND l.account_id=$2 AND l.account_type=0 AND l.id=ANY($3::bigint[])`,
+        [companyId, bankAccountId, locallyApplied],
+      );
+      for (const row of rows) adopted.set(row.id, row);
+    }
+    const historical = history.filter(({ id, applied, amount, date }) => {
+      const recorded = adopted.get(id);
+      return applied || (recorded?.amount === amount && recorded.date === date);
+    });
+    const local = await this.pendingMovements(client, companyId, bankAccountId, input.movementIds.filter((id) => !isLegacyBankMovementId(id)));
+    const movements = [...historical, ...local];
     if (movements.length !== input.movementIds.length) throw movementUnavailable();
     const selected = new Set(input.movementIds);
-    const marks = await readBankTransitOn(client, companyId, bankAccountId);
-    if (marks.some((mark) => mark.inTransit && selected.has(mark.movementId))) throw inTransit();
+    const marks = new Map((await readBankTransitOn(client, companyId, bankAccountId))
+      .filter((mark) => selected.has(mark.movementId)).map((mark) => [mark.movementId, mark.inTransit]));
+    if ([...marks.values()].some(Boolean) || historical.some((row) => row.inTransit && !marks.has(row.id))) throw inTransit();
     const amount = (bankCents(opening) + bankCents(delta)) / 100;
-    const balances = reconcileMovements(input, movements, amount, lastStatementDate);
+    const legacyStatementDate = historicalIds.length ? await this.legacyCut.latest(companyId, bankAccountId) : null;
+    const earliest = [lastStatementDate, legacyStatementDate].reduce((latest, date) => date && (!latest || date > latest) ? date : latest, null);
+    const balances = reconcileMovements(input, movements, amount, earliest);
     const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.bank_reconciliation_ids') AS id");
     const result: BankReconciliationResult = {
       id: Number(allocation!.id), movementIds: input.movementIds, statementDate: input.statementDate, ...balances,

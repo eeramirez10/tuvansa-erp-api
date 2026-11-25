@@ -17,8 +17,34 @@ export const sumBankPanelColumn = (items: Array<Record<string, unknown>>, key: s
 const sum = sumBankPanelColumn;
 const pendingBankPolicy = "BATIPOC <> 0 AND POEST = 0";
 
+export const isLegacyBankMovementId = (id: number) => id > 0 && id <= 4_294_967_295;
+
+export async function readLegacyBankReconciliationMovements(companyId: number, accountId: number, ids: number[]) {
+  if (!ids.length) return [];
+  const [rows] = await legacyMysqlPool.execute<(RowDataPacket & { id: number; date: string; amount: number; inTransit: string; applied: number })[]>(
+    `SELECT m.BASEQ AS id,p.POFECHA AS date,(m.BAIMPOR-m.BAIMPORNEG) AS amount,m.BAOKTRANSITO AS inTransit,p.POAPLICADA AS applied
+       FROM FBANMOV m JOIN FPOLIZA p ON p.POSEQ=m.POSEQ
+       WHERE m.BSEQ=? AND m.BASEQ IN (${ids.map(() => '?').join(',')}) AND p.POCIA=? AND p.POEST=0
+         AND m.BAOK='' AND m.BATIPOC=1 AND m.BAIMPOR<>m.BAIMPORNEG AND p.POFECHA>'1900-12-31'`,
+    [accountId, ...ids, companyId],
+  );
+  return rows.map(({ id, date, amount, inTransit, applied }) =>
+    ({ id, date, amount: Number(Number(amount).toFixed(2)), inTransit: inTransit === '*', applied: Number(applied) === 1 }));
+}
+
+export async function readLegacyBankStatementDate(companyId: number, accountId: number) {
+  if (!isLegacyBankMovementId(accountId)) return null;
+  const [[row]] = await legacyMysqlPool.execute<(RowDataPacket & { date: string | null })[]>(
+    `SELECT CAST(MAX(m.BAFECHARECIBO) AS DATE) AS date
+       FROM FBANMOV m STRAIGHT_JOIN FPOLIZA p ON p.POSEQ=m.POSEQ
+       WHERE m.BSEQ=? AND m.BAOK='X' AND m.BAFECHARECIBO>'1900-12-31' AND p.POCIA=? AND p.POEST=0`,
+    [accountId, companyId],
+  );
+  return row?.date ?? null;
+}
+
 export async function readLegacyTransitMovement(companyId: number, accountId: number, movementId: number) {
-  if (movementId > 4_294_967_295) return null;
+  if (!isLegacyBankMovementId(movementId)) return null;
   const [rows] = await legacyMysqlPool.execute<(RowDataPacket & { amount: number; inTransit: string })[]>(
     `SELECT (BAIMPOR - BAIMPORNEG) AS amount, BAOKTRANSITO AS inTransit
      FROM FBANMOV JOIN FPOLIZA ON FBANMOV.POSEQ=FPOLIZA.POSEQ
@@ -35,7 +61,7 @@ const toItems = (rows: PanelRow[]): Array<Record<string, unknown>> =>
 export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
   constructor(private readonly accountsDataSource: BankAccountsDataSource) {}
 
-  async getPanel(bankAccountId: number, key: BankPanelKey, options: BankPanelOptions): Promise<BankPanelResponse> {
+  async getPanel(bankAccountId: number, key: BankPanelKey, options: BankPanelOptions, appliedHere: number[] = []): Promise<BankPanelResponse> {
     const account = await this.accountsDataSource.findById(bankAccountId);
     if (account === null) {
       return {
@@ -72,10 +98,11 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
           items: [...accountData.ledger.firstPeriod, ...accountData.ledger.secondPeriod],
           summary: { balances: accountData.balances, currency: accountData.currency },
         };
-      case 'auxiliary': return this.getAuxiliary(bankAccountId, await this.fiscalYear(options.fiscalYear));
+      case 'auxiliary': return this.getAuxiliary(bankAccountId, await this.fiscalYear(options.fiscalYear), appliedHere);
       case 'reconciliation': return this.getReconciliation(bankAccountId, accountData.balances.bank, accountData.balances.inTransit,
         bankCanReconcile(accountData, 1));
-      case 'automatic-reconciliation': return this.getAutomaticReconciliation(bankAccountId, options.asOfDate, accountData.balances.bank);
+      case 'automatic-reconciliation': return this.getAutomaticReconciliation(bankAccountId, options.asOfDate, accountData.balances.bank,
+        bankCanReconcile(accountData, 1));
       case 'cost-center-ledger': return this.getCostCenterLedger(accountData.code, options.costCenter);
       case 'authorization-review': return this.getAuthorizationReview(bankAccountId);
       case 'classifiers': return this.getClassifiers();
@@ -125,7 +152,8 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
     return period?.fiscalYear || new Date().getFullYear();
   }
 
-  private async getAuxiliary(bankAccountId: number, fiscalYear: number): Promise<BankPanelResponse> {
+  private async getAuxiliary(bankAccountId: number, fiscalYear: number, appliedHere: number[]): Promise<BankPanelResponse> {
+    const applied = appliedHere.length ? `(POAPLICADA=1 OR FPOLIZA.POSEQ IN (${appliedHere.map(() => '?').join(',')}))` : 'POAPLICADA = 1';
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
       `SELECT BATIP AS movementType, BAIMPOR AS charge, BAIMPORNEG AS credit,
               BAOK AS reconciled, FBANMOV.BASEQ AS movementId,
@@ -137,10 +165,10 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
          FROM FBANMOV
          LEFT JOIN FBENC ON FBANMOV.BSEQ = FBENC.BSEQ
          LEFT JOIN FPOLIZA ON FBANMOV.POSEQ = FPOLIZA.POSEQ
-        WHERE FBENC.BSEQ = ? AND BAMES = 1 AND POAPLICADA = 1
+        WHERE FBENC.BSEQ = ? AND BAMES = 1 AND ${applied}
           AND YEAR(POFECHA) >= ? AND POEST = 0 AND POCIA = 1
         ORDER BY FBENC.BSEQ, FBANMOV.BASEQ LIMIT 32767`,
-      [bankAccountId, fiscalYear],
+      [bankAccountId, ...appliedHere, fiscalYear],
     );
     const items = toItems(rows);
     return {
@@ -172,12 +200,13 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
     };
   }
 
-  private async getAutomaticReconciliation(bankAccountId: number, asOfDate: string, bankBalance: number): Promise<BankPanelResponse> {
+  private async getAutomaticReconciliation(bankAccountId: number, asOfDate: string, bankBalance: number, transitEligible: boolean): Promise<BankPanelResponse> {
     const [rows] = await legacyMysqlPool.execute<PanelRow[]>(
       `SELECT BATIP AS movementType, BAIMPOR AS charge, BAIMPORNEG AS credit,
               BAOK AS reconciled, FBANMOV.BASEQ AS movementId,
               POFECHA AS policyDate, POCHEQUE AS checkNumber,
-              '0' AS linked, POBENEF AS beneficiary, PONUM AS policyNumber, BAOKTRANSITO AS inTransit
+              '0' AS linked, POBENEF AS beneficiary, PONUM AS policyNumber, BAOKTRANSITO AS inTransit,
+              POAPLICADA AS applied, BATIPOC AS accountingType, FBANMOV.POSEQ AS policyId
          FROM FBANMOV
          LEFT JOIN FPOLIZA ON FBANMOV.POSEQ = FPOLIZA.POSEQ
          LEFT JOIN FBENC ON FBANMOV.BSEQ = FBENC.BSEQ
@@ -189,7 +218,7 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
     const items = toItems(rows);
     return {
       button: 'Concilia Automático', section: 'actions', source: ['FBANMOV', 'FPOLIZA', 'FBENC'], available: true, readOnly: true, items,
-      summary: { asOfDate, bankBalance, pending: sum(items, 'charge') - sum(items, 'credit') },
+      summary: { asOfDate, bankBalance, transitEligible, pending: sum(items, 'charge') - sum(items, 'credit') },
     };
   }
 
@@ -271,10 +300,14 @@ export class LegacyMysqlBankPanelsDataSource implements BankPanelsDataSource {
               BANUM AS bankNumber, PODESCR AS description,
               BABENEF AS movementBeneficiary, POCHEQUE AS checkNumber,
               POUSR AS user, BATIPOC AS accountingType,
-              POPOSTFECHA AS postdatedAt, BACENCOS AS costCenter
+              POPOSTFECHA AS postdatedAt, BACENCOS AS costCenter,
+              (FBENC.BTIPO=0 AND FBENC.BMONEDA=1 AND PONUM LIKE '3%'
+               AND BATIP='3' AND BATIPOC=1 AND BAOK='' AND BAIMPOR<>BAIMPORNEG
+               AND POFECHA BETWEEN c.CIAFI AND c.CIAFF AND YEAR(POFECHA) IN (c.CIAPERIODO,c.CIAPERIODO+1)) AS applyCandidate
          FROM FBANMOV
          LEFT JOIN FBENC ON FBANMOV.BSEQ = FBENC.BSEQ
          LEFT JOIN FPOLIZA ON FBANMOV.POSEQ = FPOLIZA.POSEQ
+         LEFT JOIN FCIA c ON c.CIASEQ=FPOLIZA.POCIA
         WHERE FBENC.BSEQ = ? AND BAMES = 1 AND POAPLICADA = 0
           AND YEAR(POFECHA) >= ? AND POEST = 0 AND POCIA = 1
         ORDER BY FBENC.BSEQ, FBANMOV.BASEQ LIMIT 32767`,

@@ -1,4 +1,5 @@
 import type { AccountingPolicyCommentMetadata, AccountingPolicyProps } from '../entities/accounting-policy.js';
+import type { BankAccountLookup, BankAccountProps } from '../../../../treasury/banking/domain/entities/bank-account.js';
 
 export interface ManualPolicyAccount {
   id: number;
@@ -46,12 +47,14 @@ export type ManualPolicyLine = Omit<ManualPolicyLineInput, 'accountCode'> & {
   parents: ManualPolicyAccount[];
   bankMovementType?: string;
   bankSourceMovementId?: number;
+  historicalMovementId?: number;
 };
 
 export interface ManualPolicyReferences {
   settings(): Promise<ManualPolicySettings | null>;
   search(query: string): Promise<ManualPolicyAccount[]>;
-  accounts(codes: string[], levels: number[]): Promise<Map<string, { account: ManualPolicyAccount; parents: ManualPolicyAccount[] }>>;
+  accounts(codes: string[], levels: number[], lookup?: (code: string) => Promise<BankAccountProps | null>):
+    Promise<Map<string, { account: ManualPolicyAccount; parents: ManualPolicyAccount[] }>>;
 }
 
 export interface ManualPolicyDocument {
@@ -73,6 +76,9 @@ export interface ManualPolicyDocument {
 export interface ManualPolicyDataSource {
   writable(): boolean;
   find(id: number): Promise<ManualPolicyDocument | null>;
+  historicalApplied(id: number): Promise<boolean>;
+  applyHistorical(policy: AccountingPolicyProps & { date: string }, requestKey: string, lines: ManualPolicyLine[],
+    fingerprint: string, verify: (lookup?: BankAccountLookup) => Promise<void>): Promise<AccountingPolicyProps>;
   findRequest(key: string, fingerprint: string): Promise<AccountingPolicyProps | null>;
   create(input: ManualPolicyInput, lines: ManualPolicyLine[], fingerprint: string, verify: () => Promise<void>,
     source?: { id: number; revision: number }): Promise<AccountingPolicyProps>;

@@ -68,7 +68,7 @@ esa propiedad. El catálogo web persiste esos valores y los consecutivos en
 | Movimientos | `/:bankAccountId/actions/movements` | OMNIS no ejecuta SQL: muestra que no puede generar movimientos cuando la contabilidad está activa |
 | Depósitos | `/:bankAccountId/actions/deposits` | OMNIS indica que el movimiento se genera mediante póliza. La vista web consulta los depósitos registrados en Cobranza |
 | Pagos | `/:bankAccountId/actions/payments` | Consulta el abono local y su póliza. Al seleccionar un PP web aparece **Revertir PP** o **Ver reversión** |
-| Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA` para la consulta histórica. Los movimientos web pendientes se pueden seleccionar |
+| Conciliar | `/:bankAccountId/actions/reconciliation` | `FBANMOV` + `FBENC` + `FPOLIZA` para la consulta histórica. Permite seleccionar movimientos web e históricos elegibles |
 | Concilia Automático | `/:bankAccountId/actions/automatic-reconciliation?asOfDate=YYYY-MM-DD` | `FBANMOV` + `FPOLIZA` + `FBENC` e importación CSV o TSV. El botón **Registra** usa el mismo POST de Conciliar. |
 | Auxiliar | `/:bankAccountId/actions/auxiliary?fiscalYear=YYYY` | `FBANMOV` + `FBENC` + `FPOLIZA`; reproduce `BAMES=1`, póliza aplicada y año fiscal. La web muestra comentarios, póliza y fecha de conciliación cuando existen. |
 | Gastos por prv. | `/:bankAccountId/actions/supplier-expenses` | Consulta **Compras por proveedor** de la cuenta. **Pagar recepción** consulta pendientes en `/capture` y registra un PP por cheque con POST en la ruta del informe. |
@@ -123,15 +123,35 @@ para la modalidad **Traspas**.
 La instancia mexicana opera con Contabilidad activa. **Movimientos** remite a pólizas y **Depósitos** consulta los registros de Cobranza y los cheques de traspaso recibidos. **Imprimir cheque** depende del formato bancario nativo; las dos cuentas probadas tenían `FBENC.BREPORTE` vacío.
 
 **Aux. no aplicados → Aplicar** (`EBANCO#4A/21`) usa la póliza seleccionada,
-ejecuta `MPASIVOS/99` y recarga el auxiliar. La web aplica la póliza de
-diario local con `POST /api/accounting/policies/:id/actions/apply`. La
-partida sale del auxiliar pendiente, aparece en **Auxiliar** y queda
-disponible en **Conciliar**. El saldo contable incorpora el asiento.
+ejecuta `MPASIVOS/99` y recarga el auxiliar. La web consulta
+`GET /api/accounting/policies/:id/actions/manual` y confirma mediante
+`POST /api/accounting/policies/:id/actions/apply`. Admite el diario
+web y el diario histórico elegible, con su folio y partidas originales.
+La partida sale del auxiliar pendiente, aparece en **Auxiliar** y queda
+disponible en **Conciliar** si cumple sus reglas. La aplicación cambia
+el saldo contable. El saldo bancario incorpora el movimiento al
+registrar su propio corte.
+
+La ruta histórica usa `FPOLIZA`, `FBANMOV` y `FAX` como lectura
+adaptada. `MPASIVOS/99` verifica el periodo y aplica a las cuentas, sus
+agrupadoras y centros mediante `/103` y `/106`. PostgreSQL registra
+la operación derivada en las tablas `manual_accounting_policy_*` con
+los `POSEQ` y `BASEQ` originales. El respaldo MySQL se usa en lectura.
+La aplicación histórica se limita a un diario ordinario de México,
+cuadrado en pesos, sin partidas conciliadas ni documentos vinculados.
 Capturas `closure-bank-unapplied-ready.png` y `closure-bank-aux-apply-proc21.png`.
-En el periodo activo del respaldo, la consulta de pólizas bancarias de
-México sin aplicar encontró una sola póliza con todas sus partidas
-bancarias en cero. La aplicación histórica queda pendiente de probar
-con una póliza elegible.
+El periodo activo del respaldo sólo contiene una póliza pendiente con
+las partidas bancarias en cero.
+
+Para verificar un importe, el servidor de pruebas aisló el periodo 2022
+y usó el folio `312202-0092` del respaldo. Chromium aplicó 3,127.50 MXN
+desde **Aux. no aplicados**. El cargo apareció una sola vez en **Auxiliar**
+y conservó el cheque y la póliza. **Conciliar** admitió el mismo
+`BASEQ 971276` en un corte posterior. Se comprobaron el reintento, una
+revisión vencida, los filtros de Pólizas y la limpieza de PostgreSQL.
+La sesión nativa perdió la conexión al iniciar la ronda. La comparación
+usa los procedimientos exportados y la lectura del respaldo antes y
+después de las pruebas web.
 
 **Revisar** abre **Autorizar** (`EBANCO#11`). Los procedimientos `/1`,
 `/2` y `/99` consultan la partida por `FBANMOV.BASEQ` y modifican
@@ -216,7 +236,7 @@ En la biblioteca de pruebas, **Bancos → Conciliar** de la cuenta `1102100001` 
 
 | Vista y control | Endpoint | Procedencia y efecto |
 | --- | --- | --- |
-| Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura histórica y SQL derivado de `supplier_payments`, `customer_collections`, `bank_transfer_movements` y `bank_reconciliation_movements`. Los pagos, depósitos y traspasos web pendientes son seleccionables |
+| Bancos / Conciliar | `GET /api/treasury/bank-accounts/:id/actions/reconciliation` | Captura histórica y SQL derivado de `supplier_payments`, `customer_collections`, `bank_transfer_movements` y `bank_reconciliation_movements`. Incluye las partidas históricas elegibles por `BASEQ` |
 | Conciliar / Selección | Operación en pantalla | Muestra la suma firmada y el nuevo saldo calculado |
 | Conciliar / Tránsito | `PATCH /api/treasury/bank-accounts/:id/actions/reconciliation/transit` | Lectura adaptada de `FBANMOV`, `FBENC` y `FPOLIZA`. Escritura derivada en `bank_reconciliation_transit` con el mismo bloqueo por cuenta que **Registrar** |
 | Conciliar / Filtra tránsito | Operación en pantalla sobre el mismo GET | Muestra sólo las partidas con `T = *` |
@@ -246,9 +266,7 @@ por lectura de MySQL.
 En la web, **Tránsito** guarda el estado deseado y ajusta el saldo en la
 ficha y en **Conciliar**. Las partidas marcadas quedan disponibles para
 consulta manual y salen de **Concilia Automático**. Al quitar la marca,
-una partida web vuelve a estar disponible para el corte. El corte web
-admite partidas web. El histórico admite sustituir la marca localmente
-y conserva el saldo de apertura de German como base. La API rechaza un
+una partida elegible vuelve a estar disponible para el corte. La API rechaza un
 corte con partidas marcadas y un cambio de marca sobre una partida ya
 conciliada. Una reversión pendiente o una desaplicación retira en la
 misma transacción la marca de la partida que deja de estar disponible.
@@ -260,6 +278,32 @@ marca y corte sobre el mismo cargo se serializaron. La marca ganó y el
 corte devolvió conflicto sin modificar el saldo bancario. Al quitar la
 marca, el corte se registró y un nuevo intento de marcar devolvió
 conflicto. Se retiraron los registros temporales.
+
+### Partidas históricas en un corte
+
+**Registrar** usa la partida histórica por `BASEQ` cuando tiene póliza
+activa y aplicada en México, tipo de cambio 1, importe distinto de cero
+y `BAOK` vacío. Se combina con partidas web de la misma cuenta. Se
+comprueba la fecha de las partidas, el último corte web y, si hay
+partidas históricas seleccionadas, la última fecha `BAFECHARECIBO` de
+partidas nativas con marca `X`. Los cortes de 2024 de GA32707 son
+evidencia de esa asociación entre marca y fecha.
+
+La escritura derivada se registra en `bank_reconciliation_movements` y
+`bank_reconciliations`. **Conciliar** y **Concilia Automático** retiran
+las partidas registradas. **Auxiliar** proyecta la marca y la fecha de
+corte y **Pólizas** muestra la partida conciliada. Se modifica el saldo
+bancario. El saldo contable y el de tránsito conservan sus importes al
+registrar. Una marca nativa retirada en PostgreSQL conserva su ajuste
+respecto al saldo de apertura cuando la partida entra en un corte.
+
+La prueba desde **Conciliar** en Chromium y PostgreSQL seleccionó
+`BASEQ 1895812` y `1895547`, un abono y un cargo. Confirmó que marcar
+tránsito bloquea el corte y que quitar la marca rehabilita la partida.
+El corte del 1 de marzo de 2025 sumó 52,190.02 MXN al saldo bancario.
+El Auxiliar mostró la marca y la fecha, y Contabilidad mostró las
+partidas conciliadas. La lectura antes y después confirmó los mismos
+registros en German. Se retiraron los registros temporales.
 
 ### Acciones al pie de Conciliar
 

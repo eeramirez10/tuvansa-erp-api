@@ -8,6 +8,7 @@ import type {
 } from '../../domain/datasources/manual-policy-data-source.js';
 import type { AccountingPolicyCommentLines, AccountingPolicyProps } from '../../domain/entities/accounting-policy.js';
 import type { AccountingPoliciesRepository } from '../../domain/repositories/accounting-policies-repository.js';
+import type { BankAccountLookup } from '../../../../treasury/banking/domain/entities/bank-account.js';
 
 const mexicoDate = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
 const missing = 'La configuración de pólizas de diario de TUVANSA no está disponible.';
@@ -45,6 +46,16 @@ function duplicateRevision(policy: AccountingPolicyProps) {
     policy.movements.map(({ id, exchangeRate }) => [id, exchangeRate]), duplicateFields(policy)]);
 }
 
+type HistoricalPolicySource = { policy: AccountingPolicyProps; ordinary: boolean };
+
+function historicalRevision({ policy, ordinary }: HistoricalPolicySource) {
+  const digest = fingerprint('historical-apply', policy.id, [
+    duplicateRevision(policy), policy.applied, ordinary, policy.cheque, policy.origin, policy.report, policy.postDate,
+    policy.movements.map(({ id, accountId, reconciled }) => [id, accountId, reconciled]),
+  ]);
+  return Number.parseInt(digest.slice(0, 12), 16) + 1;
+}
+
 function duplicateBlocked(policy: AccountingPolicyProps) {
   if (policy.company !== 1 || !policy.number.startsWith('3')) return 'Sólo se pueden duplicar pólizas de diario tipo 3.';
   if (policy.manual?.canceled) return 'La póliza ya fue dada de baja.';
@@ -62,7 +73,8 @@ function duplicateBlocked(policy: AccountingPolicyProps) {
 export class ManageManualPolicy {
   constructor(private readonly references: ManualPolicyReferences, private readonly dataSource: ManualPolicyDataSource,
     private readonly source?: Pick<AccountingPoliciesRepository, 'findById'>,
-    private readonly readHistoricalComments?: (id: number) => Promise<AccountingPolicyCommentLines>) {}
+    private readonly readHistoricalComments?: (id: number) => Promise<AccountingPolicyCommentLines>,
+    private readonly historicalSource?: (id: number) => Promise<HistoricalPolicySource | null>) {}
 
   async prepare() {
     const settings = await this.references.settings();
@@ -77,11 +89,49 @@ export class ManageManualPolicy {
 
   async preview(id: number) {
     const [current, settings] = await Promise.all([this.dataSource.find(id), this.references.settings()]);
-    if (!current) throw new NotFoundError('Póliza de diario capturada en la web');
+    if (!current) {
+      const { policy, revision, applied, reason } = await this.prepareHistorical(id, settings);
+      return { revision, canceled: false, reconciled: policy.movements.some(({ reconciled }) => reconciled),
+        fiscalStart: settings?.fiscalStart ?? null, fiscalEnd: settings?.fiscalEnd ?? null,
+        canEdit: false, canApply: !reason && !applied, canUnapply: false, canDelete: false, reason };
+    }
     const reason = blockReason(current, settings);
     const { revision, canceled, reconciled, applied } = current;
     return { revision, canceled, reconciled, fiscalStart: settings?.fiscalStart ?? null, fiscalEnd: settings?.fiscalEnd ?? null,
       canEdit: !reason && !applied, canApply: !reason && !applied, canUnapply: !reason && applied, canDelete: !reason, reason };
+  }
+
+  private async prepareHistorical(id: number, settings: ManualPolicySettings | null) {
+    const source = await this.historicalSource?.(id);
+    if (!source) throw new NotFoundError('Póliza de diario');
+    const { policy, ordinary } = source;
+    const applied = policy.applied || await this.dataSource.historicalApplied(id);
+    const revision = historicalRevision(source);
+    let reason: string | null = null;
+    if (applied) reason = 'La póliza ya está aplicada.';
+    else if (!this.dataSource.writable()) reason = 'La aplicación de pólizas requiere PostgreSQL.';
+    else if (!settings || !policy.date || !dateAllowed(policy.date, settings)) reason = 'La fecha de la póliza queda fuera del periodo activo.';
+    else if (!ordinary || policy.company !== 1 || !/^3.{10}$/.test(policy.number) || policy.movements.some(({ reconciled }) => reconciled)) {
+      reason = 'La aplicación histórica requiere un diario de México sin documentos vinculados y con partidas pendientes.';
+    } else if (policy.movements.some(({ exchangeRate }) => exchangeRate !== 1)
+      || !policy.movements.some(({ accountType }) => accountType === 0)) {
+      reason = 'La aplicación histórica requiere un diario en pesos con una partida bancaria.';
+    } else if (policy.movements.length < 2 || policy.movements.length > 100 || policy.concept.length > 90 || policy.beneficiary.length > 85
+      || policy.family.length > 20 || policy.movements.some(({ reference }) => reference.length > 45)) {
+      reason = 'La póliza requiere de dos a cien partidas y campos válidos para el diario.';
+    }
+    if (reason || !policy.date || !settings) return { policy, applied, revision, reason, lines: null };
+    try {
+      const prepared = await this.prepareLines({ ...duplicateFields(policy), date: policy.date, requestKey: '' }, settings);
+      if (prepared.some(({ account }, index) => account.id !== policy.movements[index]?.accountId || account.type !== policy.movements[index]?.accountType)) {
+        throw blocked('Cambió una cuenta de la póliza histórica.');
+      }
+      const lines = prepared.map((line, index) => ({ ...line, historicalMovementId: policy.movements[index]!.id }));
+      return { policy, applied, revision, reason: null, lines };
+    } catch (error) {
+      if (!(error instanceof ApplicationError) || error.statusCode >= 500) throw error;
+      return { policy, applied, revision, reason: error.message, lines: null };
+    }
   }
 
   private async settings() {
@@ -113,8 +163,13 @@ export class ManageManualPolicy {
     return lines;
   }
 
-  private async verifyReferences(lines: ManualPolicyLine[], settings: ManualPolicySettings) {
-    const accounts = await this.references.accounts([...new Set(lines.map(({ account }) => account.code))], settings.levels);
+  private async verifyReferences(lines: ManualPolicyLine[], settings: ManualPolicySettings, lookup?: BankAccountLookup) {
+    const ids = new Map(lines.flatMap(({ account, parents }) => [account, ...parents].map(({ code, id }) => [code, id] as const)));
+    const accounts = await this.references.accounts([...new Set(lines.map(({ account }) => account.code))], settings.levels, lookup && (async (code) => {
+      const id = ids.get(code);
+      const account = id === undefined ? null : await lookup(id);
+      return account?.code === code ? account : null;
+    }));
     const centers = new Set(settings.costCenters.map(({ code }) => code));
     for (const line of lines) {
       const current = accounts.get(line.account.code);
@@ -233,6 +288,19 @@ export class ManageManualPolicy {
     const previous = await this.dataSource.findRequest(input.requestKey, hash);
     if (previous) return previous;
     const settings = await this.settings();
+    if (operation === 'apply' && this.historicalSource && id <= 4_294_967_295) {
+      const { policy, reason, revision, lines } = await this.prepareHistorical(id, settings);
+      if (reason || !lines || !policy.date) throw blocked(reason ?? 'La póliza histórica no está disponible.');
+      if (input.revision !== revision) throw blocked('La póliza cambió. Vuelve a abrirla.');
+      const date = policy.date;
+      return this.dataSource.applyHistorical({ ...policy, date }, input.requestKey, lines, hash, async (lookup) => {
+        const latest = await this.historicalSource?.(id);
+        if (!latest || historicalRevision(latest) !== revision) throw blocked('La póliza cambió. Vuelve a abrirla.');
+        const currentSettings = await this.settings();
+        if (!dateAllowed(date, currentSettings)) throw blocked('La fecha de la póliza queda fuera del periodo activo.');
+        await this.verifyReferences(lines, currentSettings, lookup);
+      });
+    }
     return this.dataSource.perform(id, operation, input, hash, async (current) => {
       const reason = blockReason(current, settings);
       if (reason) throw blocked(reason);

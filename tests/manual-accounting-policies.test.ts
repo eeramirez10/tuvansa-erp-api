@@ -15,6 +15,73 @@ import type { PostgresConnectionFactory } from '../src/shared/infrastructure/dat
 import { errorHandler } from '../src/shared/infrastructure/http/error-handler.js';
 import { postgresWriteBoundary } from '../src/shared/infrastructure/http/postgres-write-boundary.js';
 
+it('applies an eligible historical bank journal once and preserves its original movement identifiers', async () => {
+  const db = new PGlite();
+  const connect: PostgresConnectionFactory = async () => ({
+    async query<T extends object>(sql: string, values?: unknown[]) {
+      if (values) return db.query<T>(sql, values);
+      return { rows: ((await db.exec(sql)).at(-1)?.rows ?? []) as T[] };
+    },
+    release() {},
+  });
+  const bank = { id: 6610, code: '1102100001', name: 'Banco de prueba', type: 0, nature: 0 };
+  const parent = { id: 6608, code: '1102', name: 'Grupo', type: 0, nature: 0 };
+  const other = { id: 6908, code: '2005002001', name: 'Contrapartida', type: 2, nature: 1 };
+  const references: ManualPolicyReferences = {
+    settings: async () => ({ fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31', periodYear: 2024, levels: [4, 10],
+      costCenters: [{ code: 0, name: 'Sin centro' }] }),
+    search: async () => [bank, other],
+    accounts: async () => new Map([[bank.code, { account: bank, parents: [parent] }], [other.code, { account: other, parents: [] }]]),
+  };
+  const policy: AccountingPolicyProps = {
+    id: 401, number: '312502-0123', date: '2025-02-01', company: 1, cheque: '', origin: '',
+    applied: false, beneficiary: '', family: '', concept: 'Diario de prueba', amountInWords: '', userId: 0,
+    report: '', auditAt: null, postDate: null, classifications: [], exchangeRate: 0, usedAt: null,
+    totals: { debit: 31.23, credit: 31.23, difference: 0 },
+    movements: [bank, other].map((account, index) => ({
+      id: 901 + index, accountId: account.id, accountCode: account.code, accountName: account.name, accountType: account.type,
+      debit: index ? 0 : 31.23, credit: index ? 31.23 : 0, costCenter: 0, reference: '', exchangeRate: 1, reconciled: false,
+    })),
+  };
+  let ordinary = false;
+  let reads = 0;
+  let staleRead = -1;
+  const storage = new PostgresManualPolicies(connect, () => true);
+  const useCase = new ManageManualPolicy(references, storage, undefined, undefined, async () => ({
+    policy: ++reads === staleRead ? { ...policy, concept: 'Cambió durante la operación' } : policy, ordinary,
+  }));
+  const app = express().use(express.json()).use('/policies', createManualPolicyRouter(useCase)).use(errorHandler);
+  const path = '/policies/401/actions';
+  try {
+    expect((await request(app).get(path + '/manual').expect(200)).body.data.canApply).toBe(false);
+    ordinary = true;
+    const preview = (await request(app).get(path + '/manual').expect(200)).body.data;
+    expect(preview).toMatchObject({ canApply: true, canEdit: false, canUnapply: false, canDelete: false });
+    const action = { requestKey: randomUUID(), revision: preview.revision, confirmed: true };
+    staleRead = reads + 2;
+    await request(app).post(path + '/apply').send(action).expect(409);
+    expect(await storage.historicalApplied(policy.id)).toBe(false);
+    const applied = (await request(app).post(path + '/apply').send(action).expect(200)).body.data;
+    expect(applied).toEqual({ ...policy, applied: true });
+    expect((await request(app).post(path + '/apply').send(action).expect(200)).body.data).toEqual(applied);
+    await request(app).post(path + '/apply').send({ ...action, requestKey: randomUUID() }).expect(409);
+    expect((await db.query('SELECT id::float8,debit::float8,credit::float8 FROM tuvansa.manual_accounting_policy_lines ORDER BY id')).rows)
+      .toEqual([{ id: 901, debit: 31.23, credit: 0 }, { id: 902, debit: 0, credit: 31.23 }]);
+    expect((await db.query(`SELECT sum(l.debit-l.credit)::float8 AS balance ${activeManualPolicyLines} WHERE ${manualPolicyAffectsAccount}`, [parent.id])).rows)
+      .toEqual([{ balance: 31.23 }]);
+    const cut = new PostgresBankReconciliations(connect, () => true, undefined, undefined, {
+      movements: async () => [{ id: 901, amount: 31.23, date: '2025-02-01', applied: false, inTransit: false }],
+      latest: async () => null,
+    });
+    await expect(cut.commit({ companyId: 1, bankAccountId: bank.id, fingerprint: 'a'.repeat(64), bankOpeningBalance: async () => 0,
+      input: { requestKey: randomUUID(), movementIds: [901], statementDate: '2025-02-03', expectedBankBalance: 0, statementBalance: 31.23 },
+    })).resolves.toMatchObject({ movementIds: [901], bankBalance: 31.23 });
+    expect(policy.applied).toBe(false);
+  } finally {
+    await db.close();
+  }
+}, 20_000);
+
 it('saves policy comments on an unapplied journal without replacing ledger lines', async () => {
   const db = new PGlite();
   const connect: PostgresConnectionFactory = async () => ({

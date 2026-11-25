@@ -33,6 +33,17 @@ export async function readManualPolicies<T>(fallback: T, read: (client: Postgres
   } finally { client?.release(); }
 }
 
+export function readAppliedHistoricalPolicies(ids: number[] | null = null) {
+  if (ids?.length === 0) return Promise.resolve([]);
+  return readManualPolicies<number[]>([], async (client) => {
+    const { rows } = await client.query<{ id: number }>(
+      `SELECT id::float8 FROM tuvansa.manual_accounting_policies WHERE company_id=1 AND applied
+       AND id BETWEEN 1 AND 4294967295 AND ($1::bigint[] IS NULL OR id=ANY($1))`, [ids],
+    );
+    return rows.map(({ id }) => id);
+  });
+}
+
 export function manualLineSettlement(available: boolean) {
   return available ? `LEFT JOIN tuvansa.bank_reconciliation_movements matched ON matched.movement_id=l.id
       LEFT JOIN tuvansa.bank_reconciliations settlement ON settlement.id=matched.reconciliation_id

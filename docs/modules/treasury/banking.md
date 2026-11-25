@@ -356,6 +356,15 @@ de Monterrey en cinco cuentas con formato. Para usar una como referencia se
 requiere confirmar que México tenga configurado el mismo formato y que la
 partida represente un cheque imprimible.
 
+El procedimiento `MBANCO/39` comprueba el permiso `MBANCO39` y pasa el
+`BASEQ` enfocado a `/35`. La rama de TUVANSA carga la configuración de
+página de `BREPORTE`. El cálculo del importe convertido usa
+`rnd((BAIMPOR+BAIMPORNEG)/(BATIPOC+(BATIPOC=0)),2)`. Las bibliotecas
+locales incluyen la definición `QSANMLIL`, cuyo rótulo la identifica como
+**Santander Mexicali pesos leyenda**. Para validar **Imprimir Cheque** en
+México falta una cuenta de prueba con su formato efectivo y una partida
+con importe y número de cheque para comparar el PDF de German.
+
 **Detalle** ejecuta `EBANCO#6/27` y abre **Auxiliar del documento**
 (`EBANCO#15`). En `20261125-EBANCO15-PROCEDURES.txt`, `/240` carga
 los renglones `FAX` que comparten el `BASEQ` de la partida enfocada.

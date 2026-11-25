@@ -62,9 +62,7 @@ Requisito funcional del usuario: Captura de pedido y Cambio de pedido muestran s
 El 25 de noviembre de 2026, la sesión de TUVANSA México abierta con **Cancelar**
 permitió iniciar **Nuevo** en el almacén `01`. German mostró «El T.M. no esta
 permitido para el usuario» al salir del tipo `P — PEDIDO MEX`, antes de acceder
-a la fila de producto. Se canceló el borrador. Sigue pendiente una sesión con
-permiso para ese movimiento, necesaria para observar **Alternos**, **Foto**,
-**Matriz de fotos** y **Familias** desde ese buscador en ejecución. Los
+a la fila de producto. Se canceló el borrador. Los
 procedimientos de German exportados posteriormente definen la apertura y
 selección de Alternos, Foto y Familias. Evidencia local de la restricción en
 `captures/ui/closure-20261125-sales-orders-product-invalid.png`.
@@ -99,9 +97,28 @@ JPG verificado se lee desde el directorio de fotos y permanece en ese origen.
 Chromium mostró Normal y Completo para ese código. La prueba de Familias
 seleccionó `VT` en PROVEEDOR y el resultado conservó el almacén `01` y
 la familia pedida. La consulta de 50 coincidencias usó el MySQL histórico.
-**Matriz de fotos** sigue pendiente. El procedimiento actual exportado de
-`EINVFINDEDWC` carece de un manejador para el control y el perfil de
-respaldo bloquea la entrada al buscador de Pedidos con el T.M. P.
+**Matriz de fotos** sigue pendiente en Pedidos. El 25 de noviembre de 2026,
+la sesión autenticada con **SISTEMAS** abrió un borrador `P — PEDIDO MEX`
+en el almacén `01`, admitió el cliente activo `000060` y llegó a la fila
+**Código**. Con el prefijo `0` y Tab se abrió **Encuentra producto**,
+con un aviso de que la búsqueda cargó los primeros 1000 productos.
+La ventana presentó **Alternos**, **Foto**, **Familias**, **OK** y
+**Cancelar**. Tras cerrar el aviso, el listado quedó vacío durante
+el intento de consultar el producto `01201603`. La lectura de `FPENC`
+encontró cero filas para el folio provisional `P019406`.
+Evidencia local
+`closure-matrix-sistemas-tm-p-validation.png` y
+`closure-matrix-sistemas-physical-tab-result.png`.
+
+En **Inventarios P.T. → Encuentra producto**, la misma sesión consultó
+la lista de productos. Los controles visibles fueron **Familias**,
+**OK** y **Cancelar**
+(`closure-matrix-sistemas-escape-inventory-find.png`). El procedimiento
+exportado de `EINVFINDEDWC` tiene los manejadores de Alternos, Foto y
+Familias. El archivo de procedimientos no contiene un manejador de
+Matriz de fotos. La guía de Proscai describe la búsqueda por familias y
+fotos desde el selector de productos cuando el módulo Fotos está
+disponible. [Matriz de fotos en búsqueda](https://ayuda.proscai.com/hc/es-419/articles/235836227-Matriz-de-fotos-en-b%C3%BAsqueda)
 
 La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
 

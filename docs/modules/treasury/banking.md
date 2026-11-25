@@ -346,6 +346,16 @@ siete cuentas con formato en el histórico tienen movimientos de otras
 empresas. Se requiere una partida elegible de México con formato para
 verificar la vista previa.
 
+La búsqueda adicional enlazó `FBENC.BSEQ`, `FBANMOV.POSEQ` y
+`FPOLIZA.POCIA` en los respaldos accesibles. Los de 2018 y 2019 tienen la
+misma partida mexicana `BASEQ=111504` con `QSANMLIL`. La póliza carece de
+número de cheque y la partida tiene cargo y abono de cero. La cuenta
+correspondiente no está en el respaldo actual. En 2020, 2021 y `pruebas2`
+no hubo coincidencias de México. El respaldo actual tiene 9,353 partidas
+de Monterrey en cinco cuentas con formato. Para usar una como referencia se
+requiere confirmar que México tenga configurado el mismo formato y que la
+partida represente un cheque imprimible.
+
 **Detalle** ejecuta `EBANCO#6/27` y abre **Auxiliar del documento**
 (`EBANCO#15`). En `20261125-EBANCO15-PROCEDURES.txt`, `/240` carga
 los renglones `FAX` que comparten el `BASEQ` de la partida enfocada.

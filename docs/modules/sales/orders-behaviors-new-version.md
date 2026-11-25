@@ -137,6 +137,12 @@ igualdad y `1` en **Cálculo por código**. La consulta derivada agrega
 `exactCode`. Las demás expresiones de Omnis siguen pendientes de casos de uso.
 Evidencia local en `captures/ui/closure-next-sale-families-expression-result.png`.
 
+El procedimiento exportado `EINVFINDEDWC/9` incluye como ejemplo comentado
+`mid(ICOD,1,1)='T'` junto a `SFINDINVFAM`. Queda pendiente aplicarlo en
+**Familias** y cotejar el listado de German con el filtro de familia y el
+almacén activo. La sesión RDP se desconectó durante la preparación del
+borrador de pedido.
+
 La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
 
 Código, IEAN y descripción se comparan sin distinguir mayúsculas en la búsqueda parametrizada. Esta mejora es derivada y no se presenta como SQL literal de OMNIS. La validación de costo en la moneda correspondiente (listas 5/6 y conversión con T.C.) permanece en UI y backend.

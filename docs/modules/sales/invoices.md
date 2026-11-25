@@ -250,6 +250,12 @@ reintento, UUID reutilizado con otro valor, dos solicitudes superpuestas y
 rollback tras un fallo inyectado entre INSERT y COMMIT. Las bases temporales
 se cerraron al terminar.
 
+En la prueba integrada de Chromium se abrió `FA25675` y se enfocó
+`AISEQ 617811`. **Edita pzas** guardó ` 7 x 2 ` en PostgreSQL temporal.
+La ficha y CT devolvieron el mismo texto, incluidos los espacios. Se
+compararon los totales y todas las partidas. La cantidad de la partida
+siguió en −6 y la lectura de MySQL conservó `AIPZAS` vacío.
+
 El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
 
 - **Cajas** abrió Empaque en `FA25675` con el resumen, la lista y el detalle

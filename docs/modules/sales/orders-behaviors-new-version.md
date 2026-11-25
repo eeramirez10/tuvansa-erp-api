@@ -64,11 +64,9 @@ permitió iniciar **Nuevo** en el almacén `01`. German mostró «El T.M. no est
 permitido para el usuario» al salir del tipo `P — PEDIDO MEX`, antes de acceder
 a la fila de producto. Se canceló el borrador. Sigue pendiente una sesión con
 permiso para ese movimiento, necesaria para observar **Alternos**, **Foto**,
-**Matriz de fotos** y **Familias** desde ese buscador. La copia histórica tiene
-cero filas de `FALTERNOS`. Las rutinas de Inventarios y las referencias a
-`EINV#35`, `EINV#36` y `EINV#57` en la biblioteca respaldada orientan la búsqueda
-de procedimientos. Falta confirmar que su entrada y selección coincidan con el
-buscador de Pedidos. Evidencia local en
+**Matriz de fotos** y **Familias** desde ese buscador en ejecución. Los
+procedimientos de German exportados posteriormente definen la apertura y
+selección de Alternos, Foto y Familias. Evidencia local de la restricción en
 `captures/ui/closure-20261125-sales-orders-product-invalid.png`.
 
 | Vista | Control / acción | Marcador | Procedencia | Endpoint | Tablas |
@@ -87,7 +85,9 @@ buscador de Pedidos. Evidencia local en
 
 El selector de familias presenta los grupos que alcanzan las posiciones
 comparadas por `SFINDINVFAM` con el catálogo de México. El cálculo
-personalizado `MEMFILQUERY` requiere una regla separada. El campo
+personalizado `MEMFILQUERY` requiere una regla separada. La ventana de
+German mostró el valor predeterminado `1` y no se capturó otra expresión.
+El campo
 `IPROXRECEP` se convierte a fecha en SQL para que el driver de MySQL entregue
 texto con fecha o nulo a la vista.
 

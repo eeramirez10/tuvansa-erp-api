@@ -10,6 +10,22 @@ GET {{baseUrl}}/accounts-payable/suppliers/first
 ### Ficha
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}
 
+### Saldo. Toma id y groupingRevision de cada documento elegible.
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/balance
+
+### Agrupar documentos históricos en PostgreSQL de pruebas. Conserva el UUID para reintentar.
+POST {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/balance/grouping
+Content-Type: application/json
+
+{
+  "requestKey": "{{supplierGroupingRequestKey}}",
+  "target": { "id": {{supplierGroupingTargetId}}, "revision": "{{supplierGroupingTargetRevision}}" },
+  "sources": [{ "id": {{supplierGroupingSourceId}}, "revision": "{{supplierGroupingSourceRevision}}" }]
+}
+
+### Verificar los dos AT con referencias recíprocas
+GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/movements
+
 ### Varios → Enviar a
 GET {{baseUrl}}/accounts-payable/suppliers/{{supplierId}}/actions/various
 

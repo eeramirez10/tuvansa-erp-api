@@ -132,6 +132,36 @@ Evidencia `ev_2ec5e78cb47890169581647b9120242185ac3ffd32710869d82410d901074581`.
 
 Todas las rutas anteriores se montan bajo `/api/accounts-payable/suppliers`.
 
+### Saldo · Agrupar documentos
+
+| Vista y botón | Endpoint | Evidencia y origen |
+| --- | --- | --- |
+| Saldo / Agrupar | `GET /:id/balance` y `POST /:id/balance/grouping` | `20261125-EPRV2-PROCEDURES.txt`, `EPRV#2/3`, `/11`, `/240` y `/422`. Lectura adaptada de `FDOC`; escritura derivada en `supplier_balance_groupings` y `supplier_balance_grouping_transfers`. |
+| Movimientos / Consulta | `GET /:id/movements` | `20261124-MBASE34-35-DOCUMENTA.txt`, `MBASE/34`. Cada traslado se proyecta como dos movimientos AT con referencias recíprocas. |
+
+En German, marcar requiere `EPRV#2-9` y Agrupar requiere `EPRV#2-13`.
+La fila enfocada sin marca recibe el pendiente `DCANT` de cada origen
+marcado X de la misma moneda. El origen se salda y la suma del proveedor
+se conserva. Un abono previo reduce lo que se traspasa. El original
+`DCANTF` se conserva. TUVANSA usa la fecha del día de la sesión y registra AT
+con cuentas corrientes, sin póliza ni movimiento bancario.
+
+El alcance web cubre documentos históricos abiertos de TUVANSA México en
+pesos con tipo de cambio 1 y pendiente positivo. Las marcas X viven en la
+ventana. Al confirmar se envían los identificadores y revisiones de Saldo,
+con el mismo UUID para reintentar. PostgreSQL bloquea y verifica destino y
+orígenes en una transacción. El auxiliar de una RA muestra el AT propio y
+su documento contraparte. Facturas muestra la fecha de liquidación del
+origen cuando estaba vacía. Cancelar, documentar y cambiar proveedor se
+bloquean si la recepción histórica tiene un AT web. Paga sigue disponible
+para los documentos locales.
+
+Una prueba HTTP con PGlite cubre un origen de 81,784.07 con 44,225.65
+pendientes, revisiones vencidas, solicitudes concurrentes, reintentos,
+protección de pagos y cancelación y un fallo durante el segundo traslado.
+La consulta histórica en MySQL confirmó las variantes positivas y negativas
+AT en México. El POST opera sobre PostgreSQL.
+
 El saldo local de una recepción se obtiene restando de su cargo original los pagos vigentes de `supplier_payments`. **Saldo** conserva ambos importes y muestra los documentos web con pendiente positivo. **Movimientos** conserva el cargo de origen y muestra cada abono **PP** con su folio de cheque o transferencia y su póliza. La correspondencia del abono proviene de `EPRV#25/120`.
 
 El selector de cuenta y el registro PP usan el catálogo efectivo de Bancos.

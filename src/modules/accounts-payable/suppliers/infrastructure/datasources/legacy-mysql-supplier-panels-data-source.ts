@@ -8,6 +8,7 @@ import type {
   SupplierPanelResult,
 } from '../../domain/repositories/supplier-panels-repository.js';
 import { readSupplierActivity, readSupplierClassifications, readSupplierClassifiers } from './mysql-supplier-catalog-references.js';
+import { readHistoricalSupplierBalances } from './mysql-historical-supplier-balances.js';
 
 interface IdentityRow extends RowDataPacket {
   id: number;
@@ -98,7 +99,8 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
       };
     }
 
-    const [rows] = await this.executePanelQuery(supplierId, supplier.code, key);
+    const rows = key === 'balance' ? await readHistoricalSupplierBalances(supplierId)
+      : (await this.executePanelQuery(supplierId, supplier.code, key))[0];
     const items = toRecords(rows);
     const summary = this.buildSummary(key, items);
     return { supplier, items, ...(summary === undefined ? {} : { summary }) };
@@ -107,21 +109,9 @@ export class LegacyMysqlSupplierPanelsDataSource implements SupplierPanelsDataSo
   private executePanelQuery(
     supplierId: number,
     supplierCode: string,
-    key: Exclude<SupplierPanelKey, 'block-status' | 'discounts' | 'various' | 'work-in-progress' | 'events' | 'contacts'>,
+    key: Exclude<SupplierPanelKey, 'block-status' | 'discounts' | 'various' | 'work-in-progress' | 'events' | 'contacts' | 'balance'>,
   ): Promise<[RowDataPacket[], unknown]> {
     switch (key) {
-      case 'balance':
-        return legacyMysqlPool.execute<RowDataPacket[]>(`
-          SELECT FDOC.DSEQ AS id, DMULTICIA AS company, DNUM AS document,
-                 DATE(DFECHA) AS date, DATE(DVENCE) AS dueDate,
-                 DATEDIFF(CURRENT_DATE, DVENCE) AS days, DCANT AS originalAmount,
-                 DCANTF AS amount, DMONEDA AS currency, DREFER AS reference,
-                 DATE(DFECHAPROGR) AS scheduledAt, DPAR2 AS secondaryReference,
-                 DRUTA AS route, DTIPOC AS exchangeRate, DFOLIO AS folio
-          FROM FDOC LEFT JOIN FPRV ON FDOC.PRVSEQ = FPRV.PRVSEQ
-          WHERE FPRV.PRVSEQ = ? AND DEST = 0 AND DMULTICIA = 1 AND DESCXC = 2
-          ORDER BY FPRV.PRVSEQ, FDOC.DSEQ
-        `, [supplierId]);
       case 'movements':
         return legacyMysqlPool.execute<RowDataPacket[]>(`
           SELECT FAX.ASEQ AS id, FDOC.DSEQ AS receiptId, 0 AS company, DATE(AFECHA) AS date, DNUM AS document,

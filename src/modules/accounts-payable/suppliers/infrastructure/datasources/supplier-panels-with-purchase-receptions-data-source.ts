@@ -1,6 +1,8 @@
 import type { SupplierPanelKey, SupplierPanelResult } from '../../domain/repositories/supplier-panels-repository.js';
 import { readHistoricalReceptionCancellations, type HistoricalReceiptCancellation } from '../../../../purchasing/purchase-receptions/infrastructure/datasources/historical-purchase-reception-cancellation-reads.js';
 import { postgresConfigured } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { readSupplierGroupingMovements } from '../../../../../shared/infrastructure/datasources/supplier-balance-grouping-reads.js';
+import { supplierGroupingBalanceItems, supplierGroupingMovementRows } from './postgres-supplier-balance-grouping.js';
 import { projectSupplierActivity } from '../../domain/entities/supplier-activity.js';
 import { blankSupplierVarious } from '../../domain/entities/supplier-catalog.js';
 import { LegacyMysqlSupplierPanelsDataSource } from './legacy-mysql-supplier-panels-data-source.js';
@@ -135,11 +137,20 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
         detail: { canWrite: postgresConfigured() && Boolean(result.supplier.code) },
       };
     }
+    if (result && key === 'invoices') {
+      const groupings = await readSupplierGroupingMovements({ supplierId });
+      const settled = new Map(groupings.filter(({ amount }) => amount < 0).map((movement) => [movement.receiptId, movement]));
+      return { ...result, items: result.items.map((row) => {
+        const movement = settled.get(Number(row.id));
+        return movement && movement.document === row.document && (!row.paidAt || row.paidAt === '1900-12-31')
+          ? { ...row, paidAt: movement.date } : row;
+      }) };
+    }
     if (!result || (key !== 'balance' && key !== 'movements')) return result;
-    const [charges, historical] = await Promise.all([
+    const [charges, historical, groupings] = await Promise.all([
       purchaseReceptionSupplierCharges(supplierId), readHistoricalReceptionCancellations({ supplierIds: [supplierId] }),
+      readSupplierGroupingMovements({ supplierId }),
     ]);
-    if (charges.length === 0 && historical.length === 0) return result;
 
     const movedOut = new Set(charges.filter((charge) => charge.historicalTransferOut).map((charge) => charge.id));
     const projectedReversals = new Set(charges.filter((charge) => charge.historicalTransferIn && charge.cancellation).map((charge) => charge.id));
@@ -151,7 +162,8 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
       const visible = result.items.filter(({ receiptId }) => !movedOut.has(Number(receiptId)));
       return {
         ...result, supplier,
-        items: [...visible, ...localMovements(charges), ...historicalCancellationMovements(separateReversals, visible)],
+        items: [...visible, ...localMovements(charges), ...historicalCancellationMovements(separateReversals, visible),
+          ...supplierGroupingMovementRows(groupings)],
       };
     }
 
@@ -161,15 +173,15 @@ export class SupplierPanelsWithPurchaseReceptionsDataSource extends LegacyMysqlS
     for (const charge of charges) {
       if (charge.historicalDocumentation && charge.documentation) canceledIds.add(charge.documentation.sourceId);
     }
-    const visible = result.items.filter(({ id }) => !canceledIds.has(Number(id)));
-    const removed = result.items.filter(({ id }) => canceledIds.has(Number(id)));
+    const visible = supplierGroupingBalanceItems(
+      result.items.filter(({ id }) => !canceledIds.has(Number(id))), groupings, postgresConfigured(),
+    );
+    const items = [...visible, ...open];
     const summary = {
       ...result.summary,
-      amount: money(Number(result.summary?.amount ?? 0) + open.reduce((sum, row) => sum + row.amount, 0)
-        - removed.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)),
-      originalAmount: money(Number(result.summary?.originalAmount ?? 0) + open.reduce((total, row) => total + row.originalAmount, 0)
-        - removed.reduce((sum, row) => sum + Number(row.originalAmount ?? 0), 0)),
+      amount: money(items.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)),
+      originalAmount: money(items.reduce((sum, row) => sum + Number(row.originalAmount ?? 0), 0)),
     };
-    return { ...result, supplier, items: [...visible, ...open], summary };
+    return { ...result, supplier, items, summary };
   }
 }

@@ -3,8 +3,16 @@ import type { ReversePurchasePosting } from '../../../../purchasing/purchase-rec
 import { postingReversalHandlers } from '../../../../purchasing/purchase-receptions/presentation/http/posting-reversal-handlers.js';
 import type { SupplierCatalogController } from './supplier-catalog-controller.js';
 import type { SuppliersController } from './suppliers-controller.js';
+import type { GroupSupplierBalance } from '../../application/use-cases/group-supplier-balance.js';
+import { z } from 'zod';
 
-export const createSuppliersRouter = (controller: SuppliersController, reversals: ReversePurchasePosting, catalog: SupplierCatalogController): Router => {
+const position = z.strictObject({ id: z.int().positive(), revision: z.string().regex(/^[a-f0-9]{64}$/) });
+const groupBody = z.strictObject({
+  target: position, sources: z.array(position).min(1), requestKey: z.uuid().transform((value) => value.toLowerCase()),
+});
+
+export const createSuppliersRouter = (controller: SuppliersController, reversals: ReversePurchasePosting, catalog: SupplierCatalogController,
+  grouping: GroupSupplierBalance): Router => {
   const router = Router();
   const reversal = postingReversalHandlers(reversals, 'payment');
 
@@ -28,6 +36,10 @@ export const createSuppliersRouter = (controller: SuppliersController, reversals
   router.post('/:supplierId/actions/contacts', catalog.addActivity('contacts'));
   router.delete('/:supplierId/actions/contacts/:activityId', catalog.removeActivity('contacts'));
   router.get('/:supplierId/balance', controller.panel('balance'));
+  router.post('/:supplierId/balance/grouping', async (request, response) => {
+    const supplierId = z.coerce.number().int().positive().parse(request.params.supplierId);
+    response.status(201).json({ data: await grouping.execute(supplierId, groupBody.parse(request.body)) });
+  });
   router.get('/:supplierId/movements', controller.panel('movements'));
   router.get('/:supplierId/payments/:receiptId', controller.preparePayment);
   router.post('/:supplierId/payments/:receiptId', controller.createPayment);

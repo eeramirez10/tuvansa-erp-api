@@ -18,6 +18,7 @@ import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.j
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { purchaseReceptionDocumentationsOn } from './purchase-reception-documentation-reads.js';
 import { lockPurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { groupedSupplierBalanceReason, hasSupplierBalanceGrouping } from '../../../../../shared/infrastructure/datasources/supplier-balance-grouping-reads.js';
 import {
   ensureReceiptSupplierChangesSchema, matchesReceiptSupplierChange, receiptSupplierChangesOn,
 } from './purchase-reception-supplier-change-reads.js';
@@ -126,6 +127,7 @@ export class PostgresPurchaseReceptionSupplierChanges implements PurchaseRecepti
     const documentations = client ? await purchaseReceptionDocumentationsOn(client, { sourceIds: [receiptId] }) : [];
     const cancellations = client && historical ? await historicalReceptionCancellationsOn(client, { receiptIds: [receiptId] }) : [];
     const payments = client ? await hasPayments(client, companyId, receiptId) : false;
+    const grouped = client && historical ? await hasSupplierBalanceGrouping(client, receiptId) : false;
     const identity = { ...source.reception, supplier: source.originalSupplier };
     const current = matchesReceiptSupplierChange(saved[0], identity) ? saved[0] : undefined;
     const changedSource = saved[0] && (!current || current.amount !== source.amount || current.supplierAccount !== source.supplierAccount
@@ -133,6 +135,7 @@ export class PostgresPurchaseReceptionSupplierChanges implements PurchaseRecepti
     const reason = !enabled ? disabled : !client ? unavailable().message : cancellations.length ? 'La recepción está cancelada.'
       : documentations.length ? 'La recepción ya está documentada.'
       : payments ? 'La recepción tiene pagos registrados.'
+      : grouped ? groupedSupplierBalanceReason
       : source.reason ?? (changedSource ? 'El registro original de Omnis cambió después del cambio de proveedor.' : null);
     const supplier = current?.supplier ?? source.originalSupplier;
     const preview: ReceiptSupplierChangePreview = {

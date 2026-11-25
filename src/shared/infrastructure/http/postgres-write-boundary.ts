@@ -47,7 +47,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
     ((req.method === 'POST' && path === '/accounts-payable/suppliers') ||
      (['PATCH', 'DELETE'].includes(req.method) && /^\/accounts-payable\/suppliers\/[1-9]\d*$/.test(path)) ||
      (req.method === 'PATCH' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/(classifications|various)$/.test(path)) ||
-     (req.method === 'POST' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/(events|contacts)$/.test(path)) ||
+     (req.method === 'POST' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/(actions\/(events|contacts)|balance\/grouping)$/.test(path)) ||
      (req.method === 'PATCH' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/events\/[^/]+$/.test(path)) ||
      (req.method === 'DELETE' && /^\/accounts-payable\/suppliers\/[1-9]\d*\/actions\/(events|contacts)\/[^/]+$/.test(path)));
   const reversePurchasePosting = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&

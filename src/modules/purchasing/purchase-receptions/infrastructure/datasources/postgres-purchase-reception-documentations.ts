@@ -18,6 +18,7 @@ import {
   ensurePurchaseReceptionDocumentationSchema, purchaseReceptionDocumentationsOn,
 } from './purchase-reception-documentation-reads.js';
 import { lockPurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { groupedSupplierBalanceReason, hasSupplierBalanceGrouping } from '../../../../../shared/infrastructure/datasources/supplier-balance-grouping-reads.js';
 import { matchesReceiptSupplierChange, receiptSupplierChangesOn } from './purchase-reception-supplier-change-reads.js';
 import { purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
 
@@ -91,14 +92,16 @@ export class PostgresPurchaseReceptionDocumentations implements PurchaseReceptio
     const source = local
       ? await localReception(client, companyId, receiptId, lock) : await this.native.reception(receiptId);
     if (!source) return null;
-    const [documentations, cancellations, enabled, dueAt, [change]] = await Promise.all([
+    const [documentations, cancellations, enabled, dueAt, [change], grouped] = await Promise.all([
       purchaseReceptionDocumentationsOn(client, { sourceIds: [receiptId] }),
       local ? [] : historicalReceptionCancellationsOn(client, { receiptIds: [receiptId] }),
       this.native.enabled(),
       receiptCommentDueDate(client, companyId, source),
       receiptSupplierChangesOn(client, { receiptIds: [receiptId] }),
+      !local && hasSupplierBalanceGrouping(client, receiptId),
     ]);
-    const reason = !enabled ? disabled : cancellations.length ? 'La recepción ya fue cancelada.' : source.reason;
+    const reason = !enabled ? disabled : cancellations.length ? 'La recepción ya fue cancelada.'
+      : grouped ? groupedSupplierBalanceReason : source.reason;
     const { nativeRecord, ...snapshot } = source;
     return {
       ...snapshot, dueAt, reason, recorded: documentations[0]?.result ?? nativeRecord,

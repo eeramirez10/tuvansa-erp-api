@@ -12,6 +12,7 @@ import { isLocalPurchaseExpenseDocumentId } from './postgres-purchase-expenses.j
 import { paymentDocumentIdSql } from './postgres-purchase-payables.js';
 import { readLocalReceptionView, type LocalReceptionViewRecord } from './local-purchase-reception-view.js';
 import { readHistoricalReceptionCancellations } from './historical-purchase-reception-cancellation-reads.js';
+import { readSupplierGroupingMovements } from '../../../../../shared/infrastructure/datasources/supplier-balance-grouping-reads.js';
 import {
   readPurchaseReceptionDocumentations, type PurchaseReceptionDocumentationRecord,
 } from './purchase-reception-documentation-reads.js';
@@ -216,10 +217,20 @@ export class HybridPurchaseReceptionsDataSource implements PurchaseReceptionsDat
       const panel = await this.legacy.getPanel(id, key);
       if (panel && key === 'pieces') return withReceiptPieces(panel);
       if (!panel || key !== 'auxiliary' || !isHistoricalRA(panel.purchaseReception.number)) return panel;
-      const [[cancellation], [documentation]] = await Promise.all([
+      const [[cancellation], [documentation], movements] = await Promise.all([
         readHistoricalReceptionCancellations({ receiptIds: [id] }),
         readPurchaseReceptionDocumentations({ sourceIds: [id] }),
+        readSupplierGroupingMovements({ documentIds: [id] }),
       ]);
+      const groupings = movements.filter(({ document }) => document === panel.purchaseReception.number);
+      if (groupings.length) return {
+        ...panel, source: 'postgres',
+        items: [...panel.items, ...groupings.map(({ id: movementId, date, relatedDocumentId, paymentReference, amount }) => ({
+            id: movementId, date, transactionType: 'AT', reference: paymentReference, relatedDocumentId,
+            charges: Math.max(0, amount), payments: Math.max(0, -amount), signedAmount: amount, relatedDocument: paymentReference,
+          }))],
+        summary: { ...panel.summary, total: money(Number(panel.summary?.total ?? 0) + groupings.reduce((sum, { amount }) => sum + amount, 0)) },
+      };
       if (!cancellation) return documentation ? {
         ...panel, source: 'postgres', items: [...panel.items, documentationMovement(documentation)],
         summary: { ...panel.summary, total: money(Number(panel.summary?.total ?? 0) - documentation.amount) },

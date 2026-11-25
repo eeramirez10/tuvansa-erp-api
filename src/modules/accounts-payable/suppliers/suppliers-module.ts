@@ -10,6 +10,8 @@ import { NavigateSupplier } from './application/use-cases/navigate-supplier.js';
 import { SearchSuppliers } from './application/use-cases/search-suppliers.js';
 import { GetSupplierPanel } from './application/use-cases/get-supplier-panel.js';
 import { GetSupplierClassifications } from './application/use-cases/get-supplier-classifications.js';
+import { GroupSupplierBalance } from './application/use-cases/group-supplier-balance.js';
+import { PostgresSupplierBalanceGrouping } from './infrastructure/datasources/postgres-supplier-balance-grouping.js';
 import { WriteSupplierCatalog } from './application/use-cases/write-supplier-catalog.js';
 import { MysqlSupplierCatalogReferences } from './infrastructure/datasources/mysql-supplier-catalog-references.js';
 import { PostgresSupplierCatalogDataSource } from './infrastructure/datasources/postgres-supplier-catalog-data-source.js';
@@ -46,5 +48,5 @@ export const createSuppliersModule = (): Router => {
   const reversals = new ReversePurchasePosting(new PostgresPurchasePostingReversals(), new MysqlPostingReversalReferences());
   return createSuppliersRouter(controller, reversals, new SupplierCatalogController(
     new WriteSupplierCatalog(catalog, new MysqlSupplierCatalogReferences()), dataSource,
-  ));
+  ), new GroupSupplierBalance(new PostgresSupplierBalanceGrouping()));
 };

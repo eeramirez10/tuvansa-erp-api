@@ -17,6 +17,7 @@ import { getDocumentPaymentStatus } from './postgres-purchase-posting-reversals.
 import { ensurePurchaseReceptionSchema, isLocalPurchaseReceptionId } from './postgres-purchase-reception-writes.js';
 import { verifyReceiptLayerStock } from './purchase-reception-peps.js';
 import { lockPurchaseReceptionPieces, receiptHasInvoicedPieces, retirePurchaseReceptionPieces } from './purchase-reception-piece-reads.js';
+import { groupedSupplierBalanceReason, hasSupplierBalanceGrouping } from '../../../../../shared/infrastructure/datasources/supplier-balance-grouping-reads.js';
 import { matchesReceiptSupplierChange, receiptSupplierChangesOn } from './purchase-reception-supplier-change-reads.js';
 import { purchaseReceptionDocumentationsOn } from './purchase-reception-documentation-reads.js';
 import { postingReversalSeriesLength, purchaseReceptionCancellationIdStart, purchaseReceptionCancellationsAvailable } from './purchase-posting-reversal-tables.js';
@@ -129,11 +130,16 @@ export class PostgresPurchaseReceptionCancellations implements PurchaseReception
 
   private async readHistorical(client: PostgresClient, companyId: number, receiptId: number) {
     if (companyId !== 1 || !this.historical) return null;
-    const [source, [saved], documentations] = await Promise.all([
+    const [source, [saved], documentations, grouped] = await Promise.all([
       this.historical.read(receiptId), historicalReceptionCancellationsOn(client, { receiptIds: [receiptId] }),
       purchaseReceptionDocumentationsOn(client, { sourceIds: [receiptId] }),
+      hasSupplierBalanceGrouping(client, receiptId),
     ]);
-    return source ? { ...source, alreadyRecorded: saved?.result ?? null, documented: documentations.length > 0 } : null;
+    if (!source) return null;
+    return {
+      ...source, alreadyRecorded: saved?.result ?? null, documented: documentations.length > 0,
+      ...(source.historical && grouped ? { historical: { ...source.historical, blockedReason: groupedSupplierBalanceReason } } : {}),
+    };
   }
 
   source(companyId: number, receiptId: number) {

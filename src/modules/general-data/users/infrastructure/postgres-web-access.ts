@@ -4,7 +4,7 @@ import { connectPostgres, type PostgresClient, type PostgresConnectionFactory } 
 import { migratePostgres, webAccessMigrations } from '../../../../shared/infrastructure/datasources/postgres-schema.js';
 import {
   accessGroups, generalDataPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
-  type DirectoryUser, type LegacyUserDirectory, type NativeUser, type PermissionChange, type UserProfile, type WebIdentity,
+  type DirectoryUser, type DirectoryUserDetail, type LegacyUserDirectory, type NativeUser, type PermissionChange, type UserProfile, type WebIdentity,
 } from '../domain/user-directory.js';
 import { hashPassword, newToken, tokenDigest, verifyPassword } from './web-credentials.js';
 
@@ -269,12 +269,25 @@ export class PostgresWebAccess {
     });
   }
 
-  private async selectedUser(client: PostgresClient, id: string, revision: number) {
-    const row = await this.getUser(client, id, true);
+  private async resolveUser(client: PostgresClient, id: string, lock: boolean) {
+    const row = await this.getUser(client, id, lock);
     const legacyId = id.startsWith('g-') ? Number(id.slice(2)) : undefined;
-    const native = legacyId ? await this.native.user(legacyId) : undefined;
+    const native = legacyId ? await this.native.user(legacyId, !lock) : undefined;
     if ((legacyId && !native) || (!row && !native)) throw new ApplicationError('Usuario no encontrado.', 'WEB_USER_NOT_FOUND', 404);
-    const user = directoryUser(row, native);
+    return { user: directoryUser(row, native), legacyDetails: native?.details ?? null };
+  }
+
+  getUserDetail(id: string): Promise<DirectoryUserDetail> {
+    return this.connection(async client => {
+      const { user, legacyDetails } = await this.resolveUser(client, id, false);
+      const { rows } = await client.query<{ expiresAt: Date }>(
+        'SELECT expires_at AS "expiresAt" FROM tuvansa.web_activations WHERE user_id=$1 AND expires_at>now()', [id]);
+      return { ...user, legacyDetails, activationExpiresAt: rows[0] ? new Date(rows[0].expiresAt).toISOString() : null };
+    });
+  }
+
+  private async selectedUser(client: PostgresClient, id: string, revision: number) {
+    const { user } = await this.resolveUser(client, id, true);
     if (revision !== user.revision) throw stale();
     return user;
   }

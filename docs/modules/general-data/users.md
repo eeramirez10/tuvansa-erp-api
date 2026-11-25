@@ -10,10 +10,11 @@ La biblioteca German de pruebas contiene el vínculo de Datos Generales
 con `INICIO13`. El bloque de **Usuarios (Ctrl+U)** contiene `MCATALOGOS8`,
 una llamada a `INICIO/30` y una referencia a `EMAIL#1` (ventana **USUARIOS**).
 El registro compilado de la ventana contiene `FUSERS` y las etiquetas
-**Alta**, **Cambio** y **Reinicia Clave**. REA rechazó el
+**Encuentra**, **Alta**, **Cambio**, **Anterior**, **Siguiente** y **Reinicia Clave**. REA rechazó el
 contenedor Omnis 7 `.LBR`. Se conservaron las referencias de la lectura
 binaria y se cotejaron las claves con `FHELP`. La lectura del menú
-del runtime Windows confirmó **Proscai → Datos Generales (F10)**. El procedimiento
+del runtime Windows confirmó **Proscai → Datos Generales (F10)** y la ficha
+**Usuarios** con la columna izquierda de acciones y los datos a la derecha. El procedimiento
 `INICIO/30` está exportado en
 `captures/ui/omnis7-developer-check/20261123-INICIO30-ACCESOS.txt`.
 El alcance de la ficha web es el perfil de cuenta y los permisos por grupo.
@@ -22,7 +23,10 @@ Queda pendiente el cotejo de ejecución de los botones nativos en una base aisla
 - **Lectura adaptada de German.** `FUSERS` acotado por `USRMULTICIA IN (0,1)`,
   con `USRBAJA='1900-12-31'` como marca de vigencia. Campos de directorio
   `USRSEQ`, `USRCOD`, `USRNAME` y `USRGROUP`. La API consulta sólo estos
-  datos y la pertenencia y vigencia.
+  datos y la pertenencia y vigencia en la búsqueda. La consulta exacta
+  agrega los campos de referencia de la ficha y **No ver costos**,
+  **No ver saldos** y **Solo ver a sus clientes** desde `USRNOCOSTOS`,
+  `USRNOSALDOS` y `USRSOLOEL`, respectivamente, para mostrarlos en consulta.
 - **Permisos.** La matriz se lee de `FHELP.HKEY, HUSER0…HUSER41` y
   `HVALIDACLAVE`. Los valores web pueden conservar el valor de German,
   concederlo o retirarlo. El grupo 0 requiere un permiso efectivo web como
@@ -65,9 +69,15 @@ vinculado es `g-<USRSEQ>`.
 | GET, POST, DELETE | `/session` | Consultar, iniciar o cerrar sesión |
 | POST | `/session/activation` | Consumir enlace y establecer contraseña |
 | GET, POST | `/general-data/users` | Listar o crear cuentas |
+| GET | `/general-data/users/:userId` | Consultar la ficha exacta, las restricciones de German y el vencimiento del enlace pendiente |
 | PATCH | `/general-data/users/:userId` | Guardar la ficha con su revisión |
 | POST | `/general-data/users/:userId/activation` | Emitir enlace y revocar sesiones previas |
 | GET, PATCH | `/general-data/permission-groups/:group` | Consultar o cambiar permisos con revisión |
+
+La ficha usa **Encuentra** para ubicar cuentas por código o nombre.
+En la lista, `anchor` y `direction` (`previous` o `next`) solicitan un
+vecino del usuario seleccionado aplicando los mismos filtros. Ese
+resultado incluye su posición en la lista ordenada.
 
 Las sesiones vencen a los 30 minutos de inactividad o a las 8 horas de
 iniciadas. La contraseña web debe tener entre 6 y 128 caracteres.

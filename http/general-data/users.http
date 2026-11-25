@@ -19,6 +19,14 @@ Content-Type: application/json
 GET {{baseUrl}}/general-data/users?limit=25&state=pending
 Cookie: {{sessionCookie}}
 
+### Ficha de Usuarios
+GET {{baseUrl}}/general-data/users/{{legacyUserId}}
+Cookie: {{sessionCookie}}
+
+### Siguiente usuario
+GET {{baseUrl}}/general-data/users?anchor={{legacyUserId}}&direction=next
+Cookie: {{sessionCookie}}
+
 ### Alta web
 POST {{baseUrl}}/general-data/users
 Origin: {{origin}}

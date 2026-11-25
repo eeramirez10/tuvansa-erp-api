@@ -58,17 +58,28 @@ export function createUserDirectoryRouter(access: PostgresWebAccess) {
       search: z.string().trim().max(100).default(''), group: group.optional(),
       state: z.enum(['active', 'inactive', 'pending']).optional(),
       offset: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(100).default(25),
-    }).parse(req.query);
+      anchor: userId.optional(), direction: z.enum(['previous', 'next']).optional(),
+    }).refine(query => (query.anchor === undefined) === (query.direction === undefined)).parse(req.query);
     const search = query.search.toLocaleLowerCase('es-MX');
     const users = (await access.listUsers()).filter(user =>
       (query.group === undefined || user.group === query.group) &&
       (!query.state || query.state === (!user.effectiveActive ? 'inactive' : user.configured ? 'active' : 'pending')) &&
       [user.identification, user.legacyIdentification, user.name].some(value => value?.toLocaleLowerCase('es-MX').includes(search)));
     users.sort((first, second) => first.identification.localeCompare(second.identification, 'es-MX') || first.id.localeCompare(second.id));
+    if (query.anchor && query.direction) {
+      const anchor = users.findIndex(user => user.id === query.anchor);
+      const position = anchor + (query.direction === 'next' ? 1 : -1);
+      const adjacent = anchor >= 0 ? users[position] : undefined;
+      res.json({ data: { items: adjacent ? [adjacent] : [], total: users.length, position: adjacent ? position : null } });
+      return;
+    }
     res.json({ data: { items: users.slice(query.offset, query.offset + query.limit), total: users.length } });
   });
   router.post('/users', async (req, res) => {
     res.status(201).json({ data: await access.createUser(res.locals.actor.id, profile.parse(req.body)) });
+  });
+  router.get('/users/:userId', async (req, res) => {
+    res.json({ data: await access.getUserDetail(userId.parse(req.params.userId)) });
   });
   router.patch('/users/:userId', async (req, res) => {
     const { revision: current, ...input } = profile.extend({ revision }).parse(req.body);

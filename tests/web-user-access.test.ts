@@ -26,7 +26,15 @@ const connect: PostgresConnectionFactory = async () => {
   };
 };
 const admin: NativeUser = { legacyId: 1, identification: 'admin', name: 'Administrador de prueba', group: 0, active: true, shared: false };
-const approver: NativeUser = { legacyId: 21, identification: 'comprueba', name: 'Usuario de German', group: 18, active: true, shared: true };
+const approver: NativeUser = {
+  legacyId: 21, identification: 'comprueba', name: 'Usuario de German', group: 18, active: true, shared: true,
+  details: {
+    company: 1, department: 2, multiCompany: 0, notes: 'Perfil de prueba',
+    hideCosts: true, hideBalances: false, ownCustomersOnly: true,
+    parameter: null, printer: null, labelPrinter: null, supplierClassifiers: null,
+    captureFrom: '2026-01-01', captureUntil: null, store: '01', payrollNumber: null, position: null,
+  },
+};
 const duplicate = { ...approver, legacyId: 25, identification: 'ADMIN', active: false };
 let supervisorRequired = false;
 const native: LegacyUserDirectory = {
@@ -83,6 +91,7 @@ describe('Usuarios y permisos con PostgreSQL aislado', () => {
     const result = await request(app).get(route).query({ search: 'german', group: 18, state: 'pending' }).set('Cookie', adminCookie).expect(200);
     expect(result.body.data).toMatchObject({ total: 1, items: [{ id: 'g-21', legacyId: 21, shared: true }] });
     expect(result.body.data.items[0]).not.toHaveProperty('password');
+    expect(result.body.data.items[0]).not.toHaveProperty('legacyDetails');
     expect(result.headers['cache-control']).toBe('no-store');
     await change('post', route, adminCookie).set('Origin', 'https://otro.example').send({}).expect(403);
     const session = await request(app).get('/api/session').set('Cookie', adminCookie).expect(200);
@@ -92,14 +101,38 @@ describe('Usuarios y permisos con PostgreSQL aislado', () => {
     expect(raw.rows).not.toContainEqual({ digest: cookieToken(adminCookie) });
   });
 
+  it('protege la ficha exacta y conserva la posición de los vecinos a través de páginas', async () => {
+    await request(app).get(`${route}/g-21`).expect(401);
+    const detail = await request(app).get(`${route}/g-21`).set('Cookie', adminCookie).expect(200);
+    expect(detail.body.data).toMatchObject({ id: 'g-21', revision: 0, legacyDetails: approver.details, activationExpiresAt: null });
+    expect(detail.body.data).not.toHaveProperty('password');
+    expect(detail.headers['cache-control']).toBe('no-store');
+    await request(app).get(`${route}/g-999`).set('Cookie', adminCookie).expect(404);
+
+    const byGroup = (query: object) => request(app).get(route).query({ group: 18, limit: 1, ...query }).set('Cookie', adminCookie);
+    const first = await byGroup({}).expect(200);
+    expect(first.body.data).toMatchObject({ total: 2, items: [{ id: 'g-25' }] });
+    const next = await byGroup({ anchor: 'g-25', direction: 'next' }).expect(200);
+    expect(next.body.data).toMatchObject({ total: 2, position: 1, items: [{ id: 'g-21' }] });
+    const previous = await byGroup({ anchor: 'g-21', direction: 'previous' }).expect(200);
+    expect(previous.body.data).toMatchObject({ position: 0, items: [{ id: 'g-25' }] });
+    const last = await byGroup({ anchor: 'g-21', direction: 'next' }).expect(200);
+    expect(last.body.data).toEqual({ items: [], total: 2, position: null });
+    await byGroup({ anchor: 'g-21' }).expect(400);
+  });
+
   it('activa usuarios de German y comprueba MPED5 vigente en cada operación', async () => {
     const response = await change('post', `${route}/g-21/activation`, adminCookie).send({ revision: 0 }).expect(200);
     const { token } = response.body.data;
     const stored = await db.query<{ digest: string }>('SELECT digest FROM tuvansa.web_activations');
     expect(stored.rows).toContainEqual({ digest: tokenDigest(token) });
+    const pending = await request(app).get(`${route}/g-21`).set('Cookie', adminCookie).expect(200);
+    expect(Date.parse(pending.body.data.activationExpiresAt)).toBeGreaterThan(Date.now());
+    expect(pending.body.data).not.toHaveProperty('token');
     await change('post', '/api/session/activation').send({ token, password }).expect(204);
     const approverCookie = await login('comprueba');
     await request(app).get(route).set('Cookie', approverCookie).expect(403);
+    await request(app).get(`${route}/g-21`).set('Cookie', approverCookie).expect(403);
     const actor = () => access.orderActor(cookieToken(approverCookie));
     await expect(actor()).resolves.toMatchObject({ webUserId: 'g-21', userId: 21, userIdentification: 'comprueba' });
     const rewrite = (revision: number, allowed: boolean | null) => change('patch', `${groups}/18`, adminCookie)
@@ -125,6 +158,8 @@ describe('Usuarios y permisos con PostgreSQL aislado', () => {
     const profile = { identification: 'personal-web', name: 'Cuenta de prueba', group: 41, active: true, administrator: false };
     const created = (await change('post', route, adminCookie).send(profile).expect(201)).body.data;
     expect(created).toMatchObject({ revision: 1, legacyId: null, configured: false, group: 41 });
+    const detail = await request(app).get(`${route}/${created.id}`).set('Cookie', adminCookie).expect(200);
+    expect(detail.body.data).toMatchObject({ legacyDetails: null, activationExpiresAt: null });
     await change('post', route, adminCookie).send({ ...profile, identification: 'ADMIN' }).expect(409);
     const path = `${route}/${created.id}`;
     const activate = async (revision: number) => {

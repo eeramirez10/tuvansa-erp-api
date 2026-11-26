@@ -1,5 +1,12 @@
 # Ventas - Pedidos
 
+**Duplicar en México.** Confirmado en [la captura de Proscai](orders-capture.md#alta-real-observada) para una copia al 100 %. En la web, **Duplicar** revisa el pedido o cotización de origen y **OK** crea un pedido independiente para el mismo cliente. Conserva las cantidades originales y el nuevo pedido inicia pendiente, con un folio P del catálogo. La fecha de alta corresponde a México. El origen conserva su estado.
+
+| Vista / botón | Endpoint | Origen y procedencia |
+| --- | --- | --- |
+| Pedidos / Duplicar | GET `/api/sales/orders/:id/actions/duplicate?companyId=1` | Vista previa derivada del historial `FPENC/FPLIN` y la versión local de `tuvansa.orders`. JSON con `data.summary.revision`, `orderedAt`, total y partidas. |
+| Duplica Pedido / OK | POST en la misma ruta | Guarda en PostgreSQL. Recibe `requestKey`, `revision` y `orderedAt`. El origen o los totales revisados que cambien producen 409. Guarda el recibo en `tuvansa.order_duplicate_requests` junto al alta y su auditoría. |
+
 **Persistencia actual (2026-09-15):** [MySQL de lectura + PostgreSQL/Neon de escritura](../../NEON-WRITE-DATABASE.md). Incluye ambos POST de alta, PATCH, DELETE, Cotiz y lecturas combinadas. La implementación MySQL de escritura descrita en los documentos anteriores queda como referencia histórica.
 
 | Vista / botón | Endpoint | Origen actual | Procedencia |
@@ -91,7 +98,7 @@ cliente.
 | Clasificar | `/:orderId/actions/classifications` | Valores actuales y catálogos AGT 1 a 7 |
 | Comentarios | `/:orderId/actions/comments` | Comentarios, letra, cajas y bitácora |
 | Cotiz | `/:orderId/actions/quote-conversion` | Confirmación de conversión pedido/cotización |
-| Duplicar | `/:orderId/actions/duplicate` | Pedido origen, porcentaje y sucursales |
+| Duplicar | GET y POST `/:orderId/actions/duplicate` | Vista previa y confirmación de un pedido nuevo al 100 % para el mismo cliente de México. |
 | Etiquetas | `/:orderId/actions/labels` | Partidas, etiquetas, color y talla |
 | Imprimir | `/:orderId/actions/print` | Rango, copias, formato y destino |
 | Monarch | `/:orderId/actions/monarch` | Partidas asignadas para exportación |

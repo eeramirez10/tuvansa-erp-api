@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import type { DuplicateOrderInput } from '../../domain/datasources/order-duplicate-data-source.js';
+import { duplicateCaptureInput, duplicateStale, todayInMexico } from '../../domain/entities/order-duplicate.js';
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import { customerAllowed, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import { orderPanelLabels } from '../../domain/entities/order-panel-labels.js';
@@ -8,7 +11,7 @@ import type { OrderCaptureDataSource } from '../../domain/datasources/order-capt
 import type { OrderPanelsDataSource } from '../../domain/datasources/order-panels-data-source.js';
 import type { OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
 import type { OrderReferenceDataSource } from '../../domain/datasources/order-reference-data-source.js';
-import type { CaptureCurrencyId, CaptureInput, CaptureLine, CaptureCustomer, OrderAuthorizationCommand } from '../../domain/repositories/order-capture-repository.js';
+import type { CaptureCurrencyId, CaptureInput, CaptureLine, CaptureCustomer, CaptureOrderDiscounts, OrderAuthorizationCommand } from '../../domain/repositories/order-capture-repository.js';
 import type { DeleteOrderResult, OrderCreateValues, OrderLineWriteValues, OrderNavigationDirection, OrderSearchCriteria, OrderUpdateValues } from '../../domain/repositories/orders-repository.js';
 import type { OrderPanelKey, OrderPanelResult } from '../../domain/repositories/order-panels-repository.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
@@ -108,26 +111,32 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       exchangeRate:1,boxes:0,branch:values.branch ?? 0,collectionCurrency:captureCurrencyName(captureLineCurrencyId),orderDiscounts:[0,0,0,0],commission:0,noPartialDeliveries:false,
       transportation:'',deliveryAddress:['','',''],contact:'',additionalComments:'',documentKind:'order',lines};
   }
-  async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
-    this.writable();
-    const source = 'customerCode' in values ? values : await this.fromClassic(values);
+  private async prepareCreation(source: CaptureInput, original?: OrderProps) {
     const input = {...source,warehouse:normalizeOrderWarehouse(source.warehouse)};
     const customer = await this.references.customer(input.customerCode);
     requireCustomer(customer.id);
+    if (original && customer.id !== original.customer.id) {
+      throw new ConflictError('El código del cliente ya no corresponde al documento original.', 'ORDER_DUPLICATE_CUSTOMER_CHANGED');
+    }
     const options = await this.references.options();
-    if (!options.warehouses.some(w=>w.code===input.warehouse) || !options.agents.some(a=>a.code===input.agentCode)) {
+    const agent = options.agents.find(item => item.code === input.agentCode);
+    if (!options.warehouses.some(w=>w.code===input.warehouse) || !agent) {
       throw new ConflictError('Almacén o agente no válido.', 'ORDER_REFERENCE_INVALID');
     }
     const currencyId = captureCurrencyId(input.collectionCurrency);
     const documentCurrencyId = input.collectionCurrency === 'DOLARES' ? 1 : 0;
     const prepared = await this.prepareLines(input.lines,customer,input.warehouse,input.exchangeRate);
+    if (original && prepared.some(({product}, index) =>
+      product.id !== original.lines[index]?.productId || product.unit.trim() !== original.lines[index].unit.trim())) {
+      throw new ConflictError('Cambió el producto o la unidad de una partida del origen.', 'ORDER_DUPLICATE_PRODUCT_CHANGED');
+    }
+    if (original && !(original.exchangeRate > 0) && prepared.some(({input: line,product}) => line.currencyId !== product.costCurrencyId)) {
+      throw new ConflictError('El documento requiere un tipo de cambio válido para comprobar el costo.', 'ORDER_DUPLICATE_UNSUPPORTED');
+    }
     const totals = captureTotals(prepared,currencyId,input.exchangeRate,input.orderDiscounts);
     if (!Number.isFinite(totals.total) || totals.total > 999999999) throw new ConflictError('El total excede el límite de captura.');
-    const explicitNumber = 'number' in values ? values.number : undefined;
-    if (explicitNumber && await this.numberExists(explicitNumber)) throw new ConflictError('El número ya existe.', 'ORDER_NUMBER_EXISTS');
     const companyId = input.companyId ?? 1;
-    const numbering = explicitNumber ?? await this.references.orderNumberSeries(companyId);
-    const document = await this.local.create(async (id, number) => {
+    const build = async (id: number, number?: string): Promise<OrderProps> => {
       if (!number) throw new ConflictError('No se pudo asignar el folio del pedido.', 'ORDER_NUMBER_UNAVAILABLE');
       const lines = prepared.map(({input:l,product:p},index)=>({id:index+1,productId:p.id,productCode:p.code,description:p.description,
         ordered:l.quantity,fulfilled:0,remaining:l.quantity,unit:p.unit,assigned:0,branch:0,
@@ -136,16 +145,81 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
         piecesAssignment:'',discount:l.discount,publicPrice:roundCapturePrice(convertCaptureAmount(p.price,p.currencyId,currencyId,input.exchangeRate)),sku:'',color:'',size:''}));
       return {id,number,companyId,customerOrderNumber:input.customerOrderNumber,customer:{id:customer.id,code:customer.code,name:customer.name},
         documentKind:input.documentKind,status:'',fulfilledAmount:0,branch:input.branch,department:input.department,
-        dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:customer.agentName,termsDays:input.termsDays,
+        dates:{orderedAt:input.orderedAt,from:input.from,dueAt:input.dueAt},attention:original ? agent.name : customer.agentName,termsDays:input.termsDays,
         authorization:'',initial:input.initial,warehouse:input.warehouse,currencyId:documentCurrencyId,exchangeRate:input.exchangeRate,minimumFulfillmentPercentage:0,
         observations:input.observations,captureDetails:{boxes:input.boxes,collectionCurrency:input.collectionCurrency,orderDiscounts:input.orderDiscounts,commission:input.commission,
           noPartialDeliveries:input.noPartialDeliveries,transportation:input.transportation,deliveryAddress:input.deliveryAddress,
           contact:input.contact,additionalComments:input.additionalComments},classifications:[input.agentCode,customer.classification,input.store,'','','','7'],
         totals:{quantity:totals.quantity,ordered:totals.quantity,fulfilled:0,remaining:totals.quantity,subtotal:totals.subtotal,discount:totals.discount,
           freight:0,insurance:0,other:0,tax:totals.tax,total:totals.total},lines};
-    }, numbering);
+    };
+    return { build, totals, prepared };
+  }
+
+  private created(document: OrderProps): Order {
     return Order.create(localDocument({document,base:null,deleted:false,revision:1}));
   }
+
+  async create(values: CaptureInput | OrderCreateValues): Promise<Order> {
+    this.writable();
+    const input = 'customerCode' in values ? values : await this.fromClassic(values);
+    const { build } = await this.prepareCreation(input);
+    const explicitNumber = 'number' in values ? values.number : undefined;
+    if (explicitNumber && await this.numberExists(explicitNumber)) throw new ConflictError('El número ya existe.', 'ORDER_NUMBER_EXISTS');
+    const numbering = explicitNumber ?? await this.references.orderNumberSeries(input.companyId ?? 1);
+    return this.created(await this.local.create(build, numbering));
+  }
+
+  private async duplicatePreview(id: number, companyId: number, date: string) {
+    const local = await this.local.get(id);
+    if (local?.deleted) throw new NotFoundError('Pedido');
+    const order = local ? localDocument(local) : await this.original(id);
+    if (!order || !customerAllowed(order.customer.id)) throw new NotFoundError('Pedido');
+    const discounts: CaptureOrderDiscounts = [0, 0, 0, 0];
+    if (!order.captureDetails) {
+      const comments = (await this.legacyPanels.getPanel(id, 'comments'))?.summary;
+      discounts[0] = Number(comments?.discount1 ?? 0);
+      discounts[1] = Number(comments?.discount2 ?? 0);
+      discounts[2] = Number(comments?.discount3 ?? 0);
+    }
+    const input = duplicateCaptureInput(order, companyId, date, discounts);
+    const { build, totals, prepared } = await this.prepareCreation(input, order);
+    const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    const sourceVersion = hash(order);
+    const revision = hash([sourceVersion, input, prepared.map(({product}) => [product.taxPercentage, product.excisePercentage]), totals]);
+    return { order, sourceVersion, revision, input, totals, build, localRevision: local?.revision ?? null };
+  }
+
+  async previewDuplicate(id: number, companyId: number): Promise<OrderPanelResult> {
+    this.writable();
+    const date = todayInMexico();
+    const { order, input, totals, revision } = await this.duplicatePreview(id, companyId, date);
+    const series = await this.references.orderNumberSeries(companyId);
+    await this.local.previewNumber(series);
+    return {
+      order: { id, number: order.number }, ...orderPanelLabels.duplicate, key: 'duplicate',
+      available: true, source: order.storage ? 'postgres' : 'mysql',
+      summary: { sourceOrder: order.number, percentage: 100, revision, orderedAt: date, customer: order.customer,
+        warehouse: input.warehouse, branch: input.branch, agent: input.agentCode, currency: input.collectionCurrency, total: totals.total },
+      items: order.lines.map(line => ({ productCode: line.productCode, description: line.description, quantity: line.ordered, unit: line.unit })),
+    };
+  }
+
+  async duplicate(id: number, companyId: number, input: DuplicateOrderInput): Promise<Order> {
+    this.writable();
+    const saved = await this.local.findDuplicate(id, input);
+    if (saved) return this.created(saved);
+    if (input.orderedAt !== todayInMexico()) throw duplicateStale();
+    const current = await this.duplicatePreview(id, companyId, input.orderedAt);
+    if (input.revision !== current.revision) throw duplicateStale();
+    const series = await this.references.orderNumberSeries(companyId);
+    if (current.localRevision === null) {
+      const original = await this.original(id);
+      if (createHash('sha256').update(JSON.stringify(original)).digest('hex') !== current.sourceVersion) throw duplicateStale();
+    }
+    return this.created(await this.local.createDuplicate(id, input, current.localRevision, current.build, series));
+  }
+
   private async original(id: number) {
     return id >= 5_000_000_000 ? null : (await this.legacy.findById(id))?.toPrimitives() ?? null;
   }

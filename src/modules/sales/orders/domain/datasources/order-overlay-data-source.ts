@@ -1,3 +1,4 @@
+import type { DuplicateOrderInput } from './order-duplicate-data-source.js';
 import type { OrderProps } from '../entities/order.js';
 import type { OrderNumberSeries } from '../entities/order-number-series.js';
 
@@ -17,6 +18,9 @@ export interface OrderOverlayDataSource {
   previewNumber(series: OrderNumberSeries): Promise<string>;
   create(build: (id: number, number?: string) => Promise<OrderProps>,
     numbering?: OrderNumberSeries | string): Promise<OrderProps>;
+  findDuplicate(sourceId: number, input: DuplicateOrderInput): Promise<OrderProps | null>;
+  createDuplicate(sourceId: number, input: DuplicateOrderInput, expectedLocalRevision: number | null,
+    build: (id: number, number?: string) => Promise<OrderProps>, series: OrderNumberSeries): Promise<OrderProps>;
   change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment' | 'authorization',
     transform: (current: OrderProps, revision: number) => Promise<OrderProps | null>): Promise<OrderOverlay | null>;
 }

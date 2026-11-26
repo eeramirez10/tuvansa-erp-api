@@ -44,6 +44,16 @@ CREATE TABLE tuvansa.order_stock_deltas (
 CREATE INDEX order_stock_product ON tuvansa.order_stock_deltas(product_id,warehouse);
 ` }];
 
+export const orderDuplicateMigrations: readonly PostgresMigration[] = [{ id: 'sales_order_duplicate_requests', sql: `
+CREATE TABLE tuvansa.order_duplicate_requests (
+  request_key uuid PRIMARY KEY,
+  source_id bigint NOT NULL,
+  preview_revision char(64) NOT NULL,
+  ordered_at date NOT NULL,
+  order_id bigint NOT NULL UNIQUE REFERENCES tuvansa.orders(id)
+);
+` }];
+
 export const webAccessMigrations: readonly PostgresMigration[] = [{ id: '002_web_users', sql: `
 CREATE TABLE tuvansa.web_users (
   id text PRIMARY KEY,

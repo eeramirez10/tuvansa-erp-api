@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { effectiveUserSettings } from '../src/modules/general-data/users/domain/user-directory.js';
+import { cookieName } from '../src/modules/general-data/users/presentation/web-session-http.js';
 import { PGlite } from '@electric-sql/pglite';
 import express from 'express';
 import request from 'supertest';
@@ -67,7 +70,7 @@ const input: CaptureInput = {warehouse:'01',typeCode:'P',customerCode:'000001',c
 beforeAll(async()=>{await store.initialize();},30_000);
 beforeEach(async()=>{
   failAudit=false; forbidden.mockClear();
-  await db.exec('TRUNCATE tuvansa.order_changes,tuvansa.order_stock_deltas,tuvansa.orders; ALTER SEQUENCE tuvansa.order_ids RESTART WITH 5000000000;');
+  await db.exec('TRUNCATE tuvansa.order_duplicate_requests,tuvansa.order_changes,tuvansa.order_stock_deltas,tuvansa.orders; ALTER SEQUENCE tuvansa.order_ids RESTART WITH 5000000000;');
 });
 afterAll(async()=>{await db.close();});
 
@@ -150,8 +153,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   it('applies migrations once and preserves their checksum',async()=>{
     await new PostgresOrderOverlayDataSource(connect,()=>true).initialize();
     const result=await db.query('SELECT id,checksum FROM tuvansa.schema_migrations');
-    expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]).toMatchObject({id:'001_orders_overlay'});
+    expect(result.rows.map(({id}) => id).sort()).toEqual(['001_orders_overlay', 'sales_order_duplicate_requests']);
   });
   it('creates, reads, edits and deletes local orders without a MySQL write',async()=>{
     const api=make();const created=(await api.create(input)).toPrimitives();
@@ -167,6 +169,86 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect((await db.query('SELECT operation FROM tuvansa.order_changes ORDER BY revision')).rows).toEqual([{operation:'create'},{operation:'update'},{operation:'delete'}]);
     expect(forbidden).not.toHaveBeenCalled();
   });
+  it('duplicates a web quotation with the Mexico folio and replays the same confirmation', async () => {
+    const api = make();
+    const origin = (await api.create({...input, orderDiscounts:[10,0,0,0]})).toPrimitives();
+    const app = express().use(express.json()).use('/api', postgresWriteBoundary)
+      .use('/api/sales/orders', createOrdersModule(api)).use(errorHandler);
+    const path = `/api/sales/orders/${origin.id}/actions/duplicate?companyId=1`;
+    const preview = (await request(app).get(path).expect(200)).body.data;
+    const confirmation = { requestKey: randomUUID(), revision: preview.summary.revision, orderedAt: preview.summary.orderedAt };
+    expect(preview.summary).toMatchObject({ sourceOrder: origin.number, percentage: 100, total: origin.totals.total });
+    expect((await db.query('SELECT id FROM tuvansa.orders')).rows).toHaveLength(1);
+    const { body: { data: saved } } = await request(app).post(path).send(confirmation).expect(201);
+    expect(saved).toMatchObject({ number: 'P019407', documentKind: 'order', authorization: '', customerOrderNumber: '',
+      branch: origin.branch, currencyId: origin.currencyId, exchangeRate: origin.exchangeRate,
+      totals: { total: origin.totals.total, remaining: 1 }, lines: [{ ordered: 1, fulfilled: 0, assigned: 0, remaining: 1 }] });
+    expect((await request(app).post(path).send(confirmation).expect(201)).body.data).toEqual(saved);
+    await request(app).post(path).send({ ...confirmation, revision: 'f'.repeat(64) }).expect(409);
+    expect((await api.findById(origin.id))?.toPrimitives()).toEqual(origin);
+    expect((await db.query('SELECT order_id FROM tuvansa.order_duplicate_requests')).rows).toHaveLength(1);
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+
+  it('copies the full quantities of a fulfilled historical order in dollars', async () => {
+    const source = base();
+    const historical: OrderProps = { ...source, fulfilledAmount: 59.05, authorization: 'O.K.', status: 'SURT',
+      currencyId: 2, exchangeRate: 20,
+      lines: source.lines.map(line => ({ ...line, fulfilled: 1, remaining: 0, assigned: 1, currencyId: 0 })),
+    };
+    const api = new HybridOrdersDataSource({ ...legacy, findById: async () => Order.create(historical) },
+      store, references, { getPanel: async () => null });
+    const preview = await api.previewDuplicate(10, 1);
+    const duplicate = await api.duplicate(10, 1, { requestKey: randomUUID(), revision: String(preview.summary?.revision), orderedAt: String(preview.summary?.orderedAt) });
+    expect(duplicate.toPrimitives()).toMatchObject({ number: 'P019406', currencyId: 1, authorization: '', fulfilledAmount: 0,
+      documentKind: 'order', dates: { from: historical.dates.from, dueAt: historical.dates.dueAt },
+      lines: [{ price: 59.05, ordered: 1, fulfilled: 0, assigned: 0, remaining: 1, sourceCurrencyId: 2 }] });
+    expect((await api.findById(10))?.toPrimitives()).toEqual(historical);
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale duplicate and rolls back the result and receipt if auditing fails', async () => {
+    const api = make();
+    const origin = (await api.create(input)).toPrimitives();
+    const before = await api.previewDuplicate(origin.id, 1);
+    const requestInput = { requestKey: randomUUID(), revision: String(before.summary?.revision), orderedAt: String(before.summary?.orderedAt) };
+    await api.update(origin.id, { observations: 'Cambio de origen' });
+    await expect(api.duplicate(origin.id, 1, requestInput)).rejects.toMatchObject({ code: 'ORDER_DUPLICATE_STALE' });
+    const after = await api.previewDuplicate(origin.id, 1);
+    const fresh = { ...requestInput, revision: String(after.summary?.revision) };
+    failAudit = true;
+    await expect(api.duplicate(origin.id, 1, fresh)).rejects.toMatchObject({ code: 'POSTGRES_UNAVAILABLE' });
+    expect((await db.query('SELECT number FROM tuvansa.orders')).rows).toEqual([{ number: origin.number }]);
+    expect((await db.query('SELECT request_key FROM tuvansa.order_duplicate_requests')).rows).toEqual([]);
+    failAudit = false;
+    expect((await api.duplicate(origin.id, 1, fresh)).toPrimitives().number).toBe('P019407');
+  });
+
+  it('applies the capture period and customer scope to duplicate confirmations', async () => {
+    const api = make();
+    const origin = (await api.create(input)).toPrimitives();
+    const token = 'a'.repeat(43);
+    const app = express().use(express.json())
+      .use('/api', createBusinessAccess(async () => ({
+        id: 'g-1', name: 'Operador', identification: 'operador', group: 0, administrator: false, legacyId: 1,
+        access: effectiveUserSettings(undefined, { ownCustomersOnly: true, captureUntil: '1900-12-31' }),
+      }), async () => new Set([origin.customer.id])))
+      .use('/api/sales/orders', createOrdersModule(api)).use(errorHandler);
+    const path = `/api/sales/orders/${origin.id}/actions/duplicate`;
+    const session = { Cookie: `${cookieName}=${token}`, Host: 'localhost:5173', Origin: 'http://localhost:5173' };
+    const preview = (await request(app).get(path).set(session).expect(200)).body.data;
+    await request(app).post(path).set(session).send({
+      requestKey: randomUUID(), revision: preview.summary.revision, orderedAt: preview.summary.orderedAt,
+    }).expect(403);
+    await request(app).get('/api/sales/orders/10/actions/duplicate').set(session).expect(200);
+    const scoped = express().use(createBusinessAccess(async () => ({
+      id: 'g-1', name: 'Operador', identification: 'operador', group: 0, administrator: false, legacyId: 1,
+      access: effectiveUserSettings(undefined, { ownCustomersOnly: true }),
+    }), async () => new Set())).use('/sales/orders', createOrdersModule(api)).use(errorHandler);
+    await request(scoped).get(`/sales/orders/${origin.id}/actions/duplicate`).set(session).expect(404);
+    expect((await db.query('SELECT number FROM tuvansa.orders')).rows).toEqual([{ number: origin.number }]);
+  });
+
   it('persists four cascading order discounts and their recalculated total',async()=>{
     const created=(await make().create({...input,orderDiscounts:[10,20,0,0]})).toPrimitives();
     expect(created.captureDetails?.orderDiscounts).toEqual([10,20,0,0]);

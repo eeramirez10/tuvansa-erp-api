@@ -6,7 +6,7 @@ const panelRoutes: Array<[string, OrderPanelKey]> = [
   ['actions/assign-all', 'assign-all'], ['actions/authorize', 'authorize'],
   ['actions/auxiliar', 'invoices'], ['actions/boxes', 'boxes'],
   ['actions/classifications', 'classifications'], ['actions/comments', 'comments'],
-  ['actions/quote-conversion', 'quote-conversion'], ['actions/duplicate', 'duplicate'],
+  ['actions/quote-conversion', 'quote-conversion'],
   ['actions/labels', 'labels'], ['actions/print', 'print'], ['actions/monarch', 'monarch'],
   ['actions/pieces', 'pieces'], ['actions/transfer', 'transfer'],
   ['secondary-actions/assign-ct', 'assign-ct'], ['secondary-actions/consolidate', 'consolidate'],

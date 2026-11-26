@@ -64,6 +64,24 @@ Content-Type: application/json
   ]
 }
 
+### Duplicar: vista previa al 100 % para el mismo cliente
+# @name duplicateOrderPreview
+GET {{baseUrl}}/sales/orders/{{orderId}}/actions/duplicate?companyId=1
+Cookie: {{sessionCookie}}
+
+### Duplicar: confirmar en un entorno de pruebas con sesión y origen válidos.
+### Usar un UUID nuevo por copia y repetir el UUID si se reintenta la misma confirmación.
+POST {{baseUrl}}/sales/orders/{{orderId}}/actions/duplicate?companyId=1
+Content-Type: application/json
+Origin: {{origin}}
+Cookie: {{sessionCookie}}
+
+{
+  "requestKey": "2c09a27c-3147-45de-9333-df75e27a675a",
+  "revision": "{{duplicateOrderPreview.response.body.$.data.summary.revision}}",
+  "orderedAt": "{{duplicateOrderPreview.response.body.$.data.summary.orderedAt}}"
+}
+
 ### Cotiz: alterna cotización y pedido
 POST {{baseUrl}}/sales/orders/{{orderId}}/actions/quote-conversion
 Content-Type: application/json

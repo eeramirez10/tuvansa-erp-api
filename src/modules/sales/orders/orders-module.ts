@@ -25,9 +25,11 @@ import { createOrdersRouter } from './presentation/http/orders-routes.js';
 import type { OrdersDataSource } from './domain/datasources/orders-data-source.js';
 import type { OrderCaptureDataSource } from './domain/datasources/order-capture-data-source.js';
 import type { OrderPanelsDataSource } from './domain/datasources/order-panels-data-source.js';
+import { createOrderDuplicateRouter } from './presentation/http/order-duplicate-router.js';
+import type { OrderDuplicateDataSource } from './domain/datasources/order-duplicate-data-source.js';
 import type { OrderAuthorizationAccess } from './domain/datasources/order-authorization-access.js';
 
-export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSource & OrderPanelsDataSource =
+export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSource & OrderPanelsDataSource & OrderDuplicateDataSource =
   new HybridOrdersDataSource(new LegacyMysqlOrdersDataSource(), new PostgresOrderOverlayDataSource(),
     new LegacyMysqlOrderReferenceDataSource(), new LegacyMysqlOrderPanelsDataSource()),
   authorizationAccess: OrderAuthorizationAccess = { verify: token => webAccess.orderActor(token) }): Router => {
@@ -48,6 +50,7 @@ export const createOrdersModule = (source: OrdersDataSource & OrderCaptureDataSo
     next();
   });
   router.use(createOrderCaptureRouter(new CaptureOrder(new OrderCaptureRepositoryImpl(source), authorizationAccess)));
+  router.use(createOrderDuplicateRouter(source));
   router.use(createOrdersRouter(controller));
   return router;
 };

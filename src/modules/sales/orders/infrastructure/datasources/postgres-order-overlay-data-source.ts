@@ -1,3 +1,5 @@
+import type { DuplicateOrderInput } from '../../domain/datasources/order-duplicate-data-source.js';
+import { duplicateStale } from '../../domain/entities/order-duplicate.js';
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import { customerScope, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import type { OrderAuthorizationEvent, OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
@@ -7,7 +9,7 @@ import { ApplicationError } from '../../../../../shared/domain/errors/applicatio
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { connectPostgres, postgresConfigured, postgresUnavailable, type PostgresClient, type PostgresConnectionFactory } from '../../../../../shared/infrastructure/database/postgres-pool.js';
-import { migratePostgres } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
+import { migratePostgres, orderDuplicateMigrations, postgresMigrations } from '../../../../../shared/infrastructure/datasources/postgres-schema.js';
 import { assertClientCatalogCreditAllowed } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
 import { assertActiveCatalogProducts } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { readLegacySaleStock, verifyLocalOrderAssignment } from './sales-order-inventory-stock.js';
@@ -38,7 +40,7 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
   }
   async initialize() {
     if (!this.initialized) {
-      this.initialized = this.connection(migratePostgres).catch(error => { this.initialized = undefined; throw error; });
+      this.initialized = this.connection(client => migratePostgres(client, [...postgresMigrations, ...orderDuplicateMigrations])).catch(error => { this.initialized = undefined; throw error; });
     }
     await this.initialized;
   }
@@ -89,25 +91,70 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
 
   async create(build: (id: number, number?: string) => Promise<OrderProps>,
     numbering?: OrderNumberSeries | string): Promise<OrderProps> {
-    return this.transaction(async c => {
-      // Manual numbers in a series share its lock with automatic allocation.
-      const seriesCode = typeof numbering === 'string'
-        ? /^[A-Z]+(?=[0-9]+$)/.exec(numbering.toUpperCase())?.[0]
-        : numbering?.code;
-      if (seriesCode) {
-        await c.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-order-number:' || $1::text,0))", [seriesCode]);
-      }
-      const number = typeof numbering === 'object' ? await this.seriesNumber(c, numbering) : numbering;
-      const row = (await c.query<{id:string}>("SELECT nextval('tuvansa.order_ids') AS id")).rows[0]!;
-      const id = Number(row.id);
-      const doc = await build(id, number);
-      await assertClientCatalogCreditAllowed(c, doc.customer.id);
-      await assertActiveCatalogProducts(c, doc.lines.map(({ productId }) => productId));
-      await c.query('INSERT INTO tuvansa.orders(id,number,document) VALUES ($1,$2,$3::jsonb)', [id,doc.number,JSON.stringify(doc)]);
-      await this.record(c,doc,null,false,1,'create');
-      return doc;
+    return this.transaction(client => this.insertOrder(client, build, numbering));
+  }
+
+  private async insertOrder(c: PostgresClient, build: (id: number, number?: string) => Promise<OrderProps>,
+    numbering?: OrderNumberSeries | string): Promise<OrderProps> {
+    // Manual numbers in a series share its lock with automatic allocation.
+    const seriesCode = typeof numbering === 'string'
+      ? /^[A-Z]+(?=[0-9]+$)/.exec(numbering.toUpperCase())?.[0]
+      : numbering?.code;
+    if (seriesCode) {
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-order-number:' || $1::text,0))", [seriesCode]);
+    }
+    const number = typeof numbering === 'object' ? await this.seriesNumber(c, numbering) : numbering;
+    const row = (await c.query<{id:string}>("SELECT nextval('tuvansa.order_ids') AS id")).rows[0]!;
+    const id = Number(row.id);
+    const doc = await build(id, number);
+    await assertClientCatalogCreditAllowed(c, doc.customer.id);
+    await assertActiveCatalogProducts(c, doc.lines.map(({ productId }) => productId));
+    await c.query('INSERT INTO tuvansa.orders(id,number,document) VALUES ($1,$2,$3::jsonb)', [id,doc.number,JSON.stringify(doc)]);
+    await this.record(c,doc,null,false,1,'create');
+    return doc;
+  }
+
+  private async duplicateReceipt(client: PostgresClient, sourceId: number, input: DuplicateOrderInput) {
+    const { rows: [saved] } = await client.query<{ matches: boolean; document: OrderProps }>(
+      `SELECT (r.source_id=$2 AND r.preview_revision=$3 AND r.ordered_at=$4::date) AS matches, c.document
+       FROM tuvansa.order_duplicate_requests r
+       JOIN tuvansa.order_changes c ON c.order_id=r.order_id AND c.revision=1 WHERE r.request_key=$1::uuid`,
+      [input.requestKey, sourceId, input.revision, input.orderedAt],
+    );
+    if (!saved) return null;
+    requireCustomer(saved.document.customer.id);
+    if (!saved.matches) throw new ConflictError('La confirmación ya se usó para otra copia.', 'ORDER_DUPLICATE_REQUEST_CONFLICT');
+    return saved.document;
+  }
+
+  async findDuplicate(sourceId: number, input: DuplicateOrderInput) {
+    await this.initialize();
+    return this.connection(client => this.duplicateReceipt(client, sourceId, input));
+  }
+
+  async createDuplicate(sourceId: number, input: DuplicateOrderInput, expectedLocalRevision: number | null,
+    build: (id: number, number?: string) => Promise<OrderProps>, series: OrderNumberSeries) {
+    return this.transaction(async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-order-duplicate:' || $1::text,0))", [input.requestKey]);
+      const saved = await this.duplicateReceipt(client, sourceId, input);
+      if (saved) return saved;
+
+      // Same source lock as edits, conversion, fulfillment and deletion.
+      await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [sourceId]);
+      const { rows: [current] } = await client.query<{ revision: number; deleted: boolean }>(
+        'SELECT revision, deleted_at IS NOT NULL AS deleted FROM tuvansa.orders WHERE id=$1', [sourceId],
+      );
+      if (current?.deleted || (current?.revision ?? null) !== expectedLocalRevision) throw duplicateStale();
+
+      const order = await this.insertOrder(client, build, series);
+      await client.query(
+        `INSERT INTO tuvansa.order_duplicate_requests(request_key,source_id,preview_revision,ordered_at,order_id)
+         VALUES ($1::uuid,$2,$3,$4::date,$5)`, [input.requestKey, sourceId, input.revision, input.orderedAt, order.id],
+      );
+      return order;
     });
   }
+
   async change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment' | 'authorization',
     transform: (current: OrderProps, revision: number) => Promise<OrderProps | null>): Promise<OrderOverlay | null> {
     return this.transaction(async c => {

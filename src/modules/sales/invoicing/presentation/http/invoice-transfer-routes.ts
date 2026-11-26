@@ -14,7 +14,7 @@ const path = '/:invoiceId/summaries/transfer';
 export function createInvoiceTransferRouter(
   action: Pick<PostgresInvoiceTransfers, 'preview' | 'confirm'>,
   authorize: (token?: string) => Promise<InvoiceTransferActor>,
-) {
+): Router {
   const router = Router();
   router.get(`${path}/preview`, async (request, response) => {
     const actor = await authorize(sessionToken(request));

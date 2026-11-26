@@ -12,7 +12,12 @@ const capture = z.strictObject({
 });
 const paymentCapture = capture.extend({ expectedReconciliationId: z.int().positive().nullable().optional() });
 
-export function postingReversalHandlers(service: ReversePurchasePosting, kind: PostingReversalTarget['kind']) {
+interface PostingHandlers {
+  prepare: RequestHandler;
+  save: RequestHandler;
+}
+
+export function postingReversalHandlers(service: ReversePurchasePosting, kind: PostingReversalTarget['kind']): PostingHandlers {
   const actor = { companyId: 1, userId: 0 };
   const target = (params: unknown): PostingReversalTarget => kind === 'payment'
     ? { kind, ...paymentParams.parse(params) } : { kind, documentId: expenseParams.parse(params).purchaseReceptionId };
@@ -31,7 +36,7 @@ export function postingReversalHandlers(service: ReversePurchasePosting, kind: P
   return { prepare, save };
 }
 
-export function purchaseReceptionCancellationHandlers(service: CancelPurchaseReception) {
+export function purchaseReceptionCancellationHandlers(service: CancelPurchaseReception): PostingHandlers {
   const actor = { companyId: 1, userId: 0 };
   const prepare: RequestHandler = async (request, response, next) => {
     try {

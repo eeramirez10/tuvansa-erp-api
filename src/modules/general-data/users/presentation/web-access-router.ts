@@ -29,7 +29,7 @@ const profile = z.strictObject({
 const permissionChanges = z.array(z.strictObject({ key: z.string().trim().min(1).max(20), allowed: z.boolean().nullable() }))
   .min(1).max(2000).refine(changes => new Set(changes.map(change => change.key)).size === changes.length);
 
-export function createWebSessionRouter(access: PostgresWebAccess) {
+export function createWebSessionRouter(access: PostgresWebAccess): Router {
   const router = Router();
   router.use(noSessionCache);
   router.get('/', async (req, res) => {
@@ -57,7 +57,7 @@ export function createWebSessionRouter(access: PostgresWebAccess) {
   return router;
 }
 
-export function createUserDirectoryRouter(access: PostgresWebAccess) {
+export function createUserDirectoryRouter(access: PostgresWebAccess): Router {
   const router = Router();
   router.use(noSessionCache, async (req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') requireSessionOrigin(req);

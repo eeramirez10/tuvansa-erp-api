@@ -38,6 +38,16 @@ const app = (repo: OrderCaptureRepository) => express().use(express.json())
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe('Alta de pedidos capturada', () => {
+  it('excluye las versiones locales con parámetros en la búsqueda y el conteo de MySQL legado', async () => {
+    pool.execute.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ total: 0 }]]);
+    await expect(new LegacyMysqlOrdersDataSource().search({
+      orderNumber: 'P01', excludeIds: [72391, 72392], limit: 25, offset: 50,
+    })).resolves.toEqual({ items: [], total: 0 });
+    const filter = 'FPENC.PESEQ NOT IN (?, ?) AND PENUM LIKE ?';
+    expect(pool.execute).toHaveBeenNthCalledWith(1, expect.stringContaining(filter), [72391, 72392, 'P01%', 25, 50]);
+    expect(pool.execute).toHaveBeenNthCalledWith(2, expect.stringContaining(filter), [72391, 72392, 'P01%']);
+  });
+
   it('consulta familias y aplica una máscara de trece posiciones al almacén activo', async () => {
     const repo = repository();
     const families = [{ position: 1, label: 'PROVEEDOR', start: 0, width: 2, options: [{ code: 'VT', description: 'Prueba' }] }];

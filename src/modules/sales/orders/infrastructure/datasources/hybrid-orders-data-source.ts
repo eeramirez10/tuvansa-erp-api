@@ -46,7 +46,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
   }
   async search(criteria: OrderSearchCriteria) {
     const local = await this.local.list();
-    const overrides = local.map(r => r.document.id);
+    const overrides = local.flatMap(({base}) => base ? [base.id] : []);
     const matches = local.filter(r => !r.deleted && matchesOrder(r.document,criteria)).map(localDocument);
     const legacyOffset = Math.max(0,criteria.offset-matches.length);
     const legacy = await this.legacy.search({...criteria,excludeIds:overrides,offset:legacyOffset,limit:criteria.limit+matches.length});
@@ -60,7 +60,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
     const target = current.toPrimitives();
     const local = await this.local.list();
     const bound={number:target.number,id:target.id};
-    const page=await this.legacy.search({offset:0,limit:1,excludeIds:local.map(r=>r.document.id),
+    const page=await this.legacy.search({offset:0,limit:1,excludeIds:local.flatMap(({base}) => base ? [base.id] : []),
       ...(direction==='next' ? {after:bound} : {before:bound,descending:true})});
     const candidates=[...page.items.map(o=>o.toPrimitives()),...local.filter(r=>!r.deleted).map(r=>r.document)]
       .filter(o=>direction==='next' ? compareOrders(o,target)>0 : compareOrders(o,target)<0).sort(compareOrders);

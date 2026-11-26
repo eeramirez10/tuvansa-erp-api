@@ -24,6 +24,8 @@ LIMIT 32767;
 La API conserva la búsqueda por prefijo mediante parámetros preparados y añade
 paginación para no transferir decenas de miles de filas de una sola vez.
 
+La búsqueda híbrida excluye de MySQL los IDs históricos que ya tienen una versión o baja en PostgreSQL. La API aplica el mismo filtro parametrizado `NOT IN` a la consulta de resultados y al conteo. Los pedidos creados en la web se agregan desde PostgreSQL. La consulta es derivada y compatible con la instancia MySQL 5.1.45 verificada.
+
 ## Endpoint de sólo lectura
 
 ```text

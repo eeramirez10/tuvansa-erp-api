@@ -203,8 +203,8 @@ export class LegacyMysqlOrdersDataSource implements OrdersDataSource {
     const parameters: Array<string | number> = [];
     if (criteria.excludeIds?.length) {
       // Derivada: hide PostgreSQL overrides/deletions before COUNT and pagination.
-      conditions.push("FPENC.PESEQ NOT IN (SELECT excluded.id FROM JSON_TABLE(?, '$[*]' COLUMNS(id BIGINT PATH '$')) AS excluded)");
-      parameters.push(JSON.stringify(criteria.excludeIds));
+      conditions.push(`FPENC.PESEQ NOT IN (${criteria.excludeIds.map(() => '?').join(', ')})`);
+      parameters.push(...criteria.excludeIds);
     }
     for (const [bound,operator] of [[criteria.after,'>'],[criteria.before,'<']] as const) {
       if (bound) {

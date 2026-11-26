@@ -341,10 +341,7 @@ solicitudes concurrentes, revisión vencida, reintento y reversión
 completa si falla el registro de la solicitud.
 
 **Imprimir Cheque** sigue pendiente. `EBANCO#6/26` llama a
-`MBANCO/39 → /35`, que para TUVANSA usa el formato `BREPORTE`. Las
-siete cuentas con formato en el histórico tienen movimientos de otras
-empresas. Se requiere una partida elegible de México con formato para
-verificar la vista previa.
+`MBANCO/39 → /35`, que para TUVANSA usa el formato `BREPORTE`.
 
 La búsqueda adicional enlazó `FBENC.BSEQ`, `FBANMOV.POSEQ` y
 `FPOLIZA.POCIA` en los respaldos accesibles. Los de 2018 y 2019 tienen la
@@ -361,9 +358,27 @@ El procedimiento `MBANCO/39` comprueba el permiso `MBANCO39` y pasa el
 página de `BREPORTE`. El cálculo del importe convertido usa
 `rnd((BAIMPOR+BAIMPORNEG)/(BATIPOC+(BATIPOC=0)),2)`. Las bibliotecas
 locales incluyen la definición `QSANMLIL`, cuyo rótulo la identifica como
-**Santander Mexicali pesos leyenda**. Para validar **Imprimir Cheque** en
-México falta una cuenta de prueba con su formato efectivo y una partida
-con importe y número de cheque para comparar el PDF de German.
+**Santander Mexicali pesos leyenda**.
+
+El 26 de noviembre de 2026 se usó **Traspasos entre Cuentas → Cheque**
+en TUVANSA México para crear la póliza de prueba `312512-0004` y el
+cheque `15631` por 12.34 MXN. La cuenta de origen `BSEQ=6643` ya
+tenía `BREPORTE=QSANMLIL`. La partida `BASEQ=1896529` se mostró
+en **Conciliar** con el cheque, la fecha y el abono esperado. La acción
+**Imprimir Cheque** entró en `MBANCO/35` y se detuvo en
+`Set report name [BREPORTE]` con `E101201: Unable to find format QSANMLIL`.
+Evidencia local en `captures/ui/closure-mexico-bank-cheque-print-result.png`.
+Se encontró la definición en archivos locales, incluido `FORMATOS.LBR`.
+La copia `PROSCAI.LBR` que incluye la definición pide contraseña al abrir.
+La vista previa web requiere el PDF con ese formato cargado en una
+biblioteca ejecutable de pruebas.
+
+**Baja** dejó la póliza y sus dos partidas sin aplicar y con importe cero.
+La comparación posterior confirmó que ambas cuentas recuperaron sus saldos
+contables y conservaron sus saldos conciliados. German mantuvo el
+consecutivo del cheque para auditoría. También se dieron de baja los
+folios auxiliares `212502-0268` y `212502-0269` y se restauró el
+módulo original del tipo de egresos `2`.
 
 **Detalle** ejecuta `EBANCO#6/27` y abre **Auxiliar del documento**
 (`EBANCO#15`). En `20261125-EBANCO15-PROCEDURES.txt`, `/240` carga

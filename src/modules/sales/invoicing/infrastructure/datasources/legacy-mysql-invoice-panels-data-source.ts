@@ -222,7 +222,7 @@ export class LegacyMysqlInvoicePanelsDataSource implements InvoicePanelsDataSour
       );
       resultItems = items(rows);
       available = false;
-      reason = 'La liquidación de camión es una operación de escritura y no se ejecuta en esta fase.';
+      reason = 'La confirmación requiere validar la sucursal de entrega y conciliar los importes de la factura, las devoluciones y la comisión en México.';
     } else {
       source = 'static';
       available = false;

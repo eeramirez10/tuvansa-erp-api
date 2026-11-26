@@ -335,6 +335,19 @@ comprobados. Falta una ruta mexicana que utilice este proceso y cuadre
 factura, devoluciones y comisión. La confirmación web queda pendiente
 de esa evidencia.
 
+La prueba siguiente usó `FE0060009`, con ruta `3118.001` y sucursal `0`.
+**Carga factura** mostró una pieza a 3,087.52 MXN antes de IVA.
+**Lee archivo** aceptó una devolución A de una pieza del mismo código.
+**Calcula** agregó la devolución a la sucursal `999999`, mostró precio cero
+en esa fila y repitió el importe de la partida original. El total mostrado
+subió de 3,088 a 6,176 y el porcentaje de pedidos quedó en `?`.
+Se cerró el panel antes de **Genera liquidación**. La lectura posterior
+confirmó la partida original, el total de 3,581.52 MXN, `DINICIAL=0` y
+ningún folio derivado. En la copia local había 5,866 facturas vigentes de
+México con ruta asignada, todas con sucursal cero en el encabezado.
+Para habilitar la confirmación hace falta un caso de México con una
+sucursal de entrega válida y una liquidación que cuadre con la tabla de comisión.
+
 ### Traspaso de remisión en México
 
 El 26 de noviembre, **Traspaso** movió `FA25676` de 01 a 11 después

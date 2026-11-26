@@ -9,6 +9,10 @@
 GET {{baseUrl}}/sales/orders/capture/products?warehouse=01&familyPattern=*************&exactCode=01201603
 Cookie: {{sessionCookie}}
 
+### Encuentra producto / Familias: prefijo de ICOD con proveedor VT en el almacén 01
+GET {{baseUrl}}/sales/orders/capture/products?warehouse=01&familyPattern=VT***********&codePrefix=0120160
+Cookie: {{sessionCookie}}
+
 ### Entrada inicial de la vista Pedidos (detalle directo, sin búsqueda ni COUNT)
 GET {{baseUrl}}/sales/orders/by-number/{{orderNumber}}
 

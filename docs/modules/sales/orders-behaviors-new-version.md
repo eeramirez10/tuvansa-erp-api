@@ -131,17 +131,28 @@ mostró **Alternos**, **Foto**, **Familias**, **OK** y **Cancelar**.
 `EINVFINDEDWC/9` inicia `MEMFILQUERY` en `1`, valida la sintaxis y vuelve a
 `1` si la expresión es inválida. En **Familias de productos**, la expresión
 `ICOD='01201603'` redujo la lista a ese único código. La web admite esa
-igualdad y `1` en **Cálculo por código**. La consulta derivada agrega
+igualdad, el prefijo validado y `1` en **Cálculo por código**. La consulta derivada agrega
 `FINV.ICOD=?` al filtro `familyPattern` del almacén activo de
 `GET /api/sales/orders/capture/products`. El request envía el parámetro
-`exactCode`. Las demás expresiones de Omnis siguen pendientes de casos de uso.
+`exactCode`.
 Evidencia local en `captures/ui/closure-next-sale-families-expression-result.png`.
 
-El procedimiento exportado `EINVFINDEDWC/9` incluye como ejemplo comentado
-`mid(ICOD,1,1)='T'` junto a `SFINDINVFAM`. Queda pendiente aplicarlo en
-**Familias** y cotejar el listado de German con el filtro de familia y el
-almacén activo. La sesión RDP se desconectó durante la preparación del
-borrador de pedido.
+El 26 de noviembre, el selector nativo **Encuentra producto → Familias**
+en Inventarios P.T. devolvió `01201603` a `01201609` con
+`mid(ICOD,1,7)='0120160'` en México. El procedimiento exportado
+`EINVFINDEDWC/9` incluye el mismo patrón para el primer carácter.
+Evidencia local `captures/ui/closure-mexico-guest-families-prefix-result.png`.
+
+| Vista | Control | Endpoint | Tablas | Procedencia |
+| --- | --- | --- | --- | --- |
+| Captura o Cambio de pedido → Encuentra producto | Familias → Cálculo por código → OK | `GET /api/sales/orders/capture/products` con `familyPattern`, `codePrefix` y `warehouse` | FINV, FALM | Derivada de la prueba visual y de `EINVFINDEDWC/9` |
+
+La API compara por parámetros el inicio de `FINV.ICOD` y combina ese
+filtro con la máscara de familia y el almacén. Chromium reprodujo las
+siete coincidencias con familia `VT` en `01` y cero con la familia
+Tubos. La lectura HTTP en el almacén `12` devolvió cero para el mismo
+prefijo y familia. La prueba web usó el catálogo MySQL con una sesión de
+prueba y rechazó un cálculo cuya longitud difería del prefijo.
 
 La restricción de alta limitada a México no se aplica a estas lecturas: el filtro FALM.ALMNUM y la clave ALMKEY siguen usando el almacén del pedido, sin reemplazar un almacén diferente por 01. La equivalencia 1/01 se conserva. No se amplían las opciones de almacén para pedidos nuevos. Si el producto no tiene registro de inventario en el almacén activo, el endpoint devuelve 404 y la UI abre el buscador. Almacenes vacíos siguen siendo errores HTTP 400. No se suprimen errores de conexión ni errores comerciales al recargar un resultado seleccionado.
 

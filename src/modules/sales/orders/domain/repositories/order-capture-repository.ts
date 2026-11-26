@@ -38,6 +38,7 @@ export interface CaptureProductSearchCriteria {
   supplierCode?: string;
   familyPattern?: string;
   exactCode?: string;
+  codePrefix?: string;
 }
 export interface CaptureProductFamily {
   position: number;

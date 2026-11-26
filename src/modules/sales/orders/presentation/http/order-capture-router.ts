@@ -75,8 +75,10 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
         supplierCode: z.string().trim().min(1).max(30).optional(),
         familyPattern: z.string().length(13).optional(),
         exactCode: productCode.optional(),
+        codePrefix: productCode.optional(),
         limit: z.coerce.number().int().positive().max(100).default(50),
-      }).refine(value => value.query || value.code || value.description || value.supplierCode || value.familyPattern || value.exactCode, {
+      }).refine(value => value.query || value.code || value.description || value.supplierCode
+        || value.familyPattern || value.exactCode || value.codePrefix, {
         message: 'Captura código, descripción o código de proveedor',
       }).parse(req.query);
       const searchCode = query.code ?? query.query;
@@ -86,6 +88,7 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
         ...(query.supplierCode ? { supplierCode: query.supplierCode } : {}),
         ...(query.familyPattern ? { familyPattern: query.familyPattern } : {}),
         ...(query.exactCode ? { exactCode: query.exactCode } : {}),
+        ...(query.codePrefix ? { codePrefix: query.codePrefix } : {}),
       }, query.warehouse, query.limit) });
     } catch (error) { next(error); }
   });

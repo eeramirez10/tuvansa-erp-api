@@ -172,7 +172,8 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     const code = criteria.code ?? '';
     const description = criteria.description ?? '';
     const supplierCode = criteria.supplierCode ?? '';
-    const exactCode = criteria.exactCode;
+    const { exactCode, codePrefix } = criteria;
+    const familyMask = criteria.familyPattern?.toUpperCase();
     const familyPattern = criteria.familyPattern?.replace(/[\\%_]/g, '\\$&').replace(/\*/g, '_');
     const [rows] = await legacyMysqlPool.execute<Row<CaptureProductMatch>[]>(
       `SELECT FINV.ISEQ AS id,FINV.ICOD AS code,FINV.IDESCR AS description,
@@ -186,12 +187,14 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
        AND (?='' OR FINV.ICODPRV LIKE CONCAT(?,'%'))
        ${familyPattern ? "AND RPAD(COALESCE(FINV.IFAM,''),13,' ') LIKE ? AND (FINV.ICOLOR='' OR FINV.ITIPO<>1)" : ''}
        ${exactCode ? 'AND FINV.ICOD=?' : ''}
+       ${codePrefix ? 'AND LEFT(FINV.ICOD,CHAR_LENGTH(?))=?' : ''}
        ORDER BY FINV.ICOD,FINV.ISEQ LIMIT ?`,
       [warehouse, code, code, code, description, description, supplierCode, supplierCode,
-        ...(familyPattern ? [familyPattern] : []), ...(exactCode ? [exactCode] : []), limit]);
+        ...(familyPattern ? [familyPattern] : []), ...(exactCode ? [exactCode] : []),
+        ...(codePrefix ? [codePrefix, codePrefix] : []), limit]);
     const [current, changed] = await Promise.all([
       catalogProductsById(rows.map(({ id }) => id)),
-      supplierCode || familyPattern || exactCode ? [] : searchChangedCatalogProducts(code, description, limit),
+      supplierCode || familyPattern || exactCode || codePrefix ? [] : searchChangedCatalogProducts(code, description, limit),
     ]);
     const matches = new Map<number, CaptureProductMatch>();
     for (const row of rows) {
@@ -201,6 +204,11 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
       const updated = { ...row, available: Number(row.available), price: Number(row.price) };
       if (product) {
         if (exactCode && product.code.trim().toUpperCase() !== exactCode.toUpperCase()) continue;
+        if (codePrefix && !product.code.toUpperCase().startsWith(codePrefix.toUpperCase())) continue;
+        if (familyMask) {
+          const currentFamily = product.classification.familyCode.toUpperCase().padEnd(13, ' ');
+          if ([...familyMask].some((character, index) => character !== '*' && character !== currentFamily[index])) continue;
+        }
         if (code && ![product.code, product.warehouse.ean].some((value) => value.toUpperCase().startsWith(code.toUpperCase()))) continue;
         if (description && !product.description.toUpperCase().includes(description.toUpperCase())) continue;
         updated.code = product.code;

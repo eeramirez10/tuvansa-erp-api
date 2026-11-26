@@ -60,6 +60,25 @@ describe('Alta de pedidos capturada', () => {
     expect(parameters).toEqual(['12', '', '', '', '', '', '', '', 'VT' + '_'.repeat(11), '01201603', 25]);
   });
 
+  it('limita el prefijo de Familias al código del producto, la máscara y el almacén activo', async () => {
+    const repo = repository();
+    vi.mocked(repo.searchProducts).mockResolvedValue([]);
+    const http = request(app(repo));
+    const familyPattern = 'VT' + '*'.repeat(11);
+    const codePrefix = '01%_';
+    await http.get('/capture/products').query({ warehouse: '12', familyPattern, codePrefix }).expect(200, { data: [] });
+    expect(repo.searchProducts).toHaveBeenCalledWith({ familyPattern, codePrefix }, '12', 50);
+    await http.get('/capture/products').query({ warehouse: '12', codePrefix: '  ' }).expect(400);
+    await http.get('/capture/products').query({ warehouse: '12', codePrefix: '01201603000000' }).expect(400);
+    pool.execute.mockResolvedValueOnce([[]]);
+    await new LegacyMysqlOrderCaptureDataSource().searchProducts({ familyPattern, codePrefix }, '12', 25);
+    const [sql, parameters] = pool.execute.mock.calls[0]!;
+    expect(sql).toContain('FALM.ALMNUM=?');
+    expect(sql).toContain("RPAD(COALESCE(FINV.IFAM,''),13,' ') LIKE ?");
+    expect(sql).toContain('AND LEFT(FINV.ICOD,CHAR_LENGTH(?))=?');
+    expect(parameters).toEqual(['12', '', '', '', '', '', '', '', 'VT' + '_'.repeat(11), codePrefix, codePrefix, 25]);
+  });
+
   it('consulta sólo los almacenes configurados del catálogo de México', async () => {
     pool.execute
       .mockResolvedValueOnce([[{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }]])

@@ -207,6 +207,27 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect(forbidden).not.toHaveBeenCalled();
   });
 
+  it('omits zero-quantity lines and duplicates a header when all quantities are zero', async () => {
+    const source = base();
+    const zero = { ...source.lines[0]!, productId: 900, productCode: 'ZERO', ordered: 0, remaining: 0 };
+    const historical: OrderProps = { ...source, number: 'P019406',
+      totals: { ...source.totals, quantity: 0, ordered: 0, remaining: 0, subtotal: 0, tax: 0, total: 0 },
+      lines: [zero] };
+    const api = new HybridOrdersDataSource({ ...legacy, findById: async () => Order.create(historical) },
+      store, { ...references, orderNumberSeries: async () => ({ ...(await references.orderNumberSeries(1)), lastNumber: 19407 }) },
+      { getPanel: async () => null });
+    const preview = await api.previewDuplicate(10, 1);
+    expect(preview.items).toEqual([]);
+    expect(preview.summary?.total).toBe(0);
+    const copy = (await api.duplicate(10, 1, { requestKey: randomUUID(), revision: String(preview.summary?.revision), orderedAt: String(preview.summary?.orderedAt) })).toPrimitives();
+    expect(copy).toMatchObject({ number: 'P019408', documentKind: 'order', lines: [], totals: { remaining: 0, total: 0 } });
+    expect((await db.query('SELECT order_id FROM tuvansa.order_stock_deltas WHERE order_id=$1', [copy.id])).rows).toEqual([]);
+    historical.lines.push(source.lines[0]!);
+    expect((await api.previewDuplicate(10, 1)).items).toEqual([
+      expect.objectContaining({ productCode: source.lines[0]?.productCode, quantity: 1 }),
+    ]);
+  });
+
   it('rejects a stale duplicate and rolls back the result and receipt if auditing fails', async () => {
     const api = make();
     const origin = (await api.create(input)).toPrimitives();

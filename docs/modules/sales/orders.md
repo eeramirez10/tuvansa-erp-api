@@ -1,6 +1,6 @@
 # Ventas - Pedidos
 
-**Duplicar en México.** Confirmado en [la captura de Proscai](orders-capture.md#alta-real-observada) para una copia al 100 %. En la web, **Duplicar** revisa el pedido o cotización de origen y **OK** crea un pedido independiente para el mismo cliente. Conserva las cantidades originales y el nuevo pedido inicia pendiente, con un folio P del catálogo. La fecha de alta corresponde a México. El origen conserva su estado.
+**Duplicar en México.** Confirmado en [la captura de Proscai](orders-capture.md#alta-real-observada) para una copia al 100 %. En la web, **Duplicar** revisa el pedido o cotización de origen y **OK** crea un pedido independiente para el mismo cliente. Conserva las cantidades originales y el nuevo pedido inicia pendiente, con un folio P del catálogo. La fecha de alta corresponde a México. El origen conserva su estado. En la copia de pruebas de Omnis, el pedido `P019406` con una partida de cantidad cero generó el encabezado `P019407` sin partidas. La vista previa web omite esas partidas y avisa cuando la copia quedará vacía.
 
 | Vista / botón | Endpoint | Origen y procedencia |
 | --- | --- | --- |

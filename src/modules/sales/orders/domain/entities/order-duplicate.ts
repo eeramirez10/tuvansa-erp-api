@@ -25,8 +25,8 @@ export function duplicateCaptureInput(
   if ((order.companyId ?? (native ? undefined : 1)) !== companyId || companyId !== 1) {
     unsupported('Duplicar está disponible para pedidos y cotizaciones de México.');
   }
-  if (order.documentKind === 'unknown' || !order.lines.length || order.lines.length > 500) {
-    unsupported('El documento no tiene partidas compatibles para duplicar.');
+  if (order.documentKind === 'unknown' || order.lines.length > 500) {
+    unsupported('El tipo de documento o la cantidad de partidas no admite duplicación.');
   }
   if ([order.totals.freight, order.totals.insurance, order.totals.other].some(amount => amount !== 0)) {
     unsupported('El pedido contiene cargos adicionales que el alta actual no admite.');

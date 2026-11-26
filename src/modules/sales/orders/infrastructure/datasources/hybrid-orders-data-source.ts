@@ -182,18 +182,21 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       discounts[1] = Number(comments?.discount2 ?? 0);
       discounts[2] = Number(comments?.discount3 ?? 0);
     }
-    const input = duplicateCaptureInput(order, companyId, date, discounts);
-    const { build, totals, prepared } = await this.prepareCreation(input, order);
+    // Omnis persists the header but skips lines with zero quantity when duplicating.
+    const lines = order.lines.filter(line => line.ordered !== 0);
+    const source = { ...order, lines };
+    const input = duplicateCaptureInput(source, companyId, date, discounts);
+    const { build, totals, prepared } = await this.prepareCreation(input, source);
     const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
     const sourceVersion = hash(order);
     const revision = hash([sourceVersion, input, prepared.map(({product}) => [product.taxPercentage, product.excisePercentage]), totals]);
-    return { order, sourceVersion, revision, input, totals, build, localRevision: local?.revision ?? null };
+    return { order, lines, sourceVersion, revision, input, totals, build, localRevision: local?.revision ?? null };
   }
 
   async previewDuplicate(id: number, companyId: number): Promise<OrderPanelResult> {
     this.writable();
     const date = todayInMexico();
-    const { order, input, totals, revision } = await this.duplicatePreview(id, companyId, date);
+    const { order, lines, input, totals, revision } = await this.duplicatePreview(id, companyId, date);
     const series = await this.references.orderNumberSeries(companyId);
     await this.local.previewNumber(series);
     return {
@@ -201,7 +204,7 @@ export class HybridOrdersDataSource implements OrdersDataSource, OrderCaptureDat
       available: true, source: order.storage ? 'postgres' : 'mysql',
       summary: { sourceOrder: order.number, percentage: 100, revision, orderedAt: date, customer: order.customer,
         warehouse: input.warehouse, branch: input.branch, agent: input.agentCode, currency: input.collectionCurrency, total: totals.total },
-      items: order.lines.map(line => ({ productCode: line.productCode, description: line.description, quantity: line.ordered, unit: line.unit })),
+      items: lines.map(line => ({ productCode: line.productCode, description: line.description, quantity: line.ordered, unit: line.unit })),
     };
   }
 

@@ -1,7 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
+import cors from 'cors';
 import express from 'express';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LegacyUserDirectory, NativeUser } from '../src/modules/general-data/users/domain/user-directory.js';
 import { duplicatePolicyLiabilityPermission } from '../src/modules/general-data/users/domain/user-directory.js';
 import { PostgresWebAccess } from '../src/modules/general-data/users/infrastructure/postgres-web-access.js';
@@ -223,3 +224,57 @@ describe('Usuarios y permisos con PostgreSQL aislado', () => {
     expect((await db.query('SELECT 1 FROM tuvansa.web_access_changes')).rows.length).toBeGreaterThan(10);
   });
 });
+
+it('acepta la sesión de Firebase con una cookie particionada y la revoca al cerrar sesión', async () => {
+  const frontend = 'https://tuvansa-erp.web.app';
+  const publicApiPath = '/tuvansa-erp-api/api';
+  const rejectedOrigin = 'https://otro.example';
+  vi.stubEnv('WEB_SESSION_ORIGIN', frontend);
+  vi.stubEnv('WEB_SESSION_CROSS_ORIGIN_PATH', publicApiPath);
+  vi.resetModules();
+  try {
+    const [{ webSessionCors }, routes, { errorHandler: betaErrorHandler }] = await Promise.all([
+      import('../src/modules/general-data/users/presentation/web-session-http.js'),
+      import('../src/modules/general-data/users/presentation/web-access-router.js'),
+      import('../src/shared/infrastructure/http/error-handler.js'),
+    ]);
+    const beta = express().use(cors(webSessionCors)).use(express.json())
+      .use('/api/session', routes.createWebSessionRouter(access))
+      .use('/api/general-data', routes.createUserDirectoryRouter(access)).use(betaErrorHandler);
+    const preflight = (site: string) => request(beta).options('/api/session').set('Origin', site)
+      .set('Access-Control-Request-Method', 'POST').set('Access-Control-Request-Headers', 'content-type,ngrok-skip-browser-warning');
+    await preflight(frontend).expect(204)
+      .expect('Access-Control-Allow-Origin', frontend)
+      .expect('Access-Control-Allow-Credentials', 'true')
+      .expect('Access-Control-Allow-Headers', /ngrok-skip-browser-warning/);
+    const denied = await preflight(rejectedOrigin);
+    expect(denied.headers).not.toHaveProperty('access-control-allow-origin');
+    expect(denied.headers).not.toHaveProperty('access-control-allow-credentials');
+
+    const authenticate = (site: string) => request(beta).post('/api/session').set('Origin', site)
+      .send({ identification: 'administrador-web', password });
+    await authenticate(rejectedOrigin).expect(403);
+    const loggedIn = await authenticate(frontend).expect(200)
+      .expect('Access-Control-Allow-Origin', frontend).expect('Access-Control-Allow-Credentials', 'true');
+    const [setCookie] = loggedIn.headers['set-cookie'] as unknown as string[];
+    expect(setCookie).toMatch(/^__Secure-tuvansa_session_beta=[A-Za-z0-9_-]{43};/);
+    expect(setCookie).toEqual(expect.stringContaining(`Path=${publicApiPath}`));
+    for (const attribute of ['HttpOnly', 'Secure', 'SameSite=None', 'Partitioned']) {
+      expect(setCookie).toContain(`; ${attribute}`);
+    }
+    expect(setCookie).not.toContain('Domain=');
+    const cookie = setCookie!.split(';')[0]!;
+    const authenticated = () => request(beta).get('/api/session').set('Origin', frontend).set('Cookie', cookie);
+    expect((await authenticated().expect(200)).body.data.user.legacyId).toBe(1);
+    await request(beta).get(route).set('Origin', frontend).set('Cookie', cookie).expect(200);
+    await request(beta).delete('/api/session').set('Origin', rejectedOrigin).set('Cookie', cookie).expect(403);
+    const loggedOut = await request(beta).delete('/api/session').set('Origin', frontend).set('Cookie', cookie).expect(204);
+    expect(loggedOut.headers['set-cookie'][0]).toContain(`Path=${publicApiPath}`);
+    expect(loggedOut.headers['set-cookie'][0]).toContain('Partitioned');
+    expect(loggedOut.headers['set-cookie'][0]).toMatch(/^__Secure-tuvansa_session_beta=;/);
+    expect((await authenticated().expect(200)).body).toEqual({ data: null });
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  }
+}, 15_000);

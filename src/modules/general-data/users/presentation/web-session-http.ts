@@ -1,11 +1,21 @@
-import type { Request, RequestHandler } from 'express';
+import type { CorsOptions } from 'cors';
+import type { CookieOptions, Request, RequestHandler } from 'express';
 import { env } from '../../../../config/env.js';
 import { ApplicationError } from '../../../../shared/domain/errors/application-error.js';
 import { tokenPattern } from '../infrastructure/web-credentials.js';
 
-const secure = env.NODE_ENV === 'production';
-export const cookieName = secure ? '__Host-tuvansa_session' : 'tuvansa_session';
-export const sessionCookie = { httpOnly: true, secure, sameSite: 'strict', path: '/' } as const;
+const crossOriginPath = env.WEB_SESSION_CROSS_ORIGIN_PATH;
+const secure = env.NODE_ENV === 'production' || Boolean(crossOriginPath);
+export const cookieName = crossOriginPath ? '__Secure-tuvansa_session_beta'
+  : secure ? '__Host-tuvansa_session' : 'tuvansa_session';
+export const sessionCookie: CookieOptions = crossOriginPath
+  ? { httpOnly: true, secure: true, sameSite: 'none', partitioned: true, path: crossOriginPath }
+  : { httpOnly: true, secure, sameSite: 'strict', path: '/' };
+
+export const webSessionCors: CorsOptions = crossOriginPath ? {
+  origin: (origin, allow) => allow(null, origin === env.WEB_SESSION_ORIGIN),
+  credentials: true,
+} : { origin: env.CORS_ORIGINS };
 
 export const sessionToken = (request: Request): string | undefined => {
   const raw = request.headers.cookie?.split(';').map(cookie => cookie.trim()).find(cookie => cookie.startsWith(`${cookieName}=`));

@@ -8,6 +8,8 @@ const productPilots = z.string().default('')
 const warehouseCodes = z.string().trim().transform((value) => value.split(',').map((code) => code.trim().toUpperCase()))
   .pipe(z.array(z.string().regex(/^[A-Z0-9]{1,10}$/)));
 
+const httpsOrigin = z.url({ protocol: /^https$/ }).refine(value => new URL(value).origin === value);
+
 const purchaseOrderApprovers = z.string().default('[]').transform((value, ctx): unknown => {
   try { return JSON.parse(value); }
   catch {
@@ -51,6 +53,8 @@ const envSchema = z.object({
   PURCHASE_ORDER_APPROVER_KEYS: purchaseOrderApprovers,
   PURCHASE_ORDER_WAREHOUSES: warehouseCodes.optional(),
   WEB_SESSION_ORIGIN: z.string().trim().default('').refine((value) => !value || /^https?:\/\/[^/?#]+$/.test(value)),
+  WEB_SESSION_CROSS_ORIGIN_PATH: z.string().trim().default('')
+    .refine(value => !value || /^(?:\/[a-zA-Z0-9_-]+)+$/.test(value), 'Indica la ruta pública de la API sin barra final.'),
   SALES_ORDER_WAREHOUSES: warehouseCodes.refine((codes) => codes.every((code) => code.length <= 6),
     'Los códigos de almacén de pedidos no pueden exceder seis caracteres.').default(['01']),
   INVENTORY_MOVEMENTS_SOURCE: z.enum(['mysql', 'postgres']).default('mysql'),
@@ -67,6 +71,9 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+}).refine(({ WEB_SESSION_CROSS_ORIGIN_PATH, WEB_SESSION_ORIGIN }) =>
+  !WEB_SESSION_CROSS_ORIGIN_PATH || httpsOrigin.safeParse(WEB_SESSION_ORIGIN).success, {
+  path: ['WEB_SESSION_ORIGIN'], message: 'La sesión entre dominios requiere el origen HTTPS exacto del frontend.',
 });
 
 export const env = envSchema.parse(process.env);

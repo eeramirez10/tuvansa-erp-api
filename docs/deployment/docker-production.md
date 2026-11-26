@@ -38,6 +38,14 @@ API_BIND_ADDRESS=0.0.0.0
 
 `.env.production` está ignorado por Git y no debe copiarse al repositorio.
 
+Para la beta servida en Firebase, usa
+`WEB_SESSION_ORIGIN=https://tuvansa-erp.web.app` y
+`WEB_SESSION_CROSS_ORIGIN_PATH=/tuvansa-erp-api/api` en el servidor Docker.
+La ruta incluye el prefijo público que Nginx retira al reenviar. Con esta
+configuración, el backend acepta solicitudes con credenciales desde el
+origen indicado y guarda la sesión en una cookie particionada, restringida
+a dicha ruta. Mantén el valor vacío para el acceso desde el mismo origen.
+
 ## Primer despliegue
 
 ```bash

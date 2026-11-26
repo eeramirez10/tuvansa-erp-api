@@ -20,6 +20,7 @@ import { createBankingModule } from './modules/treasury/banking/banking-module.j
 import { createCompaniesRouter } from './modules/companies/presentation/http/companies-routes.js';
 import { webAccess } from './modules/general-data/users/users-module.js';
 import { createUserDirectoryRouter, createWebSessionRouter } from './modules/general-data/users/presentation/web-access-router.js';
+import { webSessionCors } from './modules/general-data/users/presentation/web-session-http.js';
 import { createBusinessAccess } from './modules/general-data/users/presentation/business-access.js';
 import { errorHandler } from './shared/infrastructure/http/error-handler.js';
 import { notFoundHandler } from './shared/infrastructure/http/not-found-handler.js';
@@ -31,7 +32,7 @@ export const createApp = (businessAccess: RequestHandler = createBusinessAccess(
   app.disable('x-powered-by');
   if (env.TRUST_PROXY) app.set('trust proxy', 1);
   app.use(helmet());
-  app.use(cors({ origin: env.CORS_ORIGINS }));
+  app.use(cors(webSessionCors));
   app.use(express.json());
   app.use(env.API_PREFIX, postgresWriteBoundary);
 

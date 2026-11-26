@@ -105,7 +105,7 @@ aislado. Requiere el permiso del grupo y los tipos FA y TA habilitados.
 | Clientes | Datos fiscales → Act. | Las sesiones de México revisadas, incluida la consulta de un cliente activo, no mostraron **Verifica fiscal**. Se requiere acceso a **Act.** para comprobar su efecto sobre el catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
 | Inventarios | Imprimir EI, SI y TR | La vista previa reproduce la presentación de los PDF históricos EI y SI, incluidos signo de salida y total por partida redondeada. Se comprobó en Chromium con los tres folios del plan y tres referencias impresas. Falta obtener las salidas nativas de los folios del plan en German. [Documentos de inventario](modules/inventories/movement-documents.md) |
-| Facturación | Liquidación camión | El procedimiento define el archivo tabulado por tipo y producto y pide la factura por separado. El respaldo carece de ejemplos de folios derivados con el patrón de liquidación. Falta confirmar su uso en México con una ruta y devoluciones de prueba. [Facturación](modules/sales/invoices.md) |
+| Facturación | Liquidación camión | German cargó una remisión mexicana e importó tres devoluciones A/B/C, un campo por renglón. El cálculo del folio sin ruta no cuadró y no hay folios liquidados con ruta identificada. Falta comprobar la aplicación del flujo a una ruta de TUVANSA México. [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica
 

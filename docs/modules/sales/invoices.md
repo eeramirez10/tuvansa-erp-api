@@ -308,9 +308,32 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   La lectura derivada de `FTIPMV` encontró `CA` con `TIAFCXC=-1` en México
   y `CB` con el mismo efecto en Monterrey. El respaldo `tuvansa` no devolvió
   facturas vigentes con `DINICIAL=1` y folios derivados `A/B/C` vigentes del
-  mismo cliente y compañía. Falta confirmar si el flujo se usa en México y
-  comprobar una ruta de prueba con su factura, entregas y devoluciones en
-  German.
+  mismo cliente y compañía.
+
+El 26 de noviembre, **Liquidación camión** abrió **Liquidación de camiones**
+en la sesión de México. **Carga factura** leyó `FA25675` y sus tres partidas
+con ruta y sucursal cero. **Lee archivo** aceptó un archivo ASCII con un campo
+por renglón y terminadores CRLF. El archivo usado fue
+`captures/mexico-truck-returns-lines.txt`. Contiene, en este orden, las líneas
+`A`, `01102768,1`, `B`, `01102530,1`, `C`, `01102924,1`.
+German mostró una unidad en cada renglón A, B y C. El mismo contenido en
+un renglón separado por tabuladores dejó vacía la lista de devoluciones.
+
+**Calcula** agregó las devoluciones con sucursal 999999. En el folio sin
+ruta, las tres filas mostraron precio cero y repitieron el importe de la
+última partida facturada. El total de la lista cambió de 17,727 a 55,311
+y el porcentaje de pedidos mostró `?`. Se cerró la ventana sin pulsar
+**Genera liquidación**. La lectura de control confirmó `DINICIAL=0`,
+el saldo original y la ausencia de folios A/B/C. Evidencia en
+`captures/ui/closure-mexico-truck-file-lines-result.png` y
+`captures/ui/closure-mexico-truck-calculated-result.png`.
+
+Una lectura derivada encontró 5,811 facturas vigentes de México con
+`DRUTA<>0`, entre 25,751 facturas vigentes. Ninguna de esas 5,811 tenía
+`DINICIAL=1`. El acceso al formato, la importación y las listas quedaron
+comprobados. Falta una ruta mexicana que utilice este proceso y cuadre
+factura, devoluciones y comisión. La confirmación web queda pendiente
+de esa evidencia.
 
 ### Traspaso de remisión en México
 

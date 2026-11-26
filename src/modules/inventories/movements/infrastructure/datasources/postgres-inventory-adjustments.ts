@@ -175,6 +175,34 @@ async function writeDeltas(client: PostgresClient, movement: MovementDocument, r
   );
 }
 
+export async function recordInvoiceTransferInventory(
+  client: PostgresClient,
+  header: Omit<MovementDocument['header'], 'id' | 'document'>,
+  lines: CaptureLine[],
+  invoiceTransfer: NonNullable<MovementDocument['invoiceTransfer']>,
+  requestKey: string,
+  fingerprint: string,
+) {
+  const { rows: [allocation] } = await client.query<{ id: string }>("SELECT nextval('tuvansa.inventory_adjustment_ids') AS id");
+  const id = Number(allocation!.id);
+  const number = 'TAW' + String(id - idStart + 1).padStart(8, '0');
+  const movement: MovementDocument = {
+    header: { ...header, id, document: number },
+    lines: await assignMovementLineIds(client, lines),
+    invoiceTransfer,
+    totals: {
+      quantity: scaledStock(lines.reduce((total, line) => total + line.quantity, 0)),
+      cost: movementCost(lines, 1),
+    },
+  };
+  await client.query(
+    `INSERT INTO tuvansa.inventory_adjustments(id,document_no,request_key,fingerprint,movement,original_movement)
+     VALUES($1,$2,$3,$4,$5::jsonb,$5::jsonb)`, [id, number, requestKey, fingerprint, JSON.stringify(movement)],
+  );
+  await writeDeltas(client, movement, false);
+  return movement;
+}
+
 export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustmentsRepository, MovementCancellationDataSource {
   private migration?: Promise<void>;
 
@@ -347,6 +375,7 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
   }
 
   async canCancel(document: MovementDocument): Promise<string | null> {
+    if (document.header.type === 'TA') return 'La entrada TA está vinculada a un traspaso de Facturación.';
     if (document.header.type !== 'EI' && document.header.type !== 'TR') return null;
     try {
       await readLocalInventoryAdjustments(undefined, (client) => this.checkCancellationStock(client, document, false));
@@ -452,6 +481,9 @@ export class PostgresInventoryAdjustmentsDataSource implements InventoryAdjustme
       if (!saved) throw new NotFoundError('Movimiento de inventario');
       if (saved.canceled) return;
       const { original } = saved;
+      if (original.header.type === 'TA') {
+        throw unsupported('La entrada TA está vinculada a un traspaso de Facturación.');
+      }
       await this.checkCancellationStock(client, original, true);
       const queueChanges = await this.pepsCancellationOrder(client, original);
       const lines = await this.transferCancellationLines(client, original, queueChanges);

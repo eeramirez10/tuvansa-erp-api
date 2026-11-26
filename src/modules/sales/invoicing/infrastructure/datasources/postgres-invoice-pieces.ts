@@ -6,6 +6,7 @@ import { migratePostgres } from '../../../../../shared/infrastructure/datasource
 import { invoicePieceVersion, type InvoicePieceEdit, type InvoicePieceIdentity,
   type InvoicePieceStore, type SavedInvoicePiece } from '../../application/use-cases/edit-invoice-pieces.js';
 import { isLocalSalesRemissionId, localSalesRemissionNumber } from './postgres-sales-remissions.js';
+import { invoiceTransfersOn, lockInvoiceTransfer } from './invoice-transfer-reads.js';
 
 // Derivada. El historial conserva el vínculo DSEQ/DNUM/AISEQ y permite recuperar un intento confirmado.
 const migrations = [{
@@ -29,6 +30,15 @@ const lineScope = 'invoice_id=$1 AND invoice_number=$2 AND line_id=$3';
 const table = 'tuvansa.sales_invoice_line_pieces';
 const storageNumber = ({ id, number }: InvoicePieceIdentity) =>
   isLocalSalesRemissionId(id) ? localSalesRemissionNumber(id) : number;
+
+export async function invoiceHasPieceEditsOn(client: PostgresClient, invoiceId: number) {
+  const { rows: [schema] } = await client.query<{ present: boolean }>(`SELECT to_regclass('${table}') IS NOT NULL AS present`);
+  if (!schema?.present) return false;
+  const { rows: [row] } = await client.query<{ present: boolean }>(
+    `SELECT EXISTS(SELECT 1 FROM ${table} WHERE invoice_id=$1) AS present`, [invoiceId],
+  );
+  return row?.present === true;
+}
 
 export class PostgresInvoicePieces implements InvoicePieceStore {
   private migration?: Promise<void>;
@@ -84,6 +94,7 @@ export class PostgresInvoicePieces implements InvoicePieceStore {
 
   private async saveLocked(client: PostgresClient, invoice: InvoicePieceIdentity, lineId: number, original: string, edit: InvoicePieceEdit) {
     const scope = [invoice.id, storageNumber(invoice), lineId];
+    await lockInvoiceTransfer(client, invoice.id);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-invoice-pieces:' || $1::text || ':' || $2::text,0))", [invoice.id, lineId]);
     const { rows: [replay] } = await client.query<SavedInvoicePiece>(
       `SELECT ${fields} FROM ${table} WHERE ${lineScope} AND request_key=$4`, [...scope, edit.requestKey],
@@ -91,6 +102,9 @@ export class PostgresInvoicePieces implements InvoicePieceStore {
     if (replay) {
       if (replay.expectedVersion === edit.expectedVersion && replay.value === edit.value) return replay;
       throw new ConflictError('La clave del guardado ya se usó para otro valor.', 'INVOICE_PIECES_REQUEST_REUSED');
+    }
+    if ((await invoiceTransfersOn(client, { invoiceIds: [invoice.id] })).length) {
+      throw new ConflictError('La remisión ya se traspasó.', 'INVOICE_ALREADY_TRANSFERRED');
     }
 
     const { rows: [latest] } = await client.query<{ revision: number }>(

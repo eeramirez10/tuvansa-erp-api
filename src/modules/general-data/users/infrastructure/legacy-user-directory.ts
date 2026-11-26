@@ -1,6 +1,6 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { legacyMysqlPool } from '../../../../shared/infrastructure/database/legacy-mysql-pool.js';
-import { accessGroups, duplicatePolicyLiabilityPermission, type LegacyUserDirectory, type NativePermission, type NativeUser, type NativeUserDetails } from '../domain/user-directory.js';
+import { accessGroups, duplicatePolicyLiabilityPermission, invoiceTransferPermission, type LegacyUserDirectory, type NativePermission, type NativeUser, type NativeUserDetails } from '../domain/user-directory.js';
 
 const userColumns = `USRSEQ AS legacyId, TRIM(USRCOD) AS identification, TRIM(USRNAME) AS name,
   USRGROUP AS \`group\`, USRMULTICIA=0 AS shared, USRBAJA='1900-12-31' AS active`;
@@ -69,6 +69,11 @@ export const legacyUserDirectory: LegacyUserDirectory = {
       permissions.set(duplicatePolicyLiabilityPermission, {
         key: duplicatePolicyLiabilityPermission, label: 'Duplicar pasivo', module: 'Contabilidad',
         allowed: false, requiresSupervisor: false,
+      });
+    }
+    if ((!keys || keys.includes(invoiceTransferPermission)) && !permissions.has(invoiceTransferPermission)) {
+      permissions.set(invoiceTransferPermission, {
+        key: invoiceTransferPermission, label: 'Traspaso', module: 'Facturación', allowed: false, requiresSupervisor: false,
       });
     }
     return [...permissions.values()];

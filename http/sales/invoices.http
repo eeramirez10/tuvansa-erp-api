@@ -15,6 +15,7 @@
 @piecesVersion = copiar-version-de-la-partida
 @piecesKey = generar-uuid-por-cambio
 @ticketConversionKey = generar-uuid-por-conversion
+@invoiceTransferKey = generar-uuid-por-traspaso
 
 ### Preparar una Remisión México desde un pedido web autorizado y asignado
 GET {{baseUrl}}/sales/invoices/from-order?orderNumber={{orderNumber}}
@@ -138,8 +139,26 @@ Content-Type: application/json
   "requestKey": "{{ticketConversionKey}}"
 }
 
-### Sumarios: Traspaso (solo partidas; no modifica inventario)
+### Sumarios: partidas del panel de Traspaso
 GET {{baseUrl}}/sales/invoices/{{invoiceId}}/summaries/transfer
+
+### Cotejar una FA histórica elegible en México. Usar una sesión web con permiso EFACT#13/34.
+# @name invoiceTransferPreview
+GET {{baseUrl}}/sales/invoices/{{historicalRemissionId}}/summaries/transfer/preview?warehouse=11
+Cookie: {{webSessionCookie}}
+
+### Registrar en PostgreSQL de pruebas. Reusar el UUID en un reintento del mismo envío.
+POST {{baseUrl}}/sales/invoices/{{historicalRemissionId}}/summaries/transfer
+Cookie: {{webSessionCookie}}
+Origin: {{webOrigin}}
+Content-Type: application/json
+
+{
+  "warehouse": "11",
+  "revision": "{{invoiceTransferPreview.response.body.$.data.revision}}",
+  "requestKey": "{{invoiceTransferKey}}",
+  "confirmed": true
+}
 
 ### Sumarios: Edita pzas (usar una remisión desechable de PostgreSQL de pruebas)
 GET {{baseUrl}}/sales/invoices/{{remissionId}}/summaries/edit-pieces

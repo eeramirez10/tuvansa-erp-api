@@ -62,7 +62,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
   const editInvoicePieces = env.NEON_DATABASE_URL !== '' && req.method === 'PATCH' &&
     /^\/sales\/invoices\/[1-9]\d*\/summaries\/edit-pieces\/[1-9]\d*$/.test(path);
   const convertSalesTicket = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
-    /^\/sales\/invoices\/[1-9]\d*\/summaries\/ticket-to-invoice$/.test(path);
+    /^\/sales\/invoices\/[1-9]\d*\/summaries\/(ticket-to-invoice|transfer)$/.test(path);
   const cancelSalesRemission = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&
     /^\/sales\/invoices\/[1-9]\d*\/actions\/cancel-remission$/.test(path);
   const simulateSalesStamping = env.NEON_DATABASE_URL !== '' && req.method === 'POST' &&

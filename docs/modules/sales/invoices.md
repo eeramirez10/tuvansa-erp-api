@@ -240,7 +240,7 @@ y queda fuera de la regeneración automática.
 | Acciones | Piezas | `/:invoiceId/actions/pieces` | Código, número, piezas, cantidad, almacén, pedido, referencia, alta y recepción |
 | Acciones | Sellar | `/:invoiceId/actions/seal` | Estado CFD/folio y simulación disponible para remisiones web en pruebas |
 | Sumarios | Tiket > Factura | `GET` y `POST /:invoiceId/summaries/ticket-to-invoice` | Vista previa y conversión de remisión web `FAW` a factura web `FEW` pendiente de timbrar |
-| Sumarios | Traspaso | `/:invoiceId/summaries/transfer` | Partidas a transferir; no modifica inventario |
+| Sumarios | Traspaso | `GET /:invoiceId/summaries/transfer/preview`, `POST /:invoiceId/summaries/transfer` | Entrada TA al almacén físico y abono en CxC para una FA histórica elegible |
 | Sumarios | Edita pzas | `GET /:invoiceId/summaries/edit-pieces`, `PATCH /:invoiceId/summaries/edit-pieces/:lineId` | Valor de piezas de la partida seleccionada (`FAXINV.AIPZAS`), con cambios web en PostgreSQL |
 | Sumarios | Liquidación camión | `/:invoiceId/summaries/truck-settlement` | Ruta, fecha, cliente e importe; no liquida |
 
@@ -292,25 +292,11 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   `/139` actualiza la fecha y el importe de la primera partida existente
   en `FAX`. Para TUVANSA el factor de cambio es 1. La rama que modifica
   precios de `FAXINV` se ejecuta con un factor distinto de 1.
-- **Traspaso** usa los permisos de `EFACT#13/34` y llama a `/197` o a `/198`
-  con Shift. La copia histórica habilita `CIACOMPORTA[37]`, pero el tipo `FA`
-  de `FA25675` tiene `TITRASPASOS=0`. El procedimiento requiere un tipo que
-  admita traspasos y trae `TZ` para la operación normal. Falta el folio elegible
-  con el tipo de destino configurado para verificar los efectos sobre `FDOC`,
-  `FAX`, `FAXINV` y piezas.
-  La búsqueda derivada leyó `FTIPMV` para Facturación en las compañías
-  `0`, `1` y `2` del respaldo actual, `pruebas2` y TUVANSA 2018–2021.
-  Ninguna de esas copias ofreció un tipo habilitado en `TITRASPASOS` ni el
-  destino `TZ`. La búsqueda de `FDOC` vigente por tipo habilitado devolvió
-  cero folios en México y Monterrey en el respaldo actual.
-  En la rama normal de `EFACT#13/197` se elige un almacén físico y el
-  procedimiento busca por separado el tipo `TZ`, con `TIAFCXC=-1`.
-  El procedimiento vacía `DALMACEN` del documento original, llama a
-  `MBASE/33` para CxC y crea un documento de inventario con `MBASE/40`.
-  `MBASE/41` recibe las cantidades con signo opuesto. La prueba necesita
-  un tipo de factura habilitado, el tipo `TZ`, un almacén seleccionable y un
-  folio vigente con partidas para comparar los registros y saldos antes
-  y después de la confirmación.
+- **Traspaso** valida el permiso de `EFACT#13/34` y llama a `/197` o a `/198`
+  con Shift. Los respaldos revisados tenían `TITRASPASOS=0` para `FA`.
+  La prueba del 26 de noviembre confirmó que la rama normal de TUVANSA
+  elige `TA` en `pick(CIAALIAS='JOYXB','TA','TZ')`. El tipo de destino
+  requiere `TIAFCXC=-1`. El selector muestra almacenes físicos.
 - **Liquidación camión** requiere `EFACT#13/76` y abre `EFACT#23`, el formato de
   liquidación de camionetas Unifoods. `/28` pide el folio de la factura por
   separado. La importación de `/405` lee campos delimitados por tabuladores.
@@ -325,6 +311,63 @@ El 25 de noviembre también se confirmó el despacho de las acciones siguientes.
   mismo cliente y compañía. Falta confirmar si el flujo se usa en México y
   comprobar una ruta de prueba con su factura, entregas y devoluciones en
   German.
+
+### Traspaso de remisión en México
+
+El 26 de noviembre, **Traspaso** movió `FA25676` de 01 a 11 después
+de habilitar temporalmente `FA` en `TITRASPASOS` y configurar `TA`.
+El folio de origen conservó fecha de emisión, partidas y total de
+1,624.00 MXN. `FDOC.DALMACEN` quedó vacío, `DCANT=0` y la fecha
+de pago tomó la fecha del día. `FAX` conservó el cargo FA y añadió
+un abono TA de 1,624.00 MXN al mismo documento.
+
+El folio `TA25676` quedó en el almacén 11, con subtotal 1,400.00,
+IVA 224.00 y saldo cero. `FAXINV` conservó el precio 1,400.00 y el
+costo 1,387.1776, con `AICANT=1` y `AICANTF=-1`. El almacén 11
+pasó de cero a una unidad y la salida de 01 permaneció en seis
+unidades de existencia después de la venta. La entrada TA no
+generó otro movimiento de CxC. Evidencia derivada de lecturas de
+`FDOC`, `FAX`, `FAXINV` y `FALM` antes y después de la acción,
+y de la interfaz. `general_log` permaneció apagado.
+
+Shift + Traspaso generó `UA25676` y dejó de nuevo en cero el almacén
+11. La Baja del folio de origen devolvió la séptima unidad a 01
+y aplicó un abono K adicional. El ajuste AJ asociado al folio
+compensó ese abono y dejó en cero el efecto de la prueba en CxC.
+Se restauraron las opciones y permisos temporales. El consecutivo
+asignado permanece en la secuencia del ERP. La evidencia privada
+está en `captures/mexico-transfer-before.txt`,
+`captures/mexico-transfer-after.txt` y
+`captures/mexico-invoice-transfer-final.txt`.
+
+La web ofrece el selector y la vista previa en **Sumarios → Traspaso**
+para remisiones FA históricas de México en pesos con un cargo original
+íntegro, partidas sin piezas ni capas y almacén físico. Requiere
+`EFACT#13/34` para el grupo web y los tipos FA y TA compatibles en
+`FTIPMV`. La base de pruebas restaurada vuelve a exigir esa
+configuración. Se probaron la negativa con la configuración restaurada
+y el flujo permitido con la configuración de referencia inyectada
+en el servidor aislado. Las remisiones FAW, las piezas, las capas y
+la reversión Shift permanecen fuera de este recorrido.
+
+Las lecturas MySQL son adaptadas a partir de los catálogos y consultas
+de remisiones existentes. PostgreSQL registra en la misma transacción
+las partidas, la existencia de destino y el abono asociado a la FA.
+El folio web `TAW` se puede consultar en Inventarios. Facturación
+presenta el almacén vacío y el saldo liquidado. Auxiliar y Movimientos
+incluyen el abono TA y Saldo excluye la remisión liquidada. La Baja
+individual de la entrada TA y la cancelación ordinaria de la FA
+traspasada quedan bloqueadas para preservar ambos efectos.
+
+La confirmación comprueba de nuevo el folio, la configuración, el
+almacén y la revisión. Un reintento con el mismo UUID devuelve el
+recibo original. Una revisión vencida devuelve 409. En PostgreSQL
+17 aislado se observaron dos sesiones en espera por el mismo cliente,
+con una confirmación y un 409, y se verificó rollback tras un fallo
+entre la entrada y el abono. Chromium abrió el botón de Facturación,
+canceló una primera vista previa, confirmó, reabrió el recibo y
+cotejó Facturación, Auxiliar, Inventarios y CxC con la remisión
+`FA25675`. Las escrituras de la prueba web quedaron en PostgreSQL aislado.
 
 ### Tiket > Factura en la web
 

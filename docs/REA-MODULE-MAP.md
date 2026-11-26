@@ -93,13 +93,18 @@ vista previa y guardado atómico. Se verificó la baja de los dos folios
 de prueba en German y el flujo web en Chromium y PostgreSQL aislado.
 [Pólizas](modules/accounting/policies.md#duplicar-pasivo)
 
+**Traspaso** en Facturación genera una entrada TA y un abono a la FA
+histórica en pesos. German confirmó las partidas, cantidades, almacenes
+y saldo. La confirmación web se verificó en Chromium y PostgreSQL
+aislado. Requiere el permiso del grupo y los tipos FA y TA habilitados.
+[Facturación](modules/sales/invoices.md#traspaso-de-remisión-en-méxico)
+
 | Módulo | Controles pendientes | Evidencia o dato que falta |
 | --- | --- | --- |
 | Bancos | Conciliar → Imprimir Cheque | El cheque de prueba `15631` apareció en Conciliar por 12.34 MXN en una cuenta con `QSANMLIL`. German se detuvo en `E101201` al cargar el formato. Falta producir el PDF en una biblioteca de pruebas que lo cargue. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
 | Clientes | Datos fiscales → Act. | Las sesiones de México revisadas, incluida la consulta de un cliente activo, no mostraron **Verifica fiscal**. Se requiere acceso a **Act.** para comprobar su efecto sobre el catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
 | Inventarios | Imprimir EI, SI y TR | La vista previa reproduce la presentación de los PDF históricos EI y SI, incluidos signo de salida y total por partida redondeada. Se comprobó en Chromium con los tres folios del plan y tres referencias impresas. Falta obtener las salidas nativas de los folios del plan en German. [Documentos de inventario](modules/inventories/movement-documents.md) |
-| Facturación | Traspaso | Los respaldos consultados carecen de tipo `TITRASPASOS` habilitado y tipo `TZ` con afectación de CxC. Falta validar un folio con destino a un almacén físico. [Facturación](modules/sales/invoices.md) |
 | Facturación | Liquidación camión | El procedimiento define el archivo tabulado por tipo y producto y pide la factura por separado. El respaldo carece de ejemplos de folios derivados con el patrón de liquidación. Falta confirmar su uso en México con una ruta y devoluciones de prueba. [Facturación](modules/sales/invoices.md) |
 
 ## Precedencia práctica

@@ -14,6 +14,7 @@ import type {
   SalesRemissionCancellationResult, SalesRemissionCancellationSource,
 } from '../../domain/datasources/sales-remission-cancellation-data-source.js';
 import { historicalSalesRemissionCancellationsOn } from './historical-sales-remission-cancellation-reads.js';
+import { invoiceTransfersOn } from './invoice-transfer-reads.js';
 import { ensureSalesRemissionSchema, isLocalSalesRemissionId, salesRemissionsAvailable } from './postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationIdEnd, salesRemissionCancellationIdStart, salesRemissionCancellationsAvailable } from './sales-remission-cancellation-reads.js';
 import { salesTicketConversionSql } from './sales-ticket-conversion-reads.js';
@@ -146,6 +147,7 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
       this.historical.read(id), historicalSalesRemissionCancellationsOn(client, { invoiceIds: [id] }),
     ]);
     if (!source?.historical) return null;
+    const [transfer] = await invoiceTransfersOn(client, { invoiceIds: [id] });
     const baseOrder = source.order;
     let order = baseOrder;
     let orderReason = source.historical.orderReason ?? null;
@@ -164,7 +166,8 @@ export class PostgresSalesRemissionCancellations implements SalesRemissionCancel
     }
     return {
       ...source, order, alreadyRecorded: saved?.result ?? null,
-      historical: { ...source.historical, baseOrder, orderReason },
+      historical: { ...source.historical, baseOrder, orderReason,
+        blockedReason: transfer ? 'La remisión ya se traspasó.' : source.historical.blockedReason },
     };
   }
 

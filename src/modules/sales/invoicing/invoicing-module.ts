@@ -31,6 +31,9 @@ import { InvoicePanelsRepositoryImpl } from './infrastructure/repositories/invoi
 import { InvoicesRepositoryImpl } from './infrastructure/repositories/invoices-repository-impl.js';
 import { InvoicesController } from './presentation/http/invoices-controller.js';
 import { createInvoicesRouter } from './presentation/http/invoices-routes.js';
+import { createInvoiceTransferRouter } from './presentation/http/invoice-transfer-routes.js';
+import { webAccess } from '../../general-data/users/users-module.js';
+import { PostgresInvoiceTransfers } from './infrastructure/datasources/postgres-invoice-transfers.js';
 
 export const createInvoicingModule = (): Router => {
   const pieces = new PostgresInvoicePieces();
@@ -65,5 +68,6 @@ export const createInvoicingModule = (): Router => {
     }
     next();
   });
+  router.use(createInvoiceTransferRouter(new PostgresInvoiceTransfers(), token => webAccess.invoiceTransferActor(token)));
   return router.use(createInvoicesRouter(controller));
 };

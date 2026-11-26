@@ -24,6 +24,8 @@ export interface MovementLine {
   quantity: number;
   unit: string;
   cost: number;
+  price?: number;
+  invoicedQuantity?: number;
   pieces: number;
   piecesText: string;
   warehouse: string;
@@ -38,5 +40,6 @@ export interface MovementDocument {
   header: MovementHeader;
   lines: MovementLine[];
   totals: { quantity: number; cost: number };
+  invoiceTransfer?: { sourceId: number; subtotal: number; tax: number; total: number };
   comment?: string;
 }

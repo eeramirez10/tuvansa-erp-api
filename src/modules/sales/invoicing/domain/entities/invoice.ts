@@ -1,3 +1,5 @@
+import type { InvoiceTransferReceipt } from './invoice-transfer.js';
+
 export interface InvoiceLine {
   id: number;
   productId: number;
@@ -42,6 +44,7 @@ export interface InvoiceProps {
   canceled: boolean;
   cancellationAvailable?: boolean;
   cancellation?: { id: number; date: string; reason: string; regeneratedOrder: boolean };
+  transfer?: InvoiceTransferReceipt;
   dates: {
     issuedAt: string | null;
     dueAt: string | null;

@@ -2,6 +2,7 @@ export const generalDataPermission = 'INICIO13';
 export const userCatalogPermission = 'MCATALOGOS8';
 export const salesOrderPermission = 'MPED5';
 export const duplicatePolicyLiabilityPermission = 'EPASIV#13/19';
+export const invoiceTransferPermission = 'EFACT#13/34';
 export const accessGroups = Array.from({ length: 42 }, (_, group) => group);
 export const webIdentificationPattern = /^[\p{L}\p{N}_.@-]+$/u;
 

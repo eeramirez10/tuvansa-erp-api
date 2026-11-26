@@ -1,4 +1,5 @@
 import type { PostgresClient } from '../../../../../shared/infrastructure/database/postgres-pool.js';
+import { invoiceTransfersOn } from '../../../../sales/invoicing/infrastructure/datasources/invoice-transfer-reads.js';
 import {
   historicalSalesRemissionCancellationsOn, remissionCancellationSql, salesRemissionCancellationsAvailable,
 } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
@@ -48,5 +49,6 @@ export async function salesRemissionsOutstanding(client: PostgresClient, company
   );
   const historical = hasCancellations && companyId === 1
     ? await historicalSalesRemissionCancellationsOn(client, { customerIds: [customerId] }) : [];
-  return historical.reduce((balance, { amount }) => balance - amount, row?.amount ?? 0);
+  const transfers = companyId === 1 ? await invoiceTransfersOn(client, { customerIds: [customerId] }) : [];
+  return [...historical, ...transfers].reduce((balance, { amount }) => balance - amount, row?.amount ?? 0);
 }

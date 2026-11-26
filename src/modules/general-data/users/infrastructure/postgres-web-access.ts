@@ -3,7 +3,7 @@ import { ApplicationError } from '../../../../shared/domain/errors/application-e
 import { connectPostgres, type PostgresClient, type PostgresConnectionFactory } from '../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres, webAccessMigrations } from '../../../../shared/infrastructure/datasources/postgres-schema.js';
 import {
-  accessGroups, duplicatePolicyLiabilityPermission, effectiveUserSettings, generalDataPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
+  accessGroups, duplicatePolicyLiabilityPermission, effectiveUserSettings, generalDataPermission, invoiceTransferPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
   type DirectoryUser, type DirectoryUserDetail, type LegacyUserDirectory, type NativeUser, type PermissionChange,
   type UserProfile, type UserSettings, type WebIdentity,
 } from '../domain/user-directory.js';
@@ -152,6 +152,17 @@ export class PostgresWebAccess {
       throw new ApplicationError('Tu usuario no tiene permiso para duplicar pasivos en México.', 'POLICY_LIABILITY_FORBIDDEN', 403);
     }
     return { id: user.id, legacyId: user.legacyId ?? 0 };
+  }
+
+  async invoiceTransferActor(token?: string) {
+    const user = await this.authenticate(token);
+    if (!user) throw sessionRequired();
+    const [permission] = await this.connection(client => this.permissions(client, user.group, [invoiceTransferPermission]));
+    const { company, hideBalances, captureFrom, captureUntil } = user.access;
+    if (!permission?.allowed || permission.requiresSupervisor || hideBalances || (company && company !== 1)) {
+      throw new ApplicationError('Tu usuario no tiene permiso para traspasar remisiones en México.', 'INVOICE_TRANSFER_FORBIDDEN', 403);
+    }
+    return { id: user.id, legacyId: user.legacyId ?? 0, captureFrom, captureUntil };
   }
 
   private async consumeAttempt(client: PostgresClient, key: string, limit: number) {

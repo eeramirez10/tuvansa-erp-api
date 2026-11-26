@@ -1,5 +1,6 @@
 import type { InvoiceProps } from '../../../../sales/invoicing/domain/entities/invoice.js';
-import { readHistoricalSalesRemissionCancellations, type HistoricalSalesRemissionCancellation } from '../../../../sales/invoicing/infrastructure/datasources/historical-sales-remission-cancellation-reads.js';
+import { readHistoricalSalesRemissionCancellations } from '../../../../sales/invoicing/infrastructure/datasources/historical-sales-remission-cancellation-reads.js';
+import { readInvoiceTransfers } from '../../../../sales/invoicing/infrastructure/datasources/invoice-transfer-reads.js';
 import { readSalesRemissions } from '../../../../sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import { remissionCancellationSql, salesRemissionCancellationsAvailable } from '../../../../sales/invoicing/infrastructure/datasources/sales-remission-cancellation-reads.js';
 import { salesTicketConversionSql } from '../../../../sales/invoicing/infrastructure/datasources/sales-ticket-conversion-reads.js';
@@ -48,8 +49,18 @@ interface LocalMovement {
 
 const today = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City')::date";
 export const clientMoney = (value: number): number => Math.round(value * 100) / 100;
-const historicalCharge = (rows: HistoricalSalesRemissionCancellation[]) => rows.reduce((total, row) => total + row.amount, 0);
+async function historicalCredits(customerIds: number[]) {
+  const [cancellations, transfers] = await Promise.all([
+    readHistoricalSalesRemissionCancellations({ customerIds }), readInvoiceTransfers({ customerIds }),
+  ]);
+  return [
+    ...cancellations.map(entry => ({ ...entry, type: 'K', reference: entry.number, canceled: true })),
+    ...transfers.map(entry => ({ ...entry, type: 'TA', reference: entry.result.number, canceled: false })),
+  ];
+}
 
+type HistoricalCredit = Awaited<ReturnType<typeof historicalCredits>>[number];
+const historicalCharge = (rows: HistoricalCredit[]) => rows.reduce((total, row) => total + row.amount, 0);
 export interface SalesRemissionCustomerTotals {
   balance: number;
   lastPurchaseAt: string | null;
@@ -72,7 +83,7 @@ export async function salesRemissionCustomerTotals(customerIds: number[]): Promi
     );
     return new Map(rows.map(({ id, ...totals }) => [id, totals]));
   });
-  const [totals, historical] = await Promise.all([local, readHistoricalSalesRemissionCancellations({ customerIds })]);
+  const [totals, historical] = await Promise.all([local, historicalCredits(customerIds)]);
   for (const { customerId, amount } of historical) {
     const total = totals.get(customerId) ?? { balance: 0, lastPurchaseAt: null, lastPaymentAt: null };
     totals.set(customerId, { ...total, balance: total.balance - amount });
@@ -149,7 +160,7 @@ export class ClientBalanceWithSalesRemissionsDataSource implements ClientBalance
     const record = await clientCatalogRecord(criteria.clientId);
     if (record?.deleted) return null;
     const historical = record && !record.legacy ? []
-      : await readHistoricalSalesRemissionCancellations({ customerIds: [criteria.clientId] });
+      : await historicalCredits([criteria.clientId]);
     const base: ClientBalanceResult | null = record && !record.legacy ? {
       client: catalogIdentity(record.document), items: [], total: 0,
       summary: { totalBalance: 0, overdueBalance: 0, notDueBalance: 0, documentCount: 0, overdueDocumentCount: 0, notDueDocumentCount: 0 },
@@ -219,20 +230,20 @@ const cancellationMovements = `UNION ALL
   FROM tuvansa.sales_remission_cancellations cancellation
   JOIN remissions remission ON remission.id=cancellation.remission_id WHERE cancellation.company_id=1`;
 
-const historicalCancellationMovements = `UNION ALL
-  SELECT entry.id,entry.invoice,entry.date,-entry.amount,0,'K',entry.invoice->>'number',
+const historicalCreditMovements = `UNION ALL
+  SELECT entry.id,entry.invoice,entry.date,-entry.amount,0,entry.type,entry.reference,
          ''::text,0,NULL::text,entry.user_id,NULL::timestamptz,NULL::jsonb,false
-  FROM jsonb_to_recordset($7::jsonb) AS entry(id bigint,invoice jsonb,date date,amount numeric,user_id integer)`;
+  FROM jsonb_to_recordset($7::jsonb) AS entry(id bigint,invoice jsonb,date date,amount numeric,user_id integer,type text,reference text)`;
 
 function movementPage(
   criteria: ClientMovementSearchCriteria,
   base: ClientMovementsResult,
-  historical: HistoricalSalesRemissionCancellation[],
+  historical: HistoricalCredit[],
 ): Promise<MovementPage> {
   const cutoffs = [...new Set(base.items.map((item) => item.toPrimitives().date.slice(0, 10)))];
-  const historicalEntries = historical.map(({ invoiceId, number, orderNumber, issuedAt, dueAt, amount, result, userId }) => ({
-    id: result.id, date: result.date, amount, user_id: userId,
-    invoice: { id: invoiceId, number, orderNumber, dates: { issuedAt, dueAt }, canceled: true, currency: { id: 1, exchangeRate: 1 } },
+  const historicalEntries = historical.map(({ invoiceId, number, orderNumber, issuedAt, dueAt, amount, result, userId, type, reference, canceled }) => ({
+    id: result.id, date: result.date, amount, user_id: userId, type, reference,
+    invoice: { id: invoiceId, number, orderNumber, dates: { issuedAt, dueAt }, canceled, currency: { id: 1, exchangeRate: 1 } },
   }));
   return readSalesRemissions(emptyMovements, async (client) => {
     const hasCollections = await customerCollectionsAvailable(client);
@@ -264,7 +275,7 @@ function movementPage(
          ${hasCollections ? collectionMovements(hasCollectionReversals) : ''}
          ${hasCollectionReversals ? collectionReversalMovements : ''}
          ${hasCancellations ? cancellationMovements : ''}
-         ${historicalCancellationMovements}
+         ${historicalCreditMovements}
        ), ledger AS (
          SELECT *, sum(amount) OVER (ORDER BY movement_date, created_at, id ROWS UNBOUNDED PRECEDING) AS running_balance
          FROM entries
@@ -298,9 +309,10 @@ function movementPage(
 
 function movementDocument(entry: LocalMovement, legacyBalance: number) {
   const { id, invoice, date, amount, remaining, runningBalance, userId, policy, paymentReference, receiptNumber, collectionNumber } = entry;
+  const invoiceMovement: Record<string, string> = { K: 'Cancelación de remisión', TA: 'Traspaso' };
   return ClientMovement.create({
     id, date, movementType: { code: entry.movementType, description: entry.isCollectionReversal ? 'Reversión de cobro'
-      : collectionNumber ? 'Cobro' : entry.movementType === 'K' ? 'Cancelación de remisión' : 'Remisión' },
+      : collectionNumber ? 'Cobro' : invoiceMovement[entry.movementType] ?? 'Remisión' },
     amount: clientMoney(amount), runningBalance: clientMoney(legacyBalance + runningBalance),
     paymentReference, exchangeRate: invoice.currency.exchangeRate, policy, receiptNumber, userId,
     ...(collectionNumber ? { policyId: id, collectionNumber, canReverseCollection: !entry.isCollectionReversal && !entry.collectionReversal,
@@ -326,17 +338,21 @@ export class ClientMovementsWithSalesRemissionsDataSource implements ClientMovem
     if (!base) return null;
     if (record?.legacy) base.client = catalogIdentity(record.document, base.client.currentBalance);
     const historical = record && !record.legacy ? []
-      : await readHistoricalSalesRemissionCancellations({ customerIds: [criteria.clientId] });
+      : await historicalCredits([criteria.clientId]);
     const local = await movementPage(criteria, base, historical);
     if (local.entryCount === 0) return base;
 
     const legacyBalances = record && !record.legacy ? new Map<number | string, number>()
       : await this.legacy.balanceThroughDates(criteria.clientId, [...new Set(local.items.map(({ date }) => date))]);
+    const transferred = new Set(historical.filter(({ type }) => type === 'TA').map(({ invoiceId }) => invoiceId));
     const items = base.items.map((item) => {
       const movement = item.toPrimitives();
       const preceding = local.preceding[movement.date.slice(0, 10)] ?? 0;
-      return preceding === 0 ? item : ClientMovement.create({
+      const document = movement.document;
+      const applied = document && transferred.has(document.id) ? { ...document, amount: 0 } : document;
+      return preceding === 0 && applied === document ? item : ClientMovement.create({
         ...movement, runningBalance: clientMoney(movement.runningBalance + preceding),
+        document: applied,
       });
     });
     const openingBalance = clientMoney(base.summary.openingBalance + local.openingBalance);

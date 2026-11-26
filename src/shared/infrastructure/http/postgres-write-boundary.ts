@@ -86,7 +86,7 @@ export const postgresWriteBoundary: RequestHandler = (req, _res, next) => {
      (req.method === 'PATCH' && /^\/treasury\/bank-accounts\/[1-9]\d*\/actions\/(classifiers|general-ledger|cost-center-ledger|authorization-review)$/.test(path)));
   const writeManualPolicy = env.NEON_DATABASE_URL !== '' &&
     ((req.method === 'POST' && (path === '/accounting/policies' ||
-       /^\/accounting\/policies\/[1-9]\d*\/actions\/(apply|unapply|duplicate)$/.test(path))) ||
+       /^\/accounting\/policies\/[1-9]\d*\/actions\/(apply|unapply|duplicate|duplicate-liability)$/.test(path))) ||
      (['PATCH','DELETE'].includes(req.method) && /^\/accounting\/policies\/[1-9]\d*$/.test(path)) ||
      (req.method === 'PATCH' && /^\/accounting\/policies\/[1-9]\d*\/actions\/(comments|classifications)$/.test(path)));
   if (readOnlyCalculation || create || orderAction || orderComments || modify || cancelInventory || writeInventory || classifyProduct || editOtherData || writeProduct || purchaseOrderAction || changePurchaseOrder || createPurchaseOrder || createPurchaseReception || writeReceptionPiece || editReception || documentReception || writeSupplier || createSupplierPayment || reversePurchasePosting || createSalesRemission || editInvoicePieces || convertSalesTicket || cancelSalesRemission || simulateSalesStamping || writeClient || createCustomerCollection || reverseCustomerCollection || writeBankReconciliation || bankCatalogMutations || bankActions || writeManualPolicy) { next(); return; }

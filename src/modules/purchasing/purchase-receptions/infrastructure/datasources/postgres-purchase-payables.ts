@@ -13,6 +13,7 @@ export interface PurchaseDocumentTables {
   receiptCancellations: boolean;
   documentations: boolean;
   supplierChanges: boolean;
+  policyLiabilities: boolean;
 }
 
 export async function purchaseDocumentTables(client: PostgresClient): Promise<PurchaseDocumentTables> {
@@ -22,10 +23,11 @@ export async function purchaseDocumentTables(client: PostgresClient): Promise<Pu
             to_regclass('tuvansa.purchase_expense_cancellations') IS NOT NULL AS "expenseCancellations",
             to_regclass('tuvansa.purchase_reception_cancellations') IS NOT NULL AS "receiptCancellations",
             to_regclass('tuvansa.purchase_reception_documentations') IS NOT NULL AS documentations,
-            to_regclass('tuvansa.purchase_reception_supplier_changes') IS NOT NULL AS "supplierChanges"`,
+            to_regclass('tuvansa.purchase_reception_supplier_changes') IS NOT NULL AS "supplierChanges",
+            to_regclass('tuvansa.manual_policy_liabilities') IS NOT NULL AS "policyLiabilities"`,
   );
   return tables ?? {
-    receipts: false, expenses: false, expenseCancellations: false, receiptCancellations: false, documentations: false, supplierChanges: false,
+    receipts: false, expenses: false, expenseCancellations: false, receiptCancellations: false, documentations: false, supplierChanges: false, policyLiabilities: false,
   };
 }
 
@@ -105,6 +107,20 @@ function payablesSql(tables: PurchaseDocumentTables): string | null {
     FROM tuvansa.purchase_expense_documents d
     JOIN tuvansa.purchase_expense_batches b ON b.id=d.batch_id AND b.company_id=d.company_id
     ${cancellation.join}`);
+  if (tables.policyLiabilities) sources.push(`
+    SELECT liability.policy_id AS id,liability.company_id,liability.number,
+      liability.supplier_id,liability.supplier_code,liability.supplier_name,
+      policy.date AS received_at,liability.due_date AS due_at,liability.amount AS principal,
+      liability.currency AS currency_id,liability.exchange_rate,
+      liability.cancelled_at IS NOT NULL AS cancelled,liability.supplier_account,null::text AS supplier_account_name,
+      liability.reference AS supplier_reference,''::text AS order_number,'3'::text AS movement_type,
+      liability.user_id,policy.number AS policy_number,policy.id AS policy_id,liability.created_at,
+      CASE WHEN liability.cancelled_at IS NOT NULL THEN jsonb_build_object('id',liability.reversal_id,
+        'policyId',policy.id,'policyNumber',policy.number,'date',policy.date,'reason','CANCEL',
+        'userId',liability.user_id,'createdAt',liability.cancelled_at::text) END AS cancellation,
+      0 AS documented_amount,null::jsonb AS documentation,false AS historical_documentation,
+      false AS can_pay,false AS historical_transfer_out,false AS historical_transfer_in,null::bigint AS source_movement_id
+    FROM tuvansa.manual_policy_liabilities liability JOIN tuvansa.manual_accounting_policies policy ON policy.id=liability.policy_id`);
   if (tables.documentations) sources.push(`
     SELECT d.id,d.company_id,d.number,h.supplier_id,h.supplier_code,h.supplier_name,
       h.date AS received_at,h.due_date AS due_at,d.amount AS principal,
@@ -164,18 +180,18 @@ export function readPurchasePayables<T>(fallback: T, read: (client: PostgresClie
   return readPurchaseDocuments(fallback, async (client, tables) => {
     const source = payablesSql(tables);
     return source ? read(client, source) : fallback;
-  });
+  }, true);
 }
 
 export async function readPurchaseDocuments<T>(
-  fallback: T, read: (client: PostgresClient, tables: PurchaseDocumentTables) => Promise<T>,
+  fallback: T, read: (client: PostgresClient, tables: PurchaseDocumentTables) => Promise<T>, includePolicyLiabilities = false,
 ) {
   if (!postgresConfigured()) return fallback;
   let client: PostgresClient | undefined;
   try {
     client = await connectPostgres();
     const tables = await purchaseDocumentTables(client);
-    return tables.receipts || tables.expenses ? await read(client, tables) : fallback;
+    return tables.receipts || tables.expenses || (includePolicyLiabilities && tables.policyLiabilities) ? await read(client, tables) : fallback;
   } catch (error) {
     if (error instanceof ApplicationError) throw error;
     throw new ApplicationError('No fue posible consultar las cuentas por pagar en PostgreSQL.', 'PURCHASE_PAYABLES_UNAVAILABLE', 503);

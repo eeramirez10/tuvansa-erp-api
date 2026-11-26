@@ -3,6 +3,7 @@ import type { PostingReversalReconciliation } from '../../domain/datasources/pur
 export interface PurchasePostingReversalReference {
   id: number;
   policyNumber: string;
+  policyId?: number;
   date: string;
   reason: string;
   userId: number;

@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LegacyUserDirectory, NativeUser } from '../src/modules/general-data/users/domain/user-directory.js';
+import { duplicatePolicyLiabilityPermission } from '../src/modules/general-data/users/domain/user-directory.js';
 import { PostgresWebAccess } from '../src/modules/general-data/users/infrastructure/postgres-web-access.js';
 import { hashPassword, tokenDigest } from '../src/modules/general-data/users/infrastructure/web-credentials.js';
 import { createUserDirectoryRouter, createWebSessionRouter } from '../src/modules/general-data/users/presentation/web-access-router.js';
@@ -44,6 +45,7 @@ const native: LegacyUserDirectory = {
     { key: 'INICIO13', label: 'Datos Generales', allowed: false, requiresSupervisor: false, module: 'Inicio' },
     { key: 'MCATALOGOS8', label: 'Usuarios', allowed: group === 0, requiresSupervisor: false, module: 'Catálogos' },
     { key: 'MPED5', label: 'Autorizar', allowed: group === 18, requiresSupervisor: supervisorRequired, module: 'Pedidos' },
+    { key: duplicatePolicyLiabilityPermission, label: 'Duplicar pasivo', allowed: false, requiresSupervisor: false, module: 'Contabilidad' },
     { key: 'SUP', label: 'Operación con firma', allowed: true, requiresSupervisor: true, module: 'Ventas' },
   ].filter(item => !keys || keys.includes(item.key)),
 };
@@ -160,6 +162,14 @@ describe('Usuarios y permisos con PostgreSQL aislado', () => {
     await rewrite(0, true).expect(409);
     await rewrite(1, null).expect(200);
     await expect(actor()).resolves.toMatchObject({ userId: 21 });
+    const liabilityActor = () => access.policyLiabilityActor(cookieToken(approverCookie));
+    await expect(liabilityActor()).rejects.toMatchObject({ code: 'POLICY_LIABILITY_FORBIDDEN' });
+    await change('patch', `${groups}/18`, adminCookie)
+      .send({ revision: 2, changes: [{ key: duplicatePolicyLiabilityPermission, allowed: true }] }).expect(200);
+    await expect(liabilityActor()).resolves.toEqual({ id: 'g-21', legacyId: 21 });
+    await change('patch', `${groups}/18`, adminCookie)
+      .send({ revision: 3, changes: [{ key: duplicatePolicyLiabilityPermission, allowed: null }] }).expect(200);
+    await expect(liabilityActor()).rejects.toMatchObject({ code: 'POLICY_LIABILITY_FORBIDDEN' });
     supervisorRequired = true;
     try { await expect(actor()).rejects.toMatchObject({ code: 'ORDER_SUPERVISOR_REQUIRED' }); }
     finally { supervisorRequired = false; }

@@ -68,8 +68,9 @@ function localMovements(charges: SupplierPurchaseReceptionCharge[]) {
     }
     const cancellation = charge.cancellation;
     if (cancellation) movements.push({ createdAt: cancellation.createdAt, row: {
-      ...original, id: cancellation.id, date: cancellation.date, amount: -charge.principal, movementType: charge.movementType === 'GA' ? 'CG' : 'K',
-      policy: cancellation.policyNumber, policyId: cancellation.id, userId: cancellation.userId,
+      ...original, id: cancellation.id, date: cancellation.date, amount: -charge.principal,
+      movementType: charge.movementType === 'GA' ? 'CG' : charge.movementType === '3' ? '3' : 'K',
+      policy: cancellation.policyNumber, policyId: cancellation.policyId ?? cancellation.id, userId: cancellation.userId,
       paymentReference: cancellation.reason,
     } });
     return movements;

@@ -52,6 +52,27 @@ Content-Type: application/json
   "requestKey": "{{duplicateRequestKey}}",
   "confirmed": true
 }
+### Duplicar pasivo. Requiere sesión web con EPASIV#13/19.
+GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/duplicate-liability
+
+### Cotejar subtotales, IVA, vencimiento y partidas
+GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/duplicate-liability/preview?date={{activeFiscalDate}}&supplierCode={{supplierCode}}&amount=116.08&reference={{liabilityReference}}
+
+### Confirmar póliza y cargo en PostgreSQL de pruebas
+POST {{baseUrl}}/accounting/policies/{{policyId}}/actions/duplicate-liability
+Content-Type: application/json
+Origin: {{webOrigin}}
+
+{
+  "date": "{{activeFiscalDate}}",
+  "supplierCode": "{{supplierCode}}",
+  "reference": "{{liabilityReference}}",
+  "amount": 116.08,
+  "revision": "{{liabilityRevision}}",
+  "requestKey": "{{liabilityRequestKey}}",
+  "confirmed": true
+}
+
 ### Comentarios de una póliza
 GET {{baseUrl}}/accounting/policies/{{policyId}}/actions/comments
 

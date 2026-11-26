@@ -88,10 +88,14 @@ talla, incluidos los controles y consultas CT asociados, así como cajas
 y empaque. En el buscador de Pedidos también se excluyen **Foto** y
 **Matriz de fotos**. Estas exclusiones aplican a implementación y verificación.
 
+El 26 de noviembre se cerró **Duplicar pasivo** con una prueba en German,
+vista previa y guardado atómico. Se verificó la baja de los dos folios
+de prueba en German y el flujo web en Chromium y PostgreSQL aislado.
+[Pólizas](modules/accounting/policies.md#duplicar-pasivo)
+
 | Módulo | Controles pendientes | Evidencia o dato que falta |
 | --- | --- | --- |
 | Bancos | Conciliar → Imprimir Cheque | **FP** guarda `POPOSTFECHA` de una póliza histórica y la muestra en Conciliar, Auxiliar y Pólizas. **Detalle** consulta el auxiliar de la partida por `FAX.BASEQ`. Los respaldos de 2018 y 2019 contienen la misma partida mexicana con `BREPORTE`, importe cero y sin número de cheque. Falta una partida de cheque con formato aplicable a México. [Bancos](modules/treasury/banking.md#acciones-al-pie-de-conciliar) |
-| Pólizas | Duplicar pasivo | La condición usa `FPOLIZA.POFAMILIA`. La búsqueda por ese campo devolvió cero pólizas vigentes `PASIVO*` en los respaldos de México y Monterrey. **Generación de pasivos** crea la familia requerida. Falta generar el folio en German de pruebas y comprobar el redondeo y el cargo. [Pólizas](modules/accounting/policies.md) |
 | Clientes | Datos fiscales → Act. | Las sesiones de México revisadas, incluida la consulta de un cliente activo, no mostraron **Verifica fiscal**. Se requiere acceso a **Act.** para comprobar su efecto sobre el catálogo local. [Verifica fiscal](modules/accounts-receivable/client-fiscal-verification.md) |
 | Compras | Editar recepción | **Eliminar** comparte la reversión de **Cancelar recepción**. La prueba con `RA09214` verificó la orden, el inventario, el saldo y la póliza. German no ofrece la edición general de Recepciones en `MCONTROL/7`. [Recepciones](modules/purchasing/purchase-receptions.md) |
 | Inventarios | Imprimir EI, SI y TR | La vista previa reproduce la presentación de los PDF históricos EI y SI, incluidos signo de salida y total por partida redondeada. Se comprobó en Chromium con los tres folios del plan y tres referencias impresas. Falta obtener las salidas nativas de los folios del plan en German. [Documentos de inventario](modules/inventories/movement-documents.md) |

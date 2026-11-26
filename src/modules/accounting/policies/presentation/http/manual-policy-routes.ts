@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { policyCents, type ManageManualPolicy } from '../../application/use-cases/manage-manual-policy.js';
 
@@ -26,7 +26,10 @@ const comments = z.strictObject({
   }),
 });
 
-export function createManualPolicyRouter(manual: ManageManualPolicy): Router {
+export function createManualPolicyRouter(
+  manual: ManageManualPolicy,
+  authorizeCancellation?: (id: number, request: Request) => Promise<void>,
+): Router {
   const router = Router();
   router.get('/capture', async (_request, response) => {
     response.set('Cache-Control', 'no-store').json({ data: await manual.prepare() });
@@ -71,6 +74,7 @@ export function createManualPolicyRouter(manual: ManageManualPolicy): Router {
   }
   router.delete('/:policyId', async (request, response) => {
     const { policyId } = params.parse(request.params);
+    await authorizeCancellation?.(policyId, request);
     response.json({ data: await manual.perform(policyId, 'cancel', action.parse(request.body)) });
   });
   return router;

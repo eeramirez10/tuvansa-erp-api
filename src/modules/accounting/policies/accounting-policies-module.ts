@@ -1,4 +1,4 @@
-import type { Router } from 'express';
+import { Router } from 'express';
 import { GetAccountingPolicyByNumber } from './application/use-cases/get-accounting-policy-by-number.js';
 import { GetAccountingPolicyClassifications } from './application/use-cases/get-accounting-policy-classifications.js';
 import { UpdateAccountingPolicyClassification } from './application/use-cases/update-accounting-policy-classification.js';
@@ -6,6 +6,7 @@ import { GetAccountingPolicy } from './application/use-cases/get-accounting-poli
 import { NavigateAccountingPolicy } from './application/use-cases/navigate-accounting-policy.js';
 import { SearchAccountingPolicies } from './application/use-cases/search-accounting-policies.js';
 import { ManageManualPolicy } from './application/use-cases/manage-manual-policy.js';
+import { DuplicatePolicyLiability } from './application/use-cases/duplicate-policy-liability.js';
 import { LegacyMysqlAccountingPoliciesDataSource } from './infrastructure/datasources/legacy-mysql-accounting-policies-data-source.js';
 import { AccountingPoliciesWithLocalPostingsDataSource } from './infrastructure/datasources/accounting-policies-with-local-postings-data-source.js';
 import { AccountingPoliciesRepositoryImpl } from './infrastructure/repositories/accounting-policies-repository-impl.js';
@@ -15,7 +16,11 @@ import { PostgresPolicyClassifications } from './infrastructure/datasources/post
 import { AccountingPoliciesController } from './presentation/http/accounting-policies-controller.js';
 import { createAccountingPoliciesRouter } from './presentation/http/accounting-policies-routes.js';
 import { createManualPolicyRouter } from './presentation/http/manual-policy-routes.js';
+import { createPolicyLiabilityRouter } from './presentation/http/policy-liability-routes.js';
+import { mysqlPolicyLiabilitySupplier } from './infrastructure/datasources/mysql-policy-liability-supplier.js';
 import { BankAccountsWithCatalogDataSource } from '../../treasury/banking/infrastructure/datasources/bank-accounts-with-catalog-data-source.js';
+import { webAccess } from '../../general-data/users/users-module.js';
+import { requireSessionOrigin, sessionToken } from '../../general-data/users/presentation/web-session-http.js';
 
 export const createAccountingPoliciesModule = (): Router => {
   const legacy = new LegacyMysqlAccountingPoliciesDataSource();
@@ -30,7 +35,15 @@ export const createAccountingPoliciesModule = (): Router => {
     new GetAccountingPolicyClassifications(repository),
     new UpdateAccountingPolicyClassification(repository, classifications),
   );
-  return createAccountingPoliciesRouter(controller,
-    createManualPolicyRouter(new ManageManualPolicy(new MysqlManualPolicyReferences(chart), new PostgresManualPolicies(undefined, undefined, chart), repository,
-      (id) => legacy.commentLines(id), (id) => legacy.historicalApplication(id))));
+  const storage = new PostgresManualPolicies(undefined, undefined, chart);
+  const manual = new ManageManualPolicy(new MysqlManualPolicyReferences(chart), storage, repository,
+    (id) => legacy.commentLines(id), (id) => legacy.historicalApplication(id));
+  const liability = new DuplicatePolicyLiability(repository, mysqlPolicyLiabilitySupplier, manual, storage, id => legacy.findById(id));
+  return createAccountingPoliciesRouter(controller, Router()
+    .use(createManualPolicyRouter(manual, async (id, request) => {
+      if (!await storage.hasLiability(id)) return;
+      requireSessionOrigin(request);
+      await webAccess.policyLiabilityActor(sessionToken(request));
+    }))
+    .use(createPolicyLiabilityRouter(liability, token => webAccess.policyLiabilityActor(token))));
 };

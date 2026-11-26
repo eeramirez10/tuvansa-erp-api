@@ -49,30 +49,65 @@ La API devuelve el catálogo, los valores vigentes y `summary.revision`. El PATC
 
 ## Acciones conservadas sin escritura
 
-La consulta histórica conserva Duplicar pasivo e Imprimir. La sección de
+La consulta histórica conserva Imprimir. La sección de
 diario web detalla el alcance de Comentarios, Duplicar, Aplicar y Desaplicar.
 
 La poliza `312608-0438` (`POSEQ=598128`) se utilizo para comprobar encabezado, dos movimientos y balance de cargos/abonos.
 
-**Duplicar pasivo.** `EPASIV#13/4` requiere que `FPOLIZA.POFAMILIA` empiece por
+## Duplicar pasivo
+
+`EPASIV#13/4` requiere que `FPOLIZA.POFAMILIA` empiece por
 `PASIVO`, pide permiso `EPASIV#13/19` y abre `ECIA#11H`. El procedimiento
 usa el plazo y la moneda del proveedor, toma el tipo de cambio de `FCIA` y
 calcula el IVA en proporción a los cargos de cuentas cuyo nombre contiene IVA.
 Escala las partidas por el cociente del importe capturado y el abono de la
-última partida. German mostró «La póliza no es un pasivo» al probar una
-póliza de otra familia. El respaldo México consultado tiene cero pólizas
-vigentes de esta familia. Quedan pendientes el redondeo con un folio elegible
-y el cotejo de la póliza y su cargo en Saldo y Movimientos.
+última partida. Clasificar guarda `POPAR1`. Generación de pasivos
+(`MPASIVOS/31 → EPASIV#1 → MPOLIZAS/24`) crea la familia `PASIVO`.
 
-La revisión derivada por `FPOLIZA.POEST=0`, `POCIA` y
-`POFAMILIA LIKE 'PASIVO%'` encontró cero candidatos de México y Monterrey
-en `tuvansa`, los respaldos de 2018 a 2021 y `pruebas2`. **Clasifica →
-Guardar** modifica `POPAR1`, mientras que la condición de **Duplicar
-pasivo** consulta `POFAMILIA`. La **Generación de pasivos** de
-`MPASIVOS/31` abre `EPASIV#1` e inicia la póliza con la familia `PASIVO`
-mediante `MPOLIZAS/24`. Es la ruta identificada para generar el folio que
-falta en la copia aislada y cotejar redondeo, vencimiento y cargo al
-proveedor.
+En German de pruebas, la póliza mexicana `312502-0713` tenía cargos de
+100.07 y 16.01 y abono de 116.08. Al duplicarla para el proveedor `30026`
+por 58.04 USD el 21 de febrero de 2025, la póliza `312502-0714` calculó
+cargos de 50.04 y 8.01 y un abono de 58.04. El cargo al proveedor
+(`FDOC.DSEQ=346528`, `FAX.ASEQ=578722`, tipo `3`) quedó en 58.04 USD,
+con un subtotal de 50.03, un IVA de 8.01, paridad de 20.4722 y vencimiento
+el 23 de marzo. German registró el cargo y rechazó la aplicación del diario
+por 0.01. Se comprobó la baja de ambos folios y un saldo neto de cero en
+sus movimientos de prueba. La lectura de los efectos fue sobre
+`FPOLIZA`, `FAXCON`, `FDOC` y `FAX` después de operar la interfaz.
+
+La web muestra esos redondeos en la revisión y valida el cuadre antes de
+confirmar. La confirmación guarda un diario aplicado `3JW` y un cargo
+`PVW` en una transacción de PostgreSQL. El cargo aparece en Saldo y
+Movimientos del proveedor, con la moneda, el vencimiento y la póliza
+vinculada. Baja cancela ambos registros en la misma transacción y genera
+un movimiento de reversión por el importe original. El alcance incluye
+el registro y la baja del cargo. La captura de pagos de estos documentos
+queda fuera.
+
+El grupo web requiere `EPASIV#13/19` para las consultas, la confirmación y
+la baja de una póliza vinculada. En la copia consultada esa clave faltaba
+en `FHELP`, por lo que el catálogo de permisos web ofrece la clave con
+acceso denegado hasta que un administrador lo conceda al grupo.
+
+| Método | Ruta relativa a `/api/accounting/policies/:policyId/actions` |
+| --- | --- |
+| GET | `/duplicate-liability` |
+| GET | `/duplicate-liability/preview?date&supplierCode&reference&amount` |
+| POST | `/duplicate-liability` |
+
+La confirmación usa los campos revisados, la revisión, `confirmed: true`
+y un `requestKey` UUID. Una referencia vigente se usa una vez por proveedor
+y el mismo UUID con los mismos datos devuelve el resultado original.
+
+El 26 de noviembre de 2026 se comprobó en Chromium la revisión de
+58.04, la confirmación por 116.08 y la baja desde la póliza resultante.
+La prueba usó el proveedor y catálogo de cuentas de MySQL en lectura
+y un PostgreSQL embebido para las escrituras. La prueba adicional con
+PostgreSQL 17.12 local observó dos sesiones esperando el mismo bloqueo.
+Con un solo UUID ambas recibieron el mismo folio. Con UUID distintos
+y la misma referencia, una confirmó y la otra recibió `409`.
+Una falla al guardar la auditoría revirtió la póliza, las partidas y
+el cargo. El permiso denegado y el cambio de paridad se probaron por HTTP.
 
 ## Pólizas de recepciones web
 
@@ -131,8 +166,8 @@ aplica con `MPASIVOS/99`. El guardado web es derivado de esos procedimientos y
 registra la copia en el diario `3JW…` de PostgreSQL. La copia ordinaria opera
 con pólizas tipo 3, partidas en pesos y las mismas cuentas válidas del diario.
 El auxiliar de CxP, los cheques y las marcas de conciliación pertenecen al
-documento original. El modo de inversión por Ctrl y **Duplicar pasivo**
-requieren sus propias reglas. La vista en Omnis se verificó con `312502-0010`
+documento original. El modo de inversión por Ctrl tiene sus propias
+reglas. La vista en Omnis se verificó con `312502-0010`
 y se cerró desde Cancelar (`bank-inline-policy-audit-33`). Las pruebas de
 escritura web se ejecutaron en una base aislada.
 

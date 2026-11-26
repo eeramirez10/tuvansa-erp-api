@@ -97,8 +97,11 @@ export class ManageManualPolicy {
     }
     const reason = blockReason(current, settings);
     const { revision, canceled, reconciled, applied } = current;
+    const linkedLiability = await this.dataSource.hasLiability?.(id) ?? false;
     return { revision, canceled, reconciled, fiscalStart: settings?.fiscalStart ?? null, fiscalEnd: settings?.fiscalEnd ?? null,
-      canEdit: !reason && !applied, canApply: !reason && !applied, canUnapply: !reason && applied, canDelete: !reason, reason };
+      canEdit: !reason && !applied && !linkedLiability, canApply: !reason && !applied && !linkedLiability,
+      canUnapply: !reason && applied && !linkedLiability, canDelete: !reason,
+      ...(linkedLiability ? { linkedLiability } : {}), reason };
   }
 
   private async prepareHistorical(id: number, settings: ManualPolicySettings | null) {
@@ -183,7 +186,11 @@ export class ManageManualPolicy {
   async preparePosting(input: ManualPolicyInput) {
     const settings = await this.settings();
     const lines = await this.prepareLines(input, settings);
-    return { lines, verify: () => this.verifyReferences(lines, settings) };
+    return { lines, verify: async (lookup?: BankAccountLookup) => {
+      const current = await this.settings();
+      if (!dateAllowed(input.date, current)) throw blocked('Cambió el periodo contable de la póliza.');
+      await this.verifyReferences(lines, current, lookup);
+    } };
   }
 
   async create(raw: ManualPolicyInput) {

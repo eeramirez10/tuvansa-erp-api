@@ -74,6 +74,7 @@ export interface ManualPolicyDocument {
 }
 
 export interface ManualPolicyDataSource {
+  hasLiability?(id: number): Promise<boolean>;
   writable(): boolean;
   find(id: number): Promise<ManualPolicyDocument | null>;
   historicalApplied(id: number): Promise<boolean>;

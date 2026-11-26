@@ -3,7 +3,7 @@ import { ApplicationError } from '../../../../shared/domain/errors/application-e
 import { connectPostgres, type PostgresClient, type PostgresConnectionFactory } from '../../../../shared/infrastructure/database/postgres-pool.js';
 import { migratePostgres, webAccessMigrations } from '../../../../shared/infrastructure/datasources/postgres-schema.js';
 import {
-  accessGroups, effectiveUserSettings, generalDataPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
+  accessGroups, duplicatePolicyLiabilityPermission, effectiveUserSettings, generalDataPermission, salesOrderPermission, userCatalogPermission, webIdentificationPattern,
   type DirectoryUser, type DirectoryUserDetail, type LegacyUserDirectory, type NativeUser, type PermissionChange,
   type UserProfile, type UserSettings, type WebIdentity,
 } from '../domain/user-directory.js';
@@ -142,6 +142,16 @@ export class PostgresWebAccess {
     if (permission?.requiresSupervisor) throw new ApplicationError('Esta acción requiere validación adicional de un supervisor en Omnis.', 'ORDER_SUPERVISOR_REQUIRED', 403);
     if (!permission?.allowed) throw new ApplicationError('El usuario no tiene permiso para autorizar pedidos.', 'ORDER_APPROVER_FORBIDDEN', 403);
     return { webUserId: user.id, ...(user.legacyId ? { userId: user.legacyId } : {}), userName: user.name, userIdentification: user.identification };
+  }
+
+  async policyLiabilityActor(token?: string) {
+    const user = await this.authenticate(token);
+    if (!user) throw sessionRequired();
+    const [permission] = await this.connection(client => this.permissions(client, user.group, [duplicatePolicyLiabilityPermission]));
+    if (!permission?.allowed || permission.requiresSupervisor || (user.access.company && user.access.company !== 1)) {
+      throw new ApplicationError('Tu usuario no tiene permiso para duplicar pasivos en México.', 'POLICY_LIABILITY_FORBIDDEN', 403);
+    }
+    return { id: user.id, legacyId: user.legacyId ?? 0 };
   }
 
   private async consumeAttempt(client: PostgresClient, key: string, limit: number) {

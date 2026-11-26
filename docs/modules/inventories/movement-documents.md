@@ -130,8 +130,19 @@ En Chromium, **Documentos → Imprimir** abrió seis folios con lectura del
 respaldo MySQL y una sesión web de prueba. Se compararon las partidas,
 almacenes, cantidades e importes de la vista previa. Se comprobó la
 invocación de impresión del navegador al confirmar en los seis folios.
-Queda pendiente obtener la salida nativa de `EI1981`, `SI1148` y
-`TR0004` directamente de German.
+El cotejo posterior de los PDF históricos de `EI1664` y `SI1034` confirmó
+los encabezados grises, las líneas verticales de la tabla, el signo
+monetario junto a costo e importe y los recuadros de totales y firmas.
+La vista previa web incorporó esos elementos. En Chrome se repitió la
+impresión simulada de los seis folios, se verificó el total neto cero y
+los dos almacenes de `TR0004`, y `TR0005` conservó el rechazo `422`.
+
+German volvió a mostrar las cuatro partidas de `TR0004`, con 1,526.18
+unidades por cada lado. Con una copia de `FORMATOS.LBR` seleccionada
+como biblioteca de diseño, **Documentos → Imprimir** volvió a mostrar
+**Unable to find format QTUVANSA007** en `MFACT/21`. Queda pendiente
+obtener la salida nativa de `EI1981`, `SI1148` y `TR0004` directamente de
+German.
 
 ### Evidencia histórica de CT
 

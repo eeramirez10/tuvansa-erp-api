@@ -66,6 +66,15 @@ con acceso a **Datos fiscales** en un cliente de prueba. El efecto local
 se debe comprobar mediante una lectura de control antes y después del
 clic, incluyendo `FYG.REGIMENES_DE_CAPITAL` y la ficha fiscal del cliente.
 
+El 26 de noviembre la sesión de México volvió a mostrar la ficha del
+cliente activo hasta **Contactos**. En la biblioteca alterna
+`C:\PROSCAI\PROSCAI.LBR` se identificaron las referencias a **Verifica
+fiscal**, `REGIMENES_DE_CAPITAL` y `Get Reg Capital`. La apertura normal
+de esa biblioteca solicitó la contraseña de PROSCAI antes de exponer la
+ficha. El ajuste de permisos por sí solo no confirmó acceso al botón en
+la biblioteca German disponible. El efecto local de **Act.** sigue sin
+verificarse con una comparación antes y después.
+
 ## Investigación del proveedor (2026-09-14)
 
 La [documentación oficial de PROSCAI](https://ayuda.proscai.com/hc/es-419/articles/13163887156379-Modifica-y-verifica-los-datos-fiscales-de-clientes) describe la validación de datos del receptor ante el SAT, el flujo Ctrl + clic para actualizarlos y errores por RFC no listado, código postal incorrecto o régimen incompatible. También aclara que los asteriscos señalan los regímenes de capital más comunes; esto resuelve su significado general, aunque no el criterio para asignar cada cantidad. El artículo no publica endpoint, autenticación ni algoritmo de CLICFDI4CS. No equivale a un contrato de API.

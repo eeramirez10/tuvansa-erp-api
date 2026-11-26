@@ -345,6 +345,8 @@ Se cerró el panel antes de **Genera liquidación**. La lectura posterior
 confirmó la partida original, el total de 3,581.52 MXN, `DINICIAL=0` y
 ningún folio derivado. En la copia local había 5,866 facturas vigentes de
 México con ruta asignada, todas con sucursal cero en el encabezado.
+Tampoco se encontró una sucursal de entrega distinta de cero y de
+`999999` en sus partidas.
 Para habilitar la confirmación hace falta un caso de México con una
 sucursal de entrega válida y una liquidación que cuadre con la tabla de comisión.
 

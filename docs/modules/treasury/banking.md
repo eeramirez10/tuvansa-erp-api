@@ -373,6 +373,15 @@ La copia `PROSCAI.LBR` que incluye la definición pide contraseña al abrir.
 La vista previa web requiere el PDF con ese formato cargado en una
 biblioteca ejecutable de pruebas.
 
+En la revisión posterior se abrió una copia de `FORMATOS.LBR` desde el
+navegador de formatos. **Make design** permitió seleccionar `QSANMLIL` y
+consultar sus parámetros, con márgenes en cero y unidades en pulgadas.
+**Print report** desde ese navegador no produjo un PDF de referencia.
+Que el formato aparezca en la biblioteca abierta no confirma que
+**Conciliar** pueda resolverlo desde la biblioteca German. Hace falta
+el formato disponible en el contexto del reporte de Bancos o un PDF
+histórico de ese mismo formato.
+
 **Baja** dejó la póliza y sus dos partidas sin aplicar y con importe cero.
 La comparación posterior confirmó que ambas cuentas recuperaron sus saldos
 contables y conservaron sus saldos conciliados. German mantuvo el

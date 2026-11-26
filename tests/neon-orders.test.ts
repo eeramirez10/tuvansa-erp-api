@@ -50,6 +50,7 @@ const legacy: OrdersDataSource = {
 const customer = {id:15331,code:'000001',name:'Cliente',agentCode:'1202',agentName:'Agente',termsDays:30,store:'302',classification:'211',branches:[]};
 const references: OrderReferenceDataSource = {
   productFamilies: async () => [],
+  orderNumberSeries: async () => ({ code: 'P', description: 'PEDIDO MEX', digits: 6, lastNumber: 19405, taxPercentage: 16 }),
   options:async()=>({warehouses:[{code:'01',description:'México'},{code:'02',description:'Otro'}],types:[],agents:[{code:'1202',displayCode:'202',name:'Agente'}]}),
   customer:async()=>customer,searchCustomers:async()=>[],searchProducts:async()=>[],customerById:async()=>customer,productCodeById:async()=> '01300958',hasInvoices:async()=>false,
   product:async()=>({id:13288,code:'01300958',description:'Producto',unit:'M',price:59.05,cost:40,costCurrencyId:1,taxPercentage:16,excisePercentage:0,currencyId:1,stock:50,assigned:0,available:50,weight:16.08,volume:0}),
@@ -154,7 +155,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
   });
   it('creates, reads, edits and deletes local orders without a MySQL write',async()=>{
     const api=make();const created=(await api.create(input)).toPrimitives();
-    expect(created.id).toBe(5000000000);expect(created.number).toBe('NP5000000000');expect(created.totals.total).toBe(68.5);
+    expect(created.id).toBe(5000000000);expect(created.number).toBe('P019406');expect(created.totals.total).toBe(68.5);
     expect(created).toMatchObject({branch:4,exchangeRate:1.2,captureDetails:{boxes:3,commission:2.5,noPartialDeliveries:true,transportation:'Flete de prueba',contact:'Compras',additionalComments:'Entregar por la mañana'}});
     expect((await api.findById(created.id))?.toPrimitives().number).toBe(created.number);
     expect((await api.findByNumber(created.number))?.toPrimitives().id).toBe(created.id);
@@ -190,10 +191,10 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     expect((await api.search({customerOrderNumber:'CAMBIO',offset:0,limit:1})).items[0]?.toPrimitives().id).toBe(10);
     await api.delete(11);const newOrder=(await api.create(input)).toPrimitives();
     const first=await api.search({offset:0,limit:1}),second=await api.search({offset:1,limit:1});
-    expect(first.total).toBe(2); expect(first.items[0]?.toPrimitives().id).toBe(newOrder.id);expect(second.items[0]?.toPrimitives().id).toBe(10);
+    expect(first.total).toBe(2); expect(first.items[0]?.toPrimitives().id).toBe(10);expect(second.items[0]?.toPrimitives().id).toBe(newOrder.id);
     expect(await api.findById(11)).toBeNull();expect(await api.findByNumber('P000011')).toBeNull();
-    expect((await api.findAdjacent(newOrder.id,'next'))?.toPrimitives().id).toBe(10);
-    expect((await api.findAdjacent(10,'previous'))?.toPrimitives().id).toBe(newOrder.id);
+    expect((await api.findAdjacent(newOrder.id,'previous'))?.toPrimitives().id).toBe(10);
+    expect((await api.findAdjacent(10,'next'))?.toPrimitives().id).toBe(newOrder.id);
     expect(forbidden).not.toHaveBeenCalled();
   });
   it('stores inventory differences and conversion without touching legacy counters',async()=>{
@@ -210,11 +211,33 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     const removed=(await db.query<{ordered:string}>('SELECT ordered FROM tuvansa.order_stock_deltas WHERE order_id=10')).rows;
     expect(Number(removed[0]!.ordered)).toBe(-1);expect(forbidden).not.toHaveBeenCalled();
   });
+  it('continues past deleted folios while preserving existing NP folios', async () => {
+    await store.create(async id => base(id, 'NP5000000043'));
+    const api = make();
+    expect((await api.options(1)).types[0]?.nextNumber).toBe('P019406');
+    const first = (await api.create(input)).toPrimitives();
+    expect(first.number).toBe('P019406');
+    await api.delete(first.id);
+    expect((await api.options(1)).types[0]?.nextNumber).toBe('P019407');
+    expect((await api.create(input)).toPrimitives().number).toBe('P019407');
+    expect((await api.findByNumber('NP5000000043'))?.toPrimitives().number).toBe('NP5000000043');
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+  it('refuses to insert an order when the configured folio width is exhausted', async () => {
+    const last = await references.orderNumberSeries(1);
+    const api = new HybridOrdersDataSource(legacy, store, {
+      ...references, orderNumberSeries: async () => ({ ...last, lastNumber: 999999 }),
+    }, { getPanel: async () => null });
+    await expect(api.create(input)).rejects.toMatchObject({ code: 'ORDER_NUMBER_EXHAUSTED' });
+    expect((await db.query('SELECT number FROM tuvansa.orders')).rows).toEqual([]);
+  });
   it('rolls back the order and stock deltas if auditing fails',async()=>{
     failAudit=true;
     await expect(make().create(input)).rejects.toMatchObject({code:'POSTGRES_UNAVAILABLE'});
     expect((await db.query('SELECT * FROM tuvansa.orders')).rows).toHaveLength(0);
     expect((await db.query('SELECT * FROM tuvansa.order_stock_deltas')).rows).toHaveLength(0);
+    failAudit = false;
+    expect((await make().create(input)).toPrimitives().number).toBe('P019406');
   });
   it('rolls back a first legacy copy if validation rejects the edit',async()=>{
     const api=new HybridOrdersDataSource(legacy,store,{...references,hasInvoices:async()=>true},{getPanel:async()=>null});
@@ -427,7 +450,7 @@ describe('Neon orders / real embedded PostgreSQL',()=>{
     const app=express().use(express.json()).use('/api',postgresWriteBoundary)
       .use('/api/sales/orders',createOrdersModule(make(), { verify: async () => ({ userId: 21 }) })).use(errorHandler);
     const result=await request(app).post('/api/sales/orders/capture').send(input).expect(201);
-    expect(result.body.data.number).toBe('NP5000000000');
+    expect(result.body.data.number).toBe('P019406');
     const comments=await request(app).patch(`/api/sales/orders/${result.body.data.id}/actions/comments`)
       .send({exchangeRate:20,collectionCurrency:'DOLARES'}).expect(200);
     expect(comments.body.data).toMatchObject({currencyId:1,exchangeRate:20,captureDetails:{collectionCurrency:'DOLARES'}});

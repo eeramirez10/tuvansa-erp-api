@@ -4,7 +4,7 @@ import { toOrderResponse } from '../dtos/order-response.js';
 
 export class CaptureOrder {
   constructor(private readonly repository: OrderCaptureRepository, private readonly authorizationAccess: OrderAuthorizationAccess) {}
-  options() { return this.repository.options(); }
+  options(companyId?: number) { return this.repository.options(companyId); }
   customer(code: string) { return this.repository.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.repository.searchCustomers(criteria, limit); }
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.repository.searchProducts(criteria, warehouse, limit); }

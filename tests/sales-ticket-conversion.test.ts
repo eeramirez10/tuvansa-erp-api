@@ -56,6 +56,9 @@ vi.mock('../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-ord
     async options() {
       return { warehouses: [{ code: '01', description: 'México' }], types: [], agents: [{ code: '1202', name: 'Ventas' }] };
     }
+    async orderNumberSeries() {
+      return { code: 'P', description: 'PEDIDO MEX', taxPercentage: 16, digits: 6, lastNumber: 19405 };
+    }
     async customer() {
       return { id: 100, code: 'C001', name: 'Cliente de pruebas', agentCode: '1202', agentName: 'Ventas',
         termsDays: 30, classification: '', store: '', branches: [] };

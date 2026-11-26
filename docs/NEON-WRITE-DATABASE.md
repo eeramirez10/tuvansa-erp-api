@@ -39,7 +39,7 @@ Se usa `pg` con un pool de cinco conexiones y una conexión dedicada durante cad
 
 Las eliminaciones son lógicas para conservar trazabilidad. Los folios eliminados permanecen reservados. Las consultas por ID, número, búsqueda, totales de paginación y navegación anterior/siguiente reconocen las versiones locales; no duplican original y copia.
 
-Los pedidos nuevos reciben IDs desde **5 000 000 000**, fuera del rango de los IDs MySQL de 32 bits, y folios **NP5000000000**, etc. No se toca FTIPMV.TINUM. La secuencia PostgreSQL puede dejar huecos después de una operación fallida. El POST heredado permite un número explícito y verifica que no exista en ninguno de los dos orígenes; no coordina escrituras simultáneas de OMNIS con ese folio manual, por lo que se recomienda el alta con folio automático.
+Los pedidos nuevos reciben IDs internos desde **5 000 000 000**, fuera del rango de los IDs MySQL de 32 bits. En la captura de México, el folio visible sigue el tipo **P — PEDIDO MEX**, con el consecutivo reservado al guardar en PostgreSQL. Los folios `NP` creados anteriormente conservan su número. El POST heredado admite un número explícito. La beta usa la web como único emisor de la serie de México y consulta `FTIPMV.TINUM` en MySQL en modo lectura.
 
 Los documentos locales conservan el DTO de pedidos y añaden:
 

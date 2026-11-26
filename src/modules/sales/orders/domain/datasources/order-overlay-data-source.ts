@@ -1,4 +1,5 @@
 import type { OrderProps } from '../entities/order.js';
+import type { OrderNumberSeries } from '../entities/order-number-series.js';
 
 export interface OrderOverlay {
   document: OrderProps;
@@ -13,7 +14,9 @@ export interface OrderOverlayDataSource {
   get(id: number): Promise<OrderOverlay | null>;
   list(): Promise<OrderOverlay[]>;
   authorizationHistory(id: number): Promise<OrderAuthorizationEvent[]>;
-  create(build: (id: number) => Promise<OrderProps>): Promise<OrderProps>;
+  previewNumber(series: OrderNumberSeries): Promise<string>;
+  create(build: (id: number, number?: string) => Promise<OrderProps>,
+    numbering?: OrderNumberSeries | string): Promise<OrderProps>;
   change(id: number, base: OrderProps | null, operation: 'update' | 'delete' | 'convert' | 'assignment' | 'authorization',
     transform: (current: OrderProps, revision: number) => Promise<OrderProps | null>): Promise<OrderOverlay | null>;
 }

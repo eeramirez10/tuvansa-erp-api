@@ -48,6 +48,14 @@ En OMNIS el primer OK ya inserta el pedido. En el frontend, Enter o clic en el p
 
 Se replica el alta ejercitada, con campos, orden de columnas, totales y Comentarios. Los cuatro descuentos globales son editables durante la captura; flete, seguros y sucursal por partida continúan de sólo lectura. Los campos editables de Comentarios se conservan en Neon con procedencia derivada. El mantenimiento antiguo de pedidos (editar/borrar) no debe asumirse equivalente a la contabilidad de inventario del alta nueva.
 
+## Folios de México en la beta
+
+**Pedidos → Nuevo → Número** consulta `GET /api/sales/orders/capture/options?companyId=1`. **Comentarios → OK** guarda por `POST /api/sales/orders/capture?companyId=1`. Omitir `companyId` conserva México como valor predeterminado. Los endpoints validan la compañía mediante el catálogo de inicio.
+
+La lectura adaptada de `FTIPMV` acota por compañía, módulo Pedidos y tipo P. El consecutivo usa el mayor entre `TINUM`, los folios históricos del mismo formato en `FPENC` y los folios registrados en `tuvansa.orders`, incluidas bajas. La comparación de folios y la reserva en PostgreSQL son derivadas. PostgreSQL serializa la asignación por serie y guarda el documento, sus diferencias de inventario y la auditoría en la misma transacción. El ID interno y los folios existentes se conservan. La beta cuenta con la web como único emisor de la serie.
+
+En la copia consultada, `TINUM=19405` y `TICEROS=7` dieron la vista previa `P019406`. Chrome guardó ese folio y lo recuperó por número. PostgreSQL 17 aislado registró dos sesiones esperando por la serie y confirmó `P019407` y `P019408`. Quitar el tipo del catálogo de prueba durante la captura mostró el error en Comentarios y permitió volver a guardar el mismo borrador al restaurarlo.
+
 ## Validación
 
 Lecturas verificadas contra la copia local: almacenes, agente visible 202/interno 1202, cliente 000001, producto 01300958, precio 59.05 e IVA 16 %. SQL funcional capturado anteriormente; **esta implementación no activó general_log**.

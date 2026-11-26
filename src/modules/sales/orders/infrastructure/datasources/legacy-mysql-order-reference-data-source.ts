@@ -1,6 +1,8 @@
 import type { RowDataPacket } from 'mysql2';
 import { env } from '../../../../../config/env.js';
 import { legacyMysqlPool } from '../../../../../shared/infrastructure/database/legacy-mysql-pool.js';
+import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
+import { orderNumberPattern, type OrderNumberSeries } from '../../domain/entities/order-number-series.js';
 import { NotFoundError } from '../../../../../shared/domain/errors/not-found-error.js';
 import { clientCatalogRecord } from '../../../../accounts-receivable/clients/infrastructure/datasources/postgres-client-catalog.js';
 import { catalogProductsById } from '../../../../inventories/products/infrastructure/datasources/product-catalog-references.js';
@@ -12,7 +14,35 @@ import { LegacyMysqlOrderCaptureDataSource } from './legacy-mysql-order-capture-
 export class LegacyMysqlOrderReferenceDataSource implements OrderReferenceDataSource {
   private readonly source = new LegacyMysqlOrderCaptureDataSource();
   constructor(private readonly warehouseCodes: readonly string[] = env.SALES_ORDER_WAREHOUSES) {}
-  options() { return this.source.options(this.warehouseCodes); }
+  options() { return this.source.referenceOptions(this.warehouseCodes); }
+
+  async orderNumberSeries(companyId: number): Promise<OrderNumberSeries> {
+    // Adaptada del alta nativa. La compañía y el módulo identifican el tipo P de México.
+    const [[movement]] = await legacyMysqlPool.execute<(RowDataPacket & {
+      code: string; description: string; counter: number; width: number; taxPercentage: number;
+    })[]>(
+      `SELECT TICLA AS code,TIDESCR AS description,TINUM AS counter,TICEROS AS width,TIIVA0 AS taxPercentage
+       FROM FTIPMV WHERE TIMULTICIA=? AND TIMODULO=3 AND TICLA='P' ORDER BY TISEQ LIMIT 1`, [companyId],
+    );
+    if (!movement) throw new ConflictError('Falta configurar el tipo P — PEDIDO MEX.', 'ORDER_MOVEMENT_MISSING');
+
+    const code = movement.code.trim().toUpperCase();
+    const width = Number(movement.width);
+    const counter = Number(movement.counter);
+    const digits = width - code.length;
+    if (!/^[A-Z]+$/.test(code) || !Number.isInteger(width) || width > 15 || digits < 1
+      || movement.counter == null || !Number.isSafeInteger(counter) || counter < 0) {
+      throw new ConflictError('El formato del tipo de movimiento de pedidos no es válido.', 'ORDER_NUMBER_FORMAT_INVALID');
+    }
+
+    // Derivada. PENUM es un identificador compartido, incluso para folios históricos de otra compañía.
+    const [[historical]] = await legacyMysqlPool.execute<(RowDataPacket & { number: string })[]>(
+      'SELECT PENUM AS number FROM FPENC WHERE PENUM LIKE ? AND PENUM REGEXP ? ORDER BY PENUM DESC LIMIT 1',
+      [`${code}%`, orderNumberPattern(code, digits)],
+    );
+    const lastNumber = Math.max(counter, historical ? Number(historical.number.slice(code.length)) : 0);
+    return { code, description: movement.description, taxPercentage: Number(movement.taxPercentage), digits, lastNumber };
+  }
   customer(code: string) { return this.source.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.source.searchCustomers(criteria, limit); }
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }

@@ -1,9 +1,11 @@
 import type { CaptureOptions, CaptureCustomer, CaptureCustomerMatch, CaptureCustomerSearchCriteria, CaptureProduct, CaptureProductFamily, CaptureProductMatch, CaptureProductSearchCriteria } from '../repositories/order-capture-repository.js';
+import type { OrderNumberSeries } from '../entities/order-number-series.js';
 
 export type OrderAuthorizationCost = Pick<CaptureProduct, 'cost' | 'costCurrencyId'>;
 
 export interface OrderReferenceDataSource {
-  options(): Promise<CaptureOptions>;
+  options(): Promise<Omit<CaptureOptions, 'types'>>;
+  orderNumberSeries(companyId: number): Promise<OrderNumberSeries>;
   customer(code: string): Promise<CaptureCustomer>;
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]>;
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]>;

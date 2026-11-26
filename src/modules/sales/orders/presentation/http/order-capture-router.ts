@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { noSessionCache, requireSessionOrigin, sessionToken } from '../../../../general-data/users/presentation/web-session-http.js';
+import { getCompanyContext } from '../../../../companies/application/company-catalog.js';
 import type { CaptureOrder } from '../../application/use-cases/capture-order.js';
 
 const productCode = z.string().trim().min(1).max(13);
 const productIdentifier = z.string().trim().min(1).max(30);
 const date = z.iso.date();
+const companyQuery = z.object({ companyId: z.coerce.number().int().positive().default(1) });
+const captureCompanyId = (query: unknown) => getCompanyContext(companyQuery.parse(query).companyId).company.id;
 export const captureInputSchema = z.object({
   warehouse: z.string().trim().min(1).max(6), typeCode: z.literal('P'),
   customerCode: z.string().trim().min(1).max(6), customerOrderNumber: z.string().trim().max(30).default(''),
@@ -37,8 +40,8 @@ export const captureInputSchema = z.object({
 
 export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
   const router = Router();
-  router.get('/capture/options', async (_req, res, next) => {
-    try { res.json({ data: await useCase.options() }); } catch (error) { next(error); }
+  router.get('/capture/options', async (req, res, next) => {
+    try { res.json({ data: await useCase.options(captureCompanyId(req.query)) }); } catch (error) { next(error); }
   });
   router.get('/capture/customers', async (req, res, next) => {
     try {
@@ -99,7 +102,11 @@ export const createOrderCaptureRouter = (useCase: CaptureOrder): Router => {
     } catch (error) { next(error); }
   });
   router.post('/capture', async (req, res, next) => {
-    try { res.status(201).json({ data: await useCase.create(captureInputSchema.parse(req.body)) }); } catch (error) { next(error); }
+    try {
+      const companyId = captureCompanyId(req.query);
+      const input = captureInputSchema.parse(req.body);
+      res.status(201).json({ data: await useCase.create({ ...input, companyId }) });
+    } catch (error) { next(error); }
   });
   router.post('/:orderId/actions/quote-conversion', async (req, res, next) => {
     try {

@@ -82,13 +82,11 @@ describe('Alta de pedidos capturada', () => {
   it('consulta sólo los almacenes configurados del catálogo de México', async () => {
     pool.execute
       .mockResolvedValueOnce([[{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }]])
-      .mockResolvedValueOnce([[{ code: 'P', counter: 21063, width: 7, tax0: 16, description: 'PEDIDO MEX' }]])
       .mockResolvedValueOnce([[]]);
 
     const source = new LegacyMysqlOrderReferenceDataSource(['1', '12', '01', '02', '99']);
     await expect(source.options()).resolves.toMatchObject({
       warehouses: [{ code: '01', description: 'SUC. MEXICO' }, { code: '12', description: 'RESGUARDO MTY' }],
-      types: [{ code: 'P', nextNumber: 'P021064', taxPercentage: 16 }],
     });
     const [sql, params] = pool.execute.mock.calls[0]!;
     expect(sql).toContain("WHERE CATTIPO='' AND CATMULTICIA=1 AND CATCIA IN (0,1)");
@@ -96,6 +94,29 @@ describe('Alta de pedidos capturada', () => {
     expect(sql).toContain('ORDER BY CATALM,CATSEQ');
     expect(params).toEqual(['01', '12', '02', '99']);
     expect(pool.getConnection).not.toHaveBeenCalled();
+  });
+
+  it('resuelve el tipo de México y usa un folio histórico superior al contador', async () => {
+    pool.execute
+      .mockResolvedValueOnce([[{ code: 'P', counter: 19405, width: 7, taxPercentage: 16, description: 'PEDIDO MEX' }]])
+      .mockResolvedValueOnce([[{ number: 'P019410' }]]);
+    const source = new LegacyMysqlOrderReferenceDataSource();
+    await expect(source.orderNumberSeries(1)).resolves.toMatchObject({ code: 'P', digits: 6, lastNumber: 19410 });
+    expect(pool.execute).toHaveBeenNthCalledWith(1, expect.stringContaining("TIMULTICIA=? AND TIMODULO=3 AND TICLA='P'"), [1]);
+    expect(pool.execute).toHaveBeenNthCalledWith(2, expect.stringContaining('FROM FPENC'), ['P%', '^P[0-9]{6}$']);
+    pool.execute.mockResolvedValueOnce([[]]);
+    await expect(source.orderNumberSeries(1)).rejects.toMatchObject({ code: 'ORDER_MOVEMENT_MISSING' });
+  });
+
+  it('validates the company for options and order creation', async () => {
+    const repo = repository();
+    const http = request(app(repo));
+    await http.get('/capture/options').expect(200);
+    expect(repo.options).toHaveBeenLastCalledWith(1);
+    await http.get('/capture/options?companyId=2').expect(403);
+    await http.post('/capture?companyId=2').send(input).expect(403);
+    await http.get('/capture/options?companyId=invalid').expect(400);
+    expect(repo.create).not.toHaveBeenCalled();
   });
 
   it('reproduce los importes de 01300958 y admite múltiples partidas con descuento', () => {

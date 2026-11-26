@@ -55,6 +55,7 @@ export interface CaptureLine {
   currencyId?: CaptureCurrencyId | undefined;
 }
 export interface CaptureInput {
+  companyId?: number;
   warehouse: string; typeCode: string; customerCode: string; customerOrderNumber: string;
   orderedAt: string; from: string; dueAt: string; department: string; initial: boolean;
   agentCode: string; termsDays: number; store: string; observations: string;
@@ -69,7 +70,7 @@ export type OrderAuthorizationCommand = OrderAuthorizationActor & {
   revision: number;
 };
 export interface OrderCaptureRepository {
-  options(): Promise<CaptureOptions>;
+  options(companyId?: number): Promise<CaptureOptions>;
   customer(code: string): Promise<CaptureCustomer>;
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number): Promise<CaptureCustomerMatch[]>;
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number): Promise<CaptureProductMatch[]>;

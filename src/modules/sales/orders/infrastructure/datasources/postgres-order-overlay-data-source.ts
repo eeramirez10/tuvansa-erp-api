@@ -1,6 +1,7 @@
 import { normalizeOrderWarehouse } from '../../domain/entities/order-warehouse.js';
 import { customerScope, requireCustomer } from '../../../../../shared/infrastructure/http/customer-scope.js';
 import type { OrderAuthorizationEvent, OrderOverlay, OrderOverlayDataSource } from '../../domain/datasources/order-overlay-data-source.js';
+import { nextOrderNumber, orderNumberPattern, type OrderNumberSeries } from '../../domain/entities/order-number-series.js';
 import type { OrderProps } from '../../domain/entities/order.js';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
@@ -72,11 +73,34 @@ export class PostgresOrderOverlayDataSource implements OrderOverlayDataSource {
       return rows.map(({ entry, authorized }) => ({ ...entry, authorized }));
     });
   }
-  async create(build: (id: number) => Promise<OrderProps>): Promise<OrderProps> {
+  private async seriesNumber(client: PostgresClient, series: OrderNumberSeries): Promise<string> {
+    const { rows: [latest] } = await client.query<{ number: string }>(
+      'SELECT upper(number) AS number FROM tuvansa.orders WHERE upper(number) ~ $1 ORDER BY upper(number) DESC LIMIT 1',
+      [orderNumberPattern(series.code, series.digits)],
+    );
+    return nextOrderNumber(series, latest ? Number(latest.number.slice(series.code.length)) : 0);
+  }
+
+  async previewNumber(series: OrderNumberSeries): Promise<string> {
+    if (!this.configured) return nextOrderNumber(series, 0);
+    await this.initialize();
+    return this.connection(client => this.seriesNumber(client, series));
+  }
+
+  async create(build: (id: number, number?: string) => Promise<OrderProps>,
+    numbering?: OrderNumberSeries | string): Promise<OrderProps> {
     return this.transaction(async c => {
+      // Manual numbers in a series share its lock with automatic allocation.
+      const seriesCode = typeof numbering === 'string'
+        ? /^[A-Z]+(?=[0-9]+$)/.exec(numbering.toUpperCase())?.[0]
+        : numbering?.code;
+      if (seriesCode) {
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended('sales-order-number:' || $1::text,0))", [seriesCode]);
+      }
+      const number = typeof numbering === 'object' ? await this.seriesNumber(c, numbering) : numbering;
       const row = (await c.query<{id:string}>("SELECT nextval('tuvansa.order_ids') AS id")).rows[0]!;
       const id = Number(row.id);
-      const doc = await build(id);
+      const doc = await build(id, number);
       await assertClientCatalogCreditAllowed(c, doc.customer.id);
       await assertActiveCatalogProducts(c, doc.lines.map(({ productId }) => productId));
       await c.query('INSERT INTO tuvansa.orders(id,number,document) VALUES ($1,$2,$3::jsonb)', [id,doc.number,JSON.stringify(doc)]);

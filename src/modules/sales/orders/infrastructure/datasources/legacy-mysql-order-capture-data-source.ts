@@ -38,7 +38,7 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     return rows[0];
   }
 
-  async options(warehouseCodes: readonly string[] = [supportedWarehouse]): Promise<CaptureOptions> {
+  async referenceOptions(warehouseCodes: readonly string[] = [supportedWarehouse]): Promise<Omit<CaptureOptions, 'types'>> {
     // Adaptada del selector de Nuevo. El alcance configurado sustituye el filtro de usuario de Omnis.
     const codes = [...new Set(warehouseCodes.map(normalizeOrderWarehouse))];
     const [rows] = codes.length ? await legacyMysqlPool.execute<Row<CaptureOptions['warehouses'][number]>[]>(
@@ -51,10 +51,15 @@ export class LegacyMysqlOrderCaptureDataSource implements OrderCaptureDataSource
     for (const row of rows) {
       if (!warehouses.has(row.code)) warehouses.set(row.code, { code: row.code, description: row.description });
     }
-    const movement = await this.movement(legacyMysqlPool, 'P');
     const [agents] = await legacyMysqlPool.execute<Row<{code: string; displayCode: string; name: string}>[]>(
       "SELECT AGTNUM AS code,AGNUM AS displayCode,AGDESCR AS name FROM FAG WHERE AGT='1' AND AGTIPO IN (0,1) ORDER BY AGTNUM");
-    return { warehouses: [...warehouses.values()], agents, types: [{ code: movement.code, description: movement.description, nextNumber: nextNumber(movement), taxPercentage: Number(movement.tax0) }] };
+    return { warehouses: [...warehouses.values()], agents };
+  }
+
+  async options(): Promise<CaptureOptions> {
+    const references = await this.referenceOptions();
+    const movement = await this.movement(legacyMysqlPool, 'P');
+    return { ...references, types: [{ code: movement.code, description: movement.description, nextNumber: nextNumber(movement), taxPercentage: Number(movement.tax0) }] };
   }
 
   private async readCustomer(db: Db, code: string, unblocked = false): Promise<CaptureCustomer> {

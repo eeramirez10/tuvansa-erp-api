@@ -3,7 +3,7 @@ import type { CaptureCustomerSearchCriteria, CaptureInput, CaptureProductSearchC
 
 export class OrderCaptureRepositoryImpl implements OrderCaptureRepository {
   constructor(private readonly source: OrderCaptureDataSource) {}
-  options() { return this.source.options(); }
+  options(companyId?: number) { return this.source.options(companyId); }
   customer(code: string) { return this.source.customer(code); }
   searchCustomers(criteria: CaptureCustomerSearchCriteria, limit: number) { return this.source.searchCustomers(criteria, limit); }
   searchProducts(criteria: CaptureProductSearchCriteria, warehouse: string, limit: number) { return this.source.searchProducts(criteria, warehouse, limit); }

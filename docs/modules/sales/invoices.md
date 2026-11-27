@@ -413,9 +413,22 @@ La vista previa devuelve `ticketConversion` junto con `readOnly` y
 `reason`. La confirmación recibe `expectedVersion` y `requestKey`.
 Se admite la remisión web de México en pesos, con partidas positivas,
 un cargo original sin movimientos PA y tipos `FA` y `FE` compatibles
-en `FTIPMV`. La fecha de emisión se toma en `America/Mexico_City`.
-El mismo envío recupera el resultado al reintentar. Una revisión
+en `FTIPMV`. La vista previa muestra en `issuedAt` la fecha actual
+de `America/Mexico_City`. Se puede confirmar dentro del ejercicio abierto,
+incluidos sus límites. El POST vuelve a consultar el ejercicio antes de
+asignar folio y devuelve `422 SALES_TICKET_CONVERSION_DATE_INVALID`
+si falta el periodo o la fecha queda fuera de él. El mismo envío recupera
+el resultado al reintentar, incluso tras un cambio de ejercicio. Una revisión
 vencida devuelve `409`.
+
+En la regresión del 27/11/2026, Chrome mostró la fecha propuesta y
+deshabilitó **Confirmar** con el ejercicio 2025 abierto. Con el ejercicio
+vigente en la misma base desechable PGlite, se surtieron dos de tres unidades
+y se registró `FEW00000001` pendiente de timbrar. Se verificaron un solo
+cargo de $116.00 y una sola salida de dos unidades. El cobro de $40.00 dejó
+un saldo de $76.00 y la reversión lo devolvió a $116.00. Ambas pólizas
+quedaron aplicadas y cuadradas por $40.00. El escenario de tres sesiones en
+`tests/sales-ticket-conversion.test.ts` reproduce el flujo por HTTP.
 
 La numeración `FEW` y el vínculo con `FAW` quedan en
 `tuvansa.sales_ticket_conversions`. Facturación resuelve ambos folios

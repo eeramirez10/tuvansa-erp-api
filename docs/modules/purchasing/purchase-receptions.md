@@ -177,6 +177,10 @@ La confirmación comparte la revisión, las validaciones y la transacción de
 la acción en la ficha. **Gastos múltiples** conserva su propia reversión en
 la ficha.
 
+Para un producto activo que se dio de alta en el catálogo web, la cancelación
+usa una base de existencias heredadas de cero. La disponibilidad en el almacén
+se valida con los movimientos y las asignaciones guardados en PostgreSQL.
+
 Se recorrió la barra en Chromium con `RA09214` y PostgreSQL embebido. Se
 comprobó el saldo cero, la contrapartida K, la póliza balanceada por
 1,013.03, el regreso de seis unidades al pendiente de `OA05036`, la salida

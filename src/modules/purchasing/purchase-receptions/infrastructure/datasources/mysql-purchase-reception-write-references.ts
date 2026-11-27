@@ -147,8 +147,18 @@ export class MysqlPurchaseReceptionWriteReferences implements PurchaseReceptionW
     };
   }
 
-  inventory(warehouse: string, productIds: number[]): ReturnType<ReceiptCancellationReferences['inventory']> {
-    return readLegacySaleStock(warehouse, productIds);
+  async inventory(warehouse: string, productIds: number[]): ReturnType<ReceiptCancellationReferences['inventory']> {
+    const localIds = productIds.filter(isNewCatalogProduct);
+    const [stock, catalog] = await Promise.all([
+      readLegacySaleStock(warehouse, productIds.filter((id) => !isNewCatalogProduct(id))),
+      catalogProductsById(localIds),
+    ]);
+    for (const [productId, { document, deleted }] of catalog) {
+      if (!deleted && document.isActive) {
+        stock.set(productId, { productId, unit: document.classification.unit.code, onHand: 0, assigned: 0 });
+      }
+    }
+    return stock;
   }
 
   async context(companyId: number, orderId: number): Promise<PurchaseReceptionWriteContext | null> {

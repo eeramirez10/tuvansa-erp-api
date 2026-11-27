@@ -4,6 +4,7 @@ import { currentAdjustmentLayers, inactivePepsOrder } from '../src/modules/inven
 import { MovementsWithLocalDocumentsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/movements-with-local-documents-data-source.js';
 import { PostgresInventoryAdjustmentsDataSource } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-adjustments.js';
 import { inventoryPepsCostsOn } from '../src/modules/inventories/movements/infrastructure/datasources/postgres-inventory-peps-cost.js';
+import * as productCatalog from '../src/modules/inventories/products/infrastructure/datasources/product-catalog-references.js';
 import { purchaseOrderPieceIdStart, type PurchaseOrderPiece } from '../src/modules/purchasing/purchase-orders/domain/datasources/purchase-order-pieces-data-source.js';
 import { PurchaseOrder, type PurchaseOrderProps } from '../src/modules/purchasing/purchase-orders/domain/entities/purchase-order.js';
 import { LegacyMysqlPurchaseOrderEditDataSource } from '../src/modules/purchasing/purchase-orders/infrastructure/datasources/legacy-mysql-purchase-order-edit-data-source.js';
@@ -419,6 +420,31 @@ it('cancels a layered RW only after its exact PEPS lot is fully restored', async
     await db.close();
   }
 }, 20000);
+
+it('usa inventario heredado cero únicamente para productos locales activos al preparar la cancelación', async () => {
+  const localId = productCatalog.firstLocalCatalogProductId;
+  const legacyStock = { productId: 7, unit: 'PZ', onHand: 12, assigned: 3 };
+  const readLegacy = vi.spyOn(salesStock, 'readLegacySaleStock').mockResolvedValue(new Map([[7, legacyStock]]));
+  const document = { isActive: true, classification: { unit: { code: 'PZ' } } } as productCatalog.CatalogReference['document'];
+  const readCatalog = vi.spyOn(productCatalog, 'catalogProductsById').mockResolvedValue(new Map([
+    [localId, { document, deleted: false, revision: 1 }],
+    [localId + 1, { document, deleted: true, revision: 1 }],
+    [localId + 2, { document: { ...document, isActive: false }, deleted: false, revision: 1 }],
+  ]));
+  const references = new MysqlPurchaseReceptionWriteReferences(
+    new LegacyMysqlPurchaseOrderEditDataSource(new LegacyMysqlPurchaseOrdersDataSource()), new PostgresPurchaseOrderEdits(),
+  );
+  try {
+    expect(await references.inventory('01', [7, localId, localId + 1, localId + 2, localId + 3])).toEqual(new Map([
+      [7, legacyStock], [localId, { productId: localId, unit: 'PZ', onHand: 0, assigned: 0 }],
+    ]));
+    expect(readLegacy).toHaveBeenCalledWith('01', [7]);
+    expect(readCatalog).toHaveBeenCalledWith([localId, localId + 1, localId + 2, localId + 3]);
+  } finally {
+    readCatalog.mockRestore();
+    readLegacy.mockRestore();
+  }
+});
 
 it('registra el pedimento, aplica incrementables al arancel y conserva la trazabilidad al anular', async () => {
   const db = new PGlite();

@@ -63,7 +63,8 @@ La vista previa web cubre EI, SI y TR vigentes de México con sus formatos
 configurados. Relee el folio con sus partidas en el orden de la ficha, conserva
 el signo de la cantidad y calcula el importe como cantidad por costo.
 El pedimento, la fecha y la aduana se resuelven mediante el `LOSEQ` histórico
-o el identificador de la capa PostgreSQL. El navegador abre su diálogo de
+o el identificador de la capa PostgreSQL. La API devuelve la fecha como
+texto ISO, también al consultar `FLOTES.LOFECHA` en MySQL 5.1. El navegador abre su diálogo de
 impresión al confirmar la vista previa. En TR muestra el almacén origen
 desde `FDOC.DREFERELLOS`, el destino desde `FDOC.DALMACEN` y el almacén de
 cada partida. La operación es de lectura.

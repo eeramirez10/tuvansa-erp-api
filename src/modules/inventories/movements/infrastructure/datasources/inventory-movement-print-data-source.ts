@@ -47,7 +47,7 @@ export class InventoryMovementPrintDataSource implements InventoryMovementPrintR
     const local = ids.filter(isLocalInventoryLayerId);
     // Derivada. El desglose de pedimento se vincula a la capa conservada en la partida.
     const [rows] = historical.length ? await legacyMysqlPool.execute<(RowDataPacket & CustomsRow)[]>(
-      `SELECT LOSEQ AS id, TRIM(LOPEDIM) AS entry, NULLIF(DATE(LOFECHA),'1900-12-31') AS date,
+      `SELECT LOSEQ AS id, TRIM(LOPEDIM) AS entry, NULLIF(DATE_FORMAT(LOFECHA,'%Y-%m-%d'),'1900-12-31') AS date,
          TRIM(LOADUANA) AS office FROM FLOTES WHERE LOSEQ IN (${historical.map(() => '?').join(',')})`,
       historical,
     ) : [[]];

@@ -2,12 +2,22 @@ import { createHash } from 'node:crypto';
 import { ApplicationError } from '../../../../../shared/domain/errors/application-error.js';
 import { ConflictError } from '../../../../../shared/domain/errors/conflict-error.js';
 import type {
-  SalesTicketConversionDataSource, SalesTicketConversionInput, SalesTicketConversionPreview, SalesTicketConversionSource,
+  SalesTicketConversionDataSource, SalesTicketConversionInput, SalesTicketConversionPreview,
+  SalesTicketConversionSettings, SalesTicketConversionSource,
 } from '../../domain/datasources/sales-ticket-conversion-data-source.js';
 
 const mexicoDate = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' });
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const disabled = 'La configuración de México debe permitir la conversión de FA a FE.';
+
+function fiscalDateReason({ fiscalStart, fiscalEnd }: SalesTicketConversionSettings, date: string) {
+  if (!fiscalStart || fiscalStart < '1901-01-01' || !fiscalEnd || fiscalEnd < fiscalStart) {
+    return 'No está configurado el ejercicio contable de México.';
+  }
+  return date < fiscalStart || date > fiscalEnd
+    ? `La fecha de emisión debe estar dentro del ejercicio contable de México (${fiscalStart} a ${fiscalEnd}).`
+    : null;
+}
 
 function reasonFor({ invoice, charge, paymentRevision, canceled, result }: SalesTicketConversionSource) {
   if (result) return 'La remisión ya se convirtió a factura.';
@@ -33,7 +43,7 @@ function versionOf({ invoice, charge, paid, paymentRevision }: SalesTicketConver
 export class ConvertSalesTicket {
   constructor(
     private readonly storage: SalesTicketConversionDataSource,
-    private readonly enabled: () => Promise<boolean>,
+    private readonly settings: () => Promise<SalesTicketConversionSettings | null>,
     private readonly today = () => mexicoDate.format(),
   ) {}
 
@@ -41,12 +51,17 @@ export class ConvertSalesTicket {
     const source = await this.storage.source(invoiceId);
     if (!source) return null;
     const { invoice, charge, paid, result } = source;
-    const reason = reasonFor(source) ?? (await this.enabled() ? null : disabled);
+    const issuedAt = result?.issuedAt ?? this.today();
+    let reason = reasonFor(source);
+    if (!reason) {
+      const settings = await this.settings();
+      reason = settings ? fiscalDateReason(settings, issuedAt) : disabled;
+    }
     return {
       preview: {
-        sourceNumber: invoice.number, targetType: 'FE', total: invoice.totals.total,
+        sourceNumber: invoice.number, targetType: 'FE', issuedAt, total: invoice.totals.total,
         balance: Math.max(0, Number((charge - paid).toFixed(2))), currency: invoice.currency.name,
-        version: reason ? null : versionOf(source, this.today()), result,
+        version: reason ? null : versionOf(source, issuedAt), result,
       },
       reason,
     };
@@ -56,12 +71,15 @@ export class ConvertSalesTicket {
     return this.storage.convert(invoiceId, requestKey, hash([invoiceId, expectedVersion]), async (source) => {
       if (source.result) throw new ConflictError('La remisión ya se convirtió a factura.', 'SALES_TICKET_ALREADY_CONVERTED');
       const date = this.today();
+      const settings = await this.settings();
+      const dateReason = settings && fiscalDateReason(settings, date);
+      if (dateReason) throw new ApplicationError(dateReason, 'SALES_TICKET_CONVERSION_DATE_INVALID', 422);
       if (versionOf(source, date) !== expectedVersion) {
         throw new ConflictError('La remisión cambió. Vuelve a consultar la vista previa.', 'SALES_TICKET_CONVERSION_STALE');
       }
       const reason = reasonFor(source);
       if (reason) throw new ConflictError(reason, 'SALES_TICKET_CONVERSION_INELIGIBLE');
-      if (!await this.enabled()) throw new ApplicationError(disabled, 'SALES_TICKET_CONVERSION_CONFIGURATION', 422);
+      if (!settings) throw new ApplicationError(disabled, 'SALES_TICKET_CONVERSION_CONFIGURATION', 422);
       return date;
     });
   }

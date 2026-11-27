@@ -7,7 +7,7 @@ import type { env } from '../src/config/env.js';
 import { webAccess } from '../src/modules/general-data/users/users-module.js';
 import { ConvertSalesTicket } from '../src/modules/sales/invoicing/application/use-cases/convert-sales-ticket.js';
 import { CreateInvoiceFromOrder } from '../src/modules/sales/invoicing/application/use-cases/create-invoice-from-order.js';
-import type { SalesTicketConversionSource } from '../src/modules/sales/invoicing/domain/datasources/sales-ticket-conversion-data-source.js';
+import type { SalesTicketConversionDataSource, SalesTicketConversionSettings, SalesTicketConversionSource } from '../src/modules/sales/invoicing/domain/datasources/sales-ticket-conversion-data-source.js';
 import { postInvoiceFromOrder } from '../src/modules/sales/invoicing/domain/entities/invoice-from-order.js';
 import { PostgresSalesRemissions } from '../src/modules/sales/invoicing/infrastructure/datasources/postgres-sales-remissions.js';
 import type { OrderProps } from '../src/modules/sales/orders/domain/entities/order.js';
@@ -16,6 +16,7 @@ import type { PostgresConnectionFactory } from '../src/shared/infrastructure/dat
 
 const runtime = vi.hoisted(() => ({
   connect: vi.fn<PostgresConnectionFactory>(), enabled: true,
+  fiscal: null as SalesTicketConversionSettings | null,
 }));
 
 vi.mock('../src/config/env.js', async (importOriginal) => {
@@ -28,14 +29,31 @@ vi.mock('../src/shared/infrastructure/database/postgres-pool.js', async (importO
 }));
 
 vi.mock('../src/shared/infrastructure/database/legacy-mysql-pool.js', () => ({
-  legacyMysqlPool: { execute: async (sql: string) => {
+  legacyMysqlPool: { query: async (sql: string) => {
+    if (sql.includes('FROM FBENC WHERE BCOD IN')) return [[], []];
+    throw new Error('Unexpected legacy query');
+  }, execute: async (sql: string) => {
     if (sql.startsWith('SELECT') && sql.includes('FROM FPENC')) return [[], []];
     if (sql.includes('AS onHand') && sql.includes('FROM FINV I LEFT JOIN FALM')) {
       return [[{ productId: 7, unit: 'PZ', onHand: 20, assigned: 0 }], []];
     }
-    if (!sql.includes('JOIN FTIPMV fe') || !sql.startsWith('SELECT')) throw new Error('Unexpected legacy query');
-    return [runtime.enabled ? [{ enabled: 1 }] : [], []];
+    if (sql.includes('JOIN FTIPMV fe') && sql.startsWith('SELECT')) {
+      return [runtime.enabled ? [runtime.fiscal ?? { fiscalStart: null, fiscalEnd: null }] : [], []];
+    }
+    if (sql.includes('FROM FCIA') && sql.includes('SUBSTRING(CIAPLUGS,4,1)')) {
+      return [runtime.fiscal ? [runtime.fiscal] : [], []];
+    }
+    throw new Error('Unexpected legacy query');
   } },
+}));
+
+vi.mock('../src/modules/accounts-receivable/clients/infrastructure/datasources/mysql-customer-collection-references.js', () => ({
+  MysqlCustomerCollectionReferences: class {
+    async settings() {
+      return { ...runtime.fiscal, policyType: '1', clientAccount: '1105001', clientAccountName: 'Clientes',
+        bankAccounts: [{ id: 6610, code: '1102100001', name: 'Cuenta de prueba' }] };
+    }
+  },
 }));
 
 vi.mock('../src/modules/general-data/users/infrastructure/legacy-user-directory.js', () => {
@@ -75,7 +93,7 @@ vi.mock('../src/modules/sales/orders/infrastructure/datasources/legacy-mysql-ord
 vi.mock('../src/modules/sales/invoicing/infrastructure/datasources/mysql-invoice-from-order-references.js', () => ({
   MysqlInvoiceFromOrderReferences: class {
     async context() {
-      return { fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31', reason: null, vat: 16, customerTermsDays: 30,
+      return { ...runtime.fiscal, reason: null, vat: 16, customerTermsDays: 30,
         creditLimit: 1000, creditBalance: 0, products: new Map([[7, { id: 7, code: 'A', unit: 'PZ', package: '', family: '',
           cost: 25, legacyOnHand: 20, legacyAssigned: 0, supported: true }]]) };
     }
@@ -84,6 +102,11 @@ vi.mock('../src/modules/sales/invoicing/infrastructure/datasources/mysql-invoice
 
 const originalDate = '2025-11-20';
 const currentDate = () => new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeZone: 'America/Mexico_City' }).format();
+const fiscal2025 = { fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31' };
+const currentFiscal = () => {
+  const year = currentDate().slice(0, 4);
+  return { fiscalStart: `${year}-01-01`, fiscalEnd: `${year}-12-31` };
+};
 const root = '/api/sales/invoices';
 const previewPath = (id: number) => `${root}/${id}/summaries/ticket-to-invoice`;
 
@@ -150,6 +173,34 @@ it('propone la fecha de México sólo dentro del ejercicio fiscal, incluidos amb
   } finally { vi.useRealTimers(); }
 });
 
+it('valida el ejercicio de conversión en las fechas límite de México', async () => {
+  const source = { invoice: {
+    folio: '', cfdStatus: '0', movementType: 'FA', currency: { id: 1, exchangeRate: 1 },
+    dates: { issuedAt: '2025-01-01' }, totals: { total: 116, freight: 0, insurance: 0, other: 0 },
+    lines: [{ fulfilledQuantity: 2 }],
+  }, charge: 116, paid: 0, paymentRevision: 1, canceled: false, result: null } as SalesTicketConversionSource;
+  const convert = vi.fn<SalesTicketConversionDataSource['convert']>(async (_id, _key, _fingerprint, prepare) => {
+    const issuedAt = await prepare(source);
+    return { invoiceId: 1, sourceNumber: 'FAW00000001', number: 'FEW00000001', issuedAt };
+  });
+  let issuedAt = '2025-01-01';
+  const command = new ConvertSalesTicket({ source: async () => source, convert }, async () => fiscal2025, () => issuedAt);
+  for (const [date, allowed] of [
+    ['2024-12-31', false], ['2025-01-01', true], ['2025-12-31', true], ['2026-01-01', false],
+  ] as const) {
+    issuedAt = date;
+    const result = await command.preview(1);
+    expect(result?.preview.issuedAt).toBe(date);
+    expect(Boolean(result?.preview.version)).toBe(allowed);
+    expect(result?.reason).toEqual(allowed ? null : expect.stringContaining('ejercicio contable'));
+  }
+  issuedAt = '2025-12-31';
+  const eligible = await command.preview(1);
+  issuedAt = '2026-01-01';
+  await expect(command.execute(1, { requestKey: randomUUID(), expectedVersion: eligible!.preview.version! }))
+    .rejects.toMatchObject({ code: 'SALES_TICKET_CONVERSION_DATE_INVALID' });
+});
+
 it('captura, autoriza, remite parcialmente y factura un pedido con tres sesiones web', async () => {
   const db = new PGlite();
   try {
@@ -161,6 +212,9 @@ it('captura, autoriza, remite parcialmente y factura un pedido con tres sesiones
       release() {},
     }));
     runtime.enabled = true;
+    const fiscal = currentFiscal();
+    const saleDate = currentDate();
+    runtime.fiscal = fiscal;
     const api = request(createApp());
     const password = 'Prueba#6';
     const change = (verb: 'post' | 'patch', path: string, cookie?: string) => {
@@ -191,7 +245,7 @@ it('captura, autoriza, remite parcialmente y factura un pedido con tres sesiones
 
     const orders = '/api/sales/orders';
     const { body: { data: order } } = await change('post', `${orders}/capture`, seller.session).send({
-      warehouse: '01', typeCode: 'P', customerCode: 'C001', orderedAt: originalDate, from: originalDate, dueAt: originalDate,
+      warehouse: '01', typeCode: 'P', customerCode: 'C001', orderedAt: saleDate, from: saleDate, dueAt: saleDate,
       agentCode: '1202', termsDays: 30, store: '', documentKind: 'order',
       lines: [{ productCode: 'A', quantity: 3, price: 50 }],
     }).expect(201);
@@ -206,15 +260,22 @@ it('captura, autoriza, remite parcialmente y factura un pedido con tres sesiones
       .send({ lines: [{ lineId: order.lines[0].id, assigned: 3 }] }).expect(200);
     const remissions = `${root}/from-order`;
     const { body: { data: ready } } = await api.get(remissions).set('Cookie', biller.session).query({ orderNumber: order.number }).expect(200);
-    expect(ready).toMatchObject({ canWrite: true, fiscalStart: '2025-01-01', fiscalEnd: '2025-12-31', lines: [{ maximum: 3 }] });
-    const issue = { orderNumber: order.number, revision: ready.revision, issuedAt: originalDate,
+    expect(ready).toMatchObject({ canWrite: true, ...fiscal, lines: [{ maximum: 3 }] });
+    const issue = { orderNumber: order.number, revision: ready.revision, issuedAt: saleDate,
       requestKey: randomUUID(), lines: [{ orderLineId: order.lines[0].id, quantity: 2 }] };
-    await change('post', remissions, biller.session).send({ ...issue, issuedAt: '2026-01-01' }).expect(422);
+    await change('post', remissions, biller.session).send({ ...issue, issuedAt: '1901-01-01' }).expect(422);
     const { body: { data: posted } } = await change('post', remissions, biller.session).send(issue).expect(201);
     expect(posted).toMatchObject({ orderComplete: false, invoice: { orderNumber: order.number, totals: { total: 116 } } });
     expect((await change('post', remissions, biller.session).send(issue).expect(201)).body.data).toEqual(posted);
 
     const { invoice } = posted;
+    if (saleDate > fiscal2025.fiscalEnd) {
+      runtime.fiscal = fiscal2025;
+      const blocked = await api.get(previewPath(invoice.id)).set('Cookie', biller.session).expect(200);
+      expect(blocked.body.data).toMatchObject({ readOnly: true, reason: expect.stringContaining('ejercicio contable'),
+        ticketConversion: { issuedAt: saleDate, version: null, result: null } });
+      runtime.fiscal = fiscal;
+    }
     const { body: { data: offer } } = await api.get(previewPath(invoice.id)).set('Cookie', biller.session).expect(200);
     const conversion = { expectedVersion: offer.ticketConversion.version, requestKey: randomUUID() };
     const { body: { data: converted } } = await change('post', previewPath(invoice.id), biller.session).send(conversion).expect(201);
@@ -236,7 +297,28 @@ it('captura, autoriza, remite parcialmente y factura un pedido con tres sesiones
     expect(charges.rows).toEqual([{ charge: 116 }]);
     const auxiliary = await api.get(`${root}/${invoice.id}/actions/auxiliary`).set('Cookie', biller.session).expect(200);
     expect(auxiliary.body.data).toMatchObject({ summary: { charges: 116, credits: 0, balance: 116 }, items: [{ amount: 116 }] });
+
+    const collectionPath = `/api/accounts-receivable/clients/100/collections/${invoice.id}`;
+    const readyCollection = await api.get(collectionPath).set('Cookie', biller.session).expect(200);
+    expect(readyCollection.body.data).toMatchObject({ number: converted.number, remaining: 116, canWrite: true });
+    const { body: { data: collection } } = await change('post', collectionPath, biller.session).send({
+      requestKey: randomUUID(), revision: readyCollection.body.data.revision, bankAccountId: 6610,
+      date: converted.issuedAt, amount: 40, description: 'Prueba FEW', reference: 'QA-FEW',
+    }).expect(201);
+    expect(collection).toMatchObject({ remissionNumber: converted.number, remaining: 76 });
+    const reversalPath = `/api/accounts-receivable/clients/100/collections/${collection.id}/reversal`;
+    const { body: { data: reversal } } = await change('post', reversalPath, biller.session).send({
+      requestKey: randomUUID(), date: converted.issuedAt, reason: 'Cierre de prueba FEW', confirmed: true,
+    }).expect(201);
+    for (const entry of [collection, reversal]) {
+      const { body: { data: policy } } = await api.get(`/api/accounting/policies/${entry.id}`).set('Cookie', biller.session).expect(200);
+      expect(policy).toMatchObject({ number: entry.policyNumber, applied: true, totals: { debit: 40, credit: 40, difference: 0 } });
+    }
+    const closed = await api.get(collectionPath).set('Cookie', biller.session).expect(200);
+    expect(closed.body.data).toMatchObject({ number: converted.number, remaining: 116 });
+    expect((await db.query('SELECT quantity::float8 FROM tuvansa.sales_remission_inventory')).rows).toEqual([{ quantity: -2 }]);
   } finally {
+    runtime.fiscal = null;
     await db.close();
   }
 }, 30_000);
@@ -255,6 +337,7 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
   });
   runtime.connect.mockImplementation(connect);
   runtime.enabled = true;
+  runtime.fiscal = currentFiscal();
   try {
     const { invoice, order } = await postFirstRemission(connect);
     const api = request(createApp((_request, _response, next) => next()));
@@ -278,7 +361,7 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
 
     const preview = await api.get(path).expect(200);
     expect(preview.body.data).toMatchObject({ readOnly: false, ticketConversion: {
-      sourceNumber: invoice.number, targetType: 'FE', total: 116, balance: 116, currency: 'PESOS', result: null,
+      sourceNumber: invoice.number, targetType: 'FE', issuedAt: currentDate(), total: 116, balance: 116, currency: 'PESOS', result: null,
     } });
     const input = { expectedVersion: preview.body.data.ticketConversion.version, requestKey: randomUUID() };
     await api.post(path).send({ ...input, number: 'FE0001234' }).expect(400);
@@ -294,6 +377,18 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
     expect(invalidSetup.body.error.code).toBe('SALES_TICKET_CONVERSION_CONFIGURATION');
     expect(await conversionCount()).toBe(0);
     runtime.enabled = true;
+    runtime.fiscal = { fiscalStart: '1900-01-01', fiscalEnd: '1900-12-31' };
+    const noPeriod = await api.get(path).expect(200);
+    expect(noPeriod.body.data).toMatchObject({ readOnly: true, reason: expect.stringContaining('No está configurado'),
+      ticketConversion: { version: null } });
+    runtime.fiscal = currentDate() > fiscal2025.fiscalEnd ? fiscal2025 : { fiscalStart: '1901-01-01', fiscalEnd: '1901-12-31' };
+    const periodBlocked = await api.get(path).expect(200);
+    expect(periodBlocked.body.data).toMatchObject({ readOnly: true, ticketConversion: { version: null } });
+    const closedPeriod = await api.post(path).send(input).expect(422);
+    expect(closedPeriod.body.error.code).toBe('SALES_TICKET_CONVERSION_DATE_INVALID');
+    expect(await conversionCount()).toBe(0);
+    expect(await raw()).toEqual(origin);
+    runtime.fiscal = currentFiscal();
     failCommit = true;
     await api.post(path).send(input).expect(503);
     expect(await conversionCount()).toBe(0);
@@ -302,7 +397,9 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
     const first = await api.post(path).send(input).expect(201).expect('Cache-Control', 'no-store');
     const result = first.body.data;
     expect(result).toMatchObject({ invoiceId: invoice.id, sourceNumber: invoice.number, issuedAt: currentDate(), number: expect.stringMatching(/^FEW\d{8}$/) });
+    runtime.fiscal = null;
     expect((await api.post(path).send(input).expect(201)).body.data).toEqual(result);
+    runtime.fiscal = currentFiscal();
     const reuse = await api.post(path).send({ ...input, expectedVersion: 'f'.repeat(64) }).expect(409);
     expect(reuse.body.error.code).toBe('SALES_TICKET_CONVERSION_REQUEST_REUSED');
     const second = await api.post(path).send({ ...input, requestKey: randomUUID() }).expect(409);
@@ -326,7 +423,7 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
 
     const previewSource: SalesTicketConversionSource = { invoice, charge: 116, paid: 0, paymentRevision: 1, canceled: false, result: null };
     const source = vi.fn<() => Promise<SalesTicketConversionSource | null>>();
-    const command = new ConvertSalesTicket({ source, convert: vi.fn() }, async () => true);
+    const command = new ConvertSalesTicket({ source, convert: vi.fn() }, async () => fiscal2025);
     for (const [state, reason] of [
       [{ ...previewSource, canceled: true }, /cancelada/],
       [{ ...previewSource, invoice: { ...invoice, cfdStatus: '3' } }, /estado fiscal/],
@@ -340,6 +437,7 @@ it('convierte una FAW en Facturación y conserva la remisión, el surtido y el c
   } finally {
     runtime.connect.mockReset();
     runtime.enabled = true;
+    runtime.fiscal = null;
     await db.close();
   }
 }, 25_000);

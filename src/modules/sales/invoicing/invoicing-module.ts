@@ -21,7 +21,7 @@ import { LegacyMysqlInvoicePanelsDataSource } from './infrastructure/datasources
 import { LegacyMysqlInvoicesDataSource } from './infrastructure/datasources/legacy-mysql-invoices-data-source.js';
 import { MysqlHistoricalSalesRemissionCancellationSource } from './infrastructure/datasources/mysql-historical-sales-remission-cancellation-source.js';
 import { MysqlInvoiceFromOrderReferences } from './infrastructure/datasources/mysql-invoice-from-order-references.js';
-import { mexicoSalesTicketConversionConfigured } from './infrastructure/datasources/mysql-sales-ticket-conversion-references.js';
+import { mexicoSalesTicketConversionSettings } from './infrastructure/datasources/mysql-sales-ticket-conversion-references.js';
 import { isLocalSalesRemissionId, PostgresSalesRemissions } from './infrastructure/datasources/postgres-sales-remissions.js';
 import { PostgresInvoicePieces } from './infrastructure/datasources/postgres-invoice-pieces.js';
 import { PostgresSalesRemissionCancellations } from './infrastructure/datasources/postgres-sales-remission-cancellations.js';
@@ -37,7 +37,7 @@ import { PostgresInvoiceTransfers } from './infrastructure/datasources/postgres-
 
 export const createInvoicingModule = (): Router => {
   const pieces = new PostgresInvoicePieces();
-  const conversion = new ConvertSalesTicket(new PostgresSalesTicketConversions(), mexicoSalesTicketConversionConfigured);
+  const conversion = new ConvertSalesTicket(new PostgresSalesTicketConversions(), mexicoSalesTicketConversionSettings);
   const repository = new InvoicesRepositoryImpl(new InvoicesWithSalesRemissionsDataSource(new LegacyMysqlInvoicesDataSource()), pieces);
   const stamping = new SimulateSalesStamping(
     new PostgresSalesStampingSimulations(),

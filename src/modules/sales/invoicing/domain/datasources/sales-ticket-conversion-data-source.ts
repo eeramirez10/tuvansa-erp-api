@@ -10,11 +10,17 @@ export interface SalesTicketConversionResult {
 export interface SalesTicketConversionPreview {
   sourceNumber: string;
   targetType: 'FE';
+  issuedAt: string;
   total: number;
   balance: number;
   currency: string;
   version: string | null;
   result: SalesTicketConversionResult | null;
+}
+
+export interface SalesTicketConversionSettings {
+  fiscalStart: string | null;
+  fiscalEnd: string | null;
 }
 
 export interface SalesTicketConversionInput {
